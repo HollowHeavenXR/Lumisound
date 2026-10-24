@@ -295,7 +295,7 @@ struct TVStatsView: View {
                 Text(isUnlocked ? "Unlocked" : "Locked")
             }
             .font(.system(size: 20, weight: .semibold, design: .rounded))
-            .foregroundStyle(isUnlocked ? TVPalette.brand : TVPalette.textTertiary)
+            .foregroundStyle(isUnlocked ? AnyShapeStyle(TVPalette.brand) : AnyShapeStyle(TVPalette.textTertiary))
 
             VStack(spacing: 10) {
                 Text("HOW TO EARN THIS")
