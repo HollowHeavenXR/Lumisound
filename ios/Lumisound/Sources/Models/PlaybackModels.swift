@@ -119,7 +119,24 @@ struct AudioSettings: Codable, Equatable, Hashable {
     /// mechanisms touch different engine parameters (stereo pan, EQ bands,
     /// and whatever the exclusive effect defines) with no shared resource
     /// to conflict over.
-    var eightDAudioEnabled: Bool = false
+    ///
+    /// BUGFIX (confirmed live via telemetry — `persistence` category,
+    /// "loadAudioSettings decode failed: ... Key 'eightDAudioEnabled' not
+    /// found"): this field shipped as a plain non-optional `Bool`, not
+    /// following the `Bool?`-for-new-fields convention every sibling toggle
+    /// below it uses. Swift's synthesized `Decodable` decodes a struct
+    /// atomically — one missing required key fails the ENTIRE decode, not
+    /// just this field — so every settings blob saved before this field
+    /// existed, and never re-saved since, has been failing to decode on
+    /// every single launch. `PersistenceService.loadAudioSettings()` returns
+    /// `nil` on that failure, and the caller falls back to `AudioSettings()`
+    /// (all defaults) — silently wiping EQ bands, crossfade, gapless,
+    /// ReplayGain, bass boost, and reverb preferences for anyone who hadn't
+    /// touched an audio setting (and so re-saved the blob) since 8D Audio
+    /// shipped. Optional, like `spatialAudioEnabled`/`monoAudioEnabled`/
+    /// `nightModeEnabled` above, so a missing key decodes to `nil`/off
+    /// instead of failing the whole struct. Read via `?? false`.
+    var eightDAudioEnabled: Bool? = false
     var activeEffectID: String = "none"
     /// When true, the EQ preset automatically switches to match each track's
     /// tempo (see `EQPreset.auto(forBPM:)`) instead of staying on whatever

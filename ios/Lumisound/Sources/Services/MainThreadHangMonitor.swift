@@ -279,10 +279,38 @@ final class MainThreadHangMonitor {
                 "libraryScanInFlight": scanning,
                 "thermalState": ProcessInfo.processInfo.thermalState.lumisoundDescription,
                 "mainThreadActivity": activity,
-                // Which root tab was on screen. UserDefaults is safe to read
-                // from this queue, unlike anything on the main actor.
-                "selectedTab": UserDefaults.standard.integer(forKey: "selected_tab"),
+                // BUGFIX (found via telemetry audit — every real hang report on
+                // record had `mainThreadActivity: []`, and `selectedTab` kept
+                // showing index 6, which isn't even one of Classic's 5 tabs):
+                // this used to unconditionally read "selected_tab", the
+                // CLASSIC tab bar's int. Lumen is the default interface for
+                // every real (non-screenshot-mode) user, and
+                // `LumenRootView` doesn't maintain that key as "what's on
+                // screen" — it only WRITES to it as a deep-link request echo
+                // for widgets/Shortcuts (0=library, 3=cloud, 6=settings, …)
+                // and otherwise leaves whatever stale value was last
+                // requested sitting there, sometimes for days. So every hang
+                // report from a Lumen user had a "selectedTab" field that was
+                // either stale or outright meaningless — explaining why 6
+                // (Settings' deep-link code) kept recurring independent of
+                // what screen the hang actually happened on. Lumen's OWN
+                // current-tab `@AppStorage` ("lumen_selected_tab") already
+                // tracks the real on-screen tab correctly; just read from the
+                // right key for whichever edition is actually active.
+                "currentScreen": Self.currentScreenDescription(),
             ]
         )
+    }
+
+    /// What's actually on screen, independent of which interface edition is
+    /// active — see the BUGFIX note at this function's one call site.
+    /// UserDefaults is safe to read from this queue, unlike anything on the
+    /// main actor.
+    private static func currentScreenDescription() -> String {
+        if InterfaceEdition.isLumen {
+            let raw = UserDefaults.standard.string(forKey: "lumen_selected_tab") ?? "home"
+            return "lumen.\(raw)"
+        }
+        return "classic.\(UserDefaults.standard.integer(forKey: "selected_tab"))"
     }
 }

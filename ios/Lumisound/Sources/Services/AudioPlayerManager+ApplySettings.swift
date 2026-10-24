@@ -27,7 +27,7 @@ extension AudioPlayerManager {
             ("gaplessEnabled", old.gaplessEnabled, new.gaplessEnabled),
             ("replayGainEnabled", old.replayGainEnabled, new.replayGainEnabled),
             ("bassBoostEnabled", old.bassBoostEnabled, new.bassBoostEnabled),
-            ("eightDAudioEnabled", old.eightDAudioEnabled, new.eightDAudioEnabled),
+            ("eightDAudioEnabled", old.eightDAudioEnabled ?? false, new.eightDAudioEnabled ?? false),
             ("autoEQEnabled", old.autoEQEnabled, new.autoEQEnabled),
             ("reverbEnabled", old.reverbEnabled, new.reverbEnabled),
             ("spatialAudioEnabled", old.spatialAudioEnabled ?? false, new.spatialAudioEnabled ?? false),
@@ -182,7 +182,7 @@ extension AudioPlayerManager {
         // CADisplayLink. Only started while actually playing; `playCurrent`/
         // `reapplyActiveEffect` starts it once playback resumes if it's
         // still enabled from a paused state.
-        if audioSettings.eightDAudioEnabled {
+        if audioSettings.eightDAudioEnabled ?? false {
             if !is8DActive, isPlaying { start8DRotation(hz: rotationHz) }
         } else if is8DActive {
             stop8DRotation()

@@ -235,13 +235,16 @@ extension SettingsView {
             // now (see AudioSettings.eightDAudioEnabled's doc comment), same
             // "its own toggle, not an exclusive-picker entry" shape as Bass
             // Boost above, so both (plus one picked effect) can run together.
-            Toggle(isOn: $player.audioSettings.eightDAudioEnabled) {
+            Toggle(isOn: Binding(
+                get: { player.audioSettings.eightDAudioEnabled ?? false },
+                set: { player.audioSettings.eightDAudioEnabled = $0 }
+            )) {
                 Label("8D Audio", systemImage: "rotate.3d")
                     .foregroundStyle(AppTheme.textPrimary)
             }
             .tint(.teal)
 
-            if player.audioSettings.eightDAudioEnabled {
+            if player.audioSettings.eightDAudioEnabled ?? false {
                 Text("Rotates the stereo image left and right to simulate a sound source circling you. Works on any stereo output.")
                     .font(.caption)
                     .foregroundStyle(AppTheme.textSecondary)

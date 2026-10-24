@@ -47,7 +47,7 @@ extension AudioPlayerManager {
         // Checked unconditionally (unlike the exclusive effect below, this
         // doesn't depend on `activeEffectID` at all), so it resumes
         // alongside whichever exclusive effect (if any) is also active.
-        if audioSettings.eightDAudioEnabled, !is8DActive {
+        if audioSettings.eightDAudioEnabled ?? false, !is8DActive {
             start8DRotation(hz: rotationHz)
         }
 
