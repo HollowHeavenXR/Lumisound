@@ -475,6 +475,32 @@ struct LumisoundApp: App {
                 // is unaffected by per-track overrides); the per-track values are
                 // persisted separately via `onTrackAudioSettingsChanged` above.
                 .onChange(of: player.audioSettings) { _ in
+                    // BUGFIX (reported: "the app lowers the volume and
+                    // doesn't respect my settings," surviving a relaunch):
+                    // AI DJ Mode's announcement duck and the Sleep Timer's
+                    // fade-out both drive their transient volume change
+                    // through this SAME `audioSettings.volume` — the one
+                    // property this whole block treats as "the listener's
+                    // own setting" worth persisting. Every single tick of
+                    // either fade (down to 25%, or down to silence over the
+                    // configured fade duration) fired this `onChange`,
+                    // wrote THAT tick's reduced volume to disk as the new
+                    // default, and pushed it to the account sync — not just
+                    // once, but on every frame of the fade. The in-memory
+                    // value gets restored correctly once the fade completes
+                    // (see AIDJService.restoreVolumeAfterSpeaking /
+                    // SleepTimerService.applyFadeStep), but if the app is
+                    // backgrounded or killed at any point before that — the
+                    // ordinary way anyone actually uses a sleep timer is to
+                    // put the phone down and let it fade out unattended —
+                    // the LAST value written here is whatever the fade had
+                    // reached, not the listener's real volume. Skip this
+                    // entire persist/sync side effect while either fade is
+                    // actually in flight: nothing worth saving changes
+                    // during one (the eventual restore target is exactly
+                    // what's already on disk from before it started), so
+                    // there is nothing lost by waiting for it to finish.
+                    guard !aiDJ.isSpeaking, !sleepTimer.isFading else { return }
                     // Only a change the listener made is saved and synced.
                     // Auto EQ swapping the preset between songs is not one,
                     // and treating it as one ran a full account sync on every
@@ -495,6 +521,11 @@ struct LumisoundApp: App {
                     )
                 ) { _ in
                     libraryManager.flushPendingSnapshot()
+                    // Same reasoning as the `onChange` guard above — backgrounding
+                    // mid-fade (the common case for the Sleep Timer specifically)
+                    // must not snapshot the fade's current, reduced volume as the
+                    // permanent default.
+                    guard !aiDJ.isSpeaking, !sleepTimer.isFading else { return }
                     PersistenceService.shared.saveAudioSettings(player.defaultAudioSettings)
                 }
                 .onReceive(sleepTimer.$didExpire) { expired in

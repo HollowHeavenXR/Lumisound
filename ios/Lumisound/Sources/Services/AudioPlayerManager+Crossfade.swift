@@ -90,9 +90,31 @@ extension AudioPlayerManager {
         // downbeat instead of an arbitrary fraction of a second. With Smart
         // Crossfade off, use the fixed user-set duration verbatim.
         let smartCrossfade = audioSettings.smartCrossfadeEnabled
-        let fadeDuration = smartCrossfade
-            ? transitionPlan(into: nextSong).duration
-            : audioSettings.crossfadeDuration
+        let smartPlan = smartCrossfade ? transitionPlan(into: nextSong) : nil
+        let fadeDuration = smartPlan?.duration ?? audioSettings.crossfadeDuration
+
+        // Telemetry: this is the ONLY place the executed plan (as opposed to
+        // the trigger-arming estimate in `transitionLead()`) is known, and
+        // until now nothing logged WHY a fade ran the length it did — only
+        // the raw "trigger reached at Xs of Ys" line downstream in
+        // `checkCrossfadeTrigger()`. Reported as "tracks randomly skip or
+        // fade into the next track" — with no reason logged, a fade that
+        // SmartCrossfade had shrunk to barely more than its 1.5s floor
+        // (e.g. a false `cold-stop` read off a track's natural last-note
+        // decay, which sits right at this analyzer's silence threshold on
+        // almost any real ending) was indistinguishable in the logs from an
+        // intentional short fade, or from an outright bug. Log it so a
+        // pattern of suspiciously-short fades across unrelated tracks is
+        // actually visible instead of inferred after the fact from gaps
+        // between "Crossfade trigger reached" timestamps.
+        if let smartPlan {
+            appLog(
+                String(format: "beginCrossfade: smart plan duration=%.2fs (base=%.2fs) reason=%@ — \"%@\" -> \"%@\"",
+                       smartPlan.duration, audioSettings.crossfadeDuration, smartPlan.reason,
+                       currentSong?.displayName ?? "?", nextSong.displayName),
+                category: "audio"
+            )
+        }
 
         // The outgoing node is the one currently playing; incoming is the opposite.
         // Captured as `let` — the upcoming `usingPrimaryNode` flip changes what
