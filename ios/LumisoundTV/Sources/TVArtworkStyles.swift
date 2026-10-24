@@ -15,6 +15,8 @@ enum TVArtworkStyle: String, CaseIterable, Identifiable {
     case classic
     case circuitPulse
     case radarSweep
+    case chalkboardSketch
+    case shadowPuppetSilhouette
 
     var id: String { rawValue }
 
@@ -23,6 +25,8 @@ enum TVArtworkStyle: String, CaseIterable, Identifiable {
         case .classic: return "Classic"
         case .circuitPulse: return "Circuit Pulse"
         case .radarSweep: return "Radar Sweep"
+        case .chalkboardSketch: return "Chalkboard Sketch"
+        case .shadowPuppetSilhouette: return "Shadow Puppet"
         }
     }
 }
@@ -214,6 +218,131 @@ struct TVRadarSweepArtworkView: View {
             .overlay(Circle().stroke(.green.opacity(0.3), lineWidth: 1))
         }
         .modifier(TVFloatModifier(isPlaying: isPlaying, amount: 6, speed: 4.0))
+    }
+}
+
+// MARK: - Chalkboard Sketch (440pt, scaled up from iOS's 300pt original)
+//
+// Ported from ios/Lumisound/Sources/Views/ChalkboardSketchArtworkView.swift —
+// no Song/LibraryManager/palette dependency beyond the cover image itself, so
+// this one needed no simplification, just its own `TVStyleCover` +
+// re-implemented `FilmGrainOverlay`/`SeededRandom` (ArtworkEffectsShared.swift
+// isn't part of this target — same reasoning as `TVArtworkClock`/
+// `TVFloatModifier` above).
+
+/// Tiny deterministic xorshift PRNG — ported from `SeededRandom` in
+/// ArtworkEffectsShared.swift. Deterministic (fixed seed) so the grain
+/// pattern doesn't re-roll every redraw.
+private struct TVSeededRandom {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        state = seed == 0 ? 0xdead_beef : seed
+    }
+
+    mutating func nextDouble() -> Double {
+        state ^= state << 13
+        state ^= state >> 7
+        state ^= state << 17
+        return Double(state % 1_000_000) / 1_000_000
+    }
+}
+
+private struct TVFilmGrainOverlay: View {
+    var body: some View {
+        Canvas { context, size in
+            var generator = TVSeededRandom(seed: 1_337)
+            let dotCount = Int((size.width * size.height) / 14)
+            for _ in 0..<dotCount {
+                let x = generator.nextDouble() * size.width
+                let y = generator.nextDouble() * size.height
+                let alpha = 0.05 + generator.nextDouble() * 0.18
+                let dotSize = generator.nextDouble() < 0.5 ? 0.6 : 1.1
+                let rect = CGRect(x: x, y: y, width: dotSize, height: dotSize)
+                context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(alpha)))
+            }
+        }
+        .drawingGroup()
+    }
+}
+
+struct TVChalkboardSketchArtworkView: View {
+    let artworkURL: URL?
+    let authToken: String?
+    let isPlaying: Bool
+
+    private let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+
+    var body: some View {
+        TimelineView(.animation(paused: !isPlaying)) { timeline in
+            let trimEnd = TVArtworkClock.pingPong(timeline.date, legDuration: 3.4)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 35, style: .continuous)
+                    .fill(Color(red: 0.09, green: 0.13, blue: 0.1))
+                    .overlay(TVFilmGrainOverlay().opacity(0.5))
+
+                TVStyleCover(artworkURL: artworkURL, authToken: authToken, size: 308, cornerRadius: 20)
+                    .saturation(0.35)
+                    .contrast(1.05)
+                    .clipShape(shape)
+                    .overlay(shape.stroke(.white.opacity(0.5), lineWidth: 3))
+                    .shadow(color: .black.opacity(0.4), radius: 12, y: 8)
+
+                shape
+                    .trim(from: 0, to: trimEnd)
+                    .stroke(.white.opacity(0.85), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [1, 3]))
+                    .frame(width: 328, height: 328)
+            }
+            .frame(width: 440, height: 440)
+            .clipShape(RoundedRectangle(cornerRadius: 35, style: .continuous))
+            .drawingGroup()
+        }
+        .modifier(TVFloatModifier(isPlaying: isPlaying, amount: 6, speed: 3.8))
+    }
+}
+
+// MARK: - Shadow Puppet Silhouette (440pt, scaled up from iOS's 300pt original)
+//
+// Ported from ios/Lumisound/Sources/Views/ShadowPuppetSilhouetteArtworkView.swift
+// — likewise no Song/LibraryManager/palette dependency beyond the cover image.
+
+struct TVShadowPuppetSilhouetteArtworkView: View {
+    let artworkURL: URL?
+    let authToken: String?
+    let isPlaying: Bool
+
+    private let shape = RoundedRectangle(cornerRadius: 29, style: .continuous)
+
+    var body: some View {
+        TimelineView(.animation(paused: !isPlaying)) { timeline in
+            let sway = -4 + 8 * TVArtworkClock.pingPong(timeline.date, legDuration: 2.8)
+
+            ZStack {
+                RadialGradient(
+                    colors: [Color(red: 0.55, green: 0.32, blue: 0.08), Color(red: 0.05, green: 0.02, blue: 0.0)],
+                    center: UnitPoint(x: 0.5, y: 0.15), startRadius: 14, endRadius: 335
+                )
+
+                // The "rod" the puppet sways from.
+                Rectangle()
+                    .fill(.black.opacity(0.6))
+                    .frame(width: 4, height: 58)
+                    .offset(y: -235)
+
+                TVStyleCover(artworkURL: artworkURL, authToken: authToken, size: 293, cornerRadius: 29)
+                    .colorMultiply(.black)
+                    .brightness(-0.05)
+                    .clipShape(shape)
+                    .overlay(shape.fill(.black.opacity(0.35)))
+                    .overlay(shape.stroke(.black.opacity(0.6), lineWidth: 2))
+                    .offset(y: -44)
+                    .rotationEffect(.degrees(sway), anchor: UnitPoint(x: 0.5, y: -0.15))
+            }
+            .frame(width: 440, height: 440)
+            .clipShape(RoundedRectangle(cornerRadius: 41, style: .continuous))
+            .drawingGroup()
+        }
     }
 }
 

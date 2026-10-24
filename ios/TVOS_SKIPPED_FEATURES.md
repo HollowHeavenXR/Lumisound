@@ -43,19 +43,38 @@ direct source inspection, not guessed.
 
 ## Possible, deliberately skipped
 
-### 22 of 24 Now Playing artwork styles
-Only Circuit Pulse and Radar Sweep were ported. The other 22 read from
-`Song`/`LibraryManager`/live palette extraction (`ArtworkPaletteLoader`,
-`ArtworkColorExtractor`) that don't exist on tvOS's much smaller client —
-porting them means also porting those dependencies, for a purely cosmetic
-feature. The 2 that shipped were picked specifically because they're
-self-contained SwiftUI/Canvas with no such dependency.
+### 22 of 24 Now Playing artwork styles → now 20 of 24 — see update below
+Only Circuit Pulse and Radar Sweep were ported in the original round.
+Everything else reads from `Song`/`LibraryManager`/live palette extraction
+(`ArtworkPaletteLoader`, `ArtworkColorExtractor`) that don't exist on tvOS's
+much smaller client — porting them means also porting those dependencies,
+for a purely cosmetic feature.
 
-**To revisit:** pick more candidates from `ios/Lumisound/Sources/Views/
-*ArtworkView.swift`, check each for `Song`/`LibraryManager`/palette
-references the same way, and either simplify those away (like Circuit
-Pulse's palette → static accent color) or port a lightweight palette
-extractor for tvOS off `UIImage` (`TVAuthImage` already loads one).
+**Update (2026-10-24):** Chalkboard Sketch and Shadow Puppet Silhouette
+ported too (`TVArtworkStyles.swift` — `TVChalkboardSketchArtworkView`/
+`TVShadowPuppetSilhouetteArtworkView`), bringing the total to 4 of 24. Both
+turned out to have zero palette dependency once actually checked (the grep
+hit on `Song`/`LibraryManager` in the "possible candidates" survey was just
+their shared `song: Song` init parameter, not a real runtime need) — the
+only non-trivial porting was re-implementing `FilmGrainOverlay`/
+`SeededRandom` for Chalkboard Sketch's grain texture, same "re-implement,
+don't share the iOS file" pattern already used for `ArtworkClock`/
+`FloatModifier`/`StyleCover`.
+
+**To revisit further:** of the 20 left, the ones that DO use
+`ArtworkPaletteLoader` (CassetteReelSpin, CircuitPulse's original iOS
+version, CometOrbit, CustomStyle, EqualizerCutout, KaleidoscopeBloom,
+LiquidBlobFrame, NeonSignFlicker, PaperLayersParallax, VinylCrateStack) are
+the ones that actually need the "simplify to a static color, or port a
+lightweight palette extractor off `UIImage`" treatment this section
+originally described. The other ~10 (AuroraVeil, BioluminescentTide,
+ConfettiBurstLoop, DiscoMirrorBall, FrostedIceCrystal, LiveSpectrum,
+MoltenGlassDrip, MosaicShatter, OrigamiFoldReveal, RippleReflection,
+SynthwaveHorizon, TrueMotion, VHSScanGlitch, VinylGrooveSpiral) are likely
+zero-dependency the same way Chalkboard Sketch/Shadow Puppet turned out to
+be — check each the same way (grep for `ArtworkPaletteLoader`/
+`ArtworkColorExtractor` specifically, not just `Song`/`LibraryManager`)
+before assuming porting cost.
 
 ### Password change / 2FA setup / account deletion
 All three bridge endpoints exist and work
@@ -94,11 +113,15 @@ The notification *inbox* (`GET /user/notifications`) is a separate, fully
 decoupled plain-REST feature and was built; a notification only shows up
 when the TV app is opened and polls, not as a push banner.
 
-### Per-badge achievement detail sheets
-The Stats screen shows the full badge catalog (title + icon + locked/
-unlocked), ported from `AchievementsView.swift`'s `allBadges`. iOS's
-tap-to-see-the-unlock-requirement detail sheet wasn't ported — first-pass
-scope call, not a technical blocker.
+### Per-badge achievement detail sheets — shipped 2026-10-24
+Was: the Stats screen showed the full badge catalog (title + icon + locked/
+unlocked) but not iOS's tap-to-see-the-unlock-requirement detail sheet —
+first-pass scope call, not a technical blocker. Now ported: each badge in
+`TVStatsView.swift`'s grid is a focusable `Button` that presents a detail
+sheet (icon, title, locked/unlocked state, the plain-language `requirement`
+text, and the same live progress line iOS computes from `/user/achievements`
+where the metric is known) — same content as `AchievementsView.badgeDetailSheet`,
+tvOS-sized.
 
 ---
 

@@ -1263,6 +1263,10 @@ struct TVPlayerView: View {
                 TVCircuitPulseArtworkView(artworkURL: displayed?.artworkURL, authToken: displayed?.authToken, isPlaying: model.isPlaying)
             case .radarSweep:
                 TVRadarSweepArtworkView(artworkURL: displayed?.artworkURL, authToken: displayed?.authToken, isPlaying: model.isPlaying)
+            case .chalkboardSketch:
+                TVChalkboardSketchArtworkView(artworkURL: displayed?.artworkURL, authToken: displayed?.authToken, isPlaying: model.isPlaying)
+            case .shadowPuppetSilhouette:
+                TVShadowPuppetSilhouetteArtworkView(artworkURL: displayed?.artworkURL, authToken: displayed?.authToken, isPlaying: model.isPlaying)
             }
 
             if model.isBuffering {
