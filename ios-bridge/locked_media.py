@@ -426,6 +426,9 @@ _PROFILE_SR = 8000
 _PROFILE_WINDOW = 0.05          # 50ms envelope frames
 _OUTRO_SECONDS = 10.0
 _INTRO_SECONDS = 6.0
+# How far back from the detected end of the music the cold-stop check looks —
+# see its own comment below for why this cannot be a handful of frames.
+_COLD_STOP_TAIL_SECONDS = 1.0
 
 
 def _envelope(pcm: bytes, window_s: float = _PROFILE_WINDOW):
@@ -544,8 +547,31 @@ def transition_profile(path: pathlib.Path) -> dict | None:
     # the outro WITHOUT having been fading toward it. Judged against the median
     # rather than the peak, so one loud hit near the end does not make an
     # ordinary ending look like a cliff.
-    last = float(np.median(outro[-3:]))
-    body = float(np.median(outro[: max(1, frames - 3)]))
+    #
+    # BUGFIX (reported in the field as "tracks randomly skip or fade into the
+    # next track" — SmartCrossfade was shrinking the overlap to barely more
+    # than its 1.5s floor for the large majority of a real library, confirmed
+    # via iOS client telemetry: "Crossfade trigger reached" logged a 1.2-2.0s
+    # lead on 8 of 10 consecutive transitions across completely unrelated
+    # tracks, independent of track length). `last` used to be the final THREE
+    # FRAMES (150ms) of `music` — which, by construction, sits immediately
+    # adjacent to the exact threshold crossing `last_music` is defined by.
+    # That is not a measurement of whether the track stopped abruptly; it is
+    # almost guaranteed to read as a "collapse" for ANY ordinary ending,
+    # because a sustained note/chord's natural release/reverb tail decaying
+    # toward that same silence threshold is exactly what the final 150ms of
+    # almost every real recording looks like, whether or not the track
+    # actually "stops cold." A genuinely instantaneous edit (full volume with
+    # zero decay, cut dead) would in fact show NO drop here at all, since
+    # `music` only extends through the last above-threshold sample — this was
+    # measuring the wrong thing entirely, flagging the near-universal case of
+    # "has a brief natural tail" as `outro_cold_stop`, not the rare case of
+    # "has none." Widened to a full second so the comparison reflects whether
+    # the music was still near its outro body level in the second leading
+    # into the stop, not just the single instant furthest into the decay.
+    tail_frames = max(3, min(frames - 1, int(_COLD_STOP_TAIL_SECONDS / _PROFILE_WINDOW)))
+    last = float(np.median(outro[-tail_frames:]))
+    body = float(np.median(outro[: max(1, frames - tail_frames)]))
     drop_db = db(body) - db(last)
     cold_stop = bool(drop_db > 12.0 and slope_db_per_s > -2.0)
 
