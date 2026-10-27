@@ -412,6 +412,8 @@ final class AudioPlayerManager: ObservableObject {
     /// Ramps the active node's volume back up after a hard seek-triggered
     /// reschedule — see `rampNodeVolumeAfterSeek` in AudioPlayerManager+Scheduling.swift.
     var seekFadeTimer: Timer?
+    /// In-flight click-free pause (see `softPauseNodes`).
+    var softPauseTask: Task<Void, Never>?
 
     /// Set by `playCurrent`'s streamed-track branch, right before silencing
     /// `activeNode`, when a seek/rewind/track-switch is reseeking a track

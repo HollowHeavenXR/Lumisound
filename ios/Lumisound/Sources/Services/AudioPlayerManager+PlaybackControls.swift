@@ -70,15 +70,63 @@ extension AudioPlayerManager {
             armIdleTeardown()
             return
         }
+        // A second pause while the first one's fade is still running changes nothing.
+        if softPauseTask != nil { return }
         updatePositionFromPlayer()
-        primaryNode.pause()
-        secondaryNode.pause()
         isPlaying = false
+        softPauseNodes()
         stopTimer()
         updateNowPlaying()
         savePlaybackState()
         armIdleTeardown()
         appLog("Paused at \(String(format: "%.1f", position))s — \(currentSong?.displayName ?? "?")", category: "audio")
+    }
+
+    /// Pauses the player nodes without the click a hard pause makes.
+    ///
+    /// Pausing mid-waveform cuts the signal at whatever level it was at, which
+    /// is an audible pop on bass-heavy material. The active node's volume is
+    /// ramped to zero over ~60ms first, then the nodes are paused and the volume
+    /// put back, so the next resume starts from a near-silent sample. Skipped
+    /// (plain pause) while crossfading or while tremolo owns the node volume.
+    func softPauseNodes() {
+        let node = activeNode
+        let target = min(audioSettings.volume, 1.0)
+        guard !isCrossfading, !isTremoloActive, node.isPlaying, target > 0 else {
+            primaryNode.pause()
+            secondaryNode.pause()
+            return
+        }
+        softPauseTask = Task { @MainActor [weak self] in
+            let steps = 5
+            for step in 1...steps {
+                try? await Task.sleep(nanoseconds: 12_000_000)
+                // Cancelled by resume()/stop(), which restore the volume themselves.
+                guard !Task.isCancelled, let self else { return }
+                // Something else (a new track) started playback: put the level back and stand down.
+                if self.isPlaying {
+                    node.volume = target
+                    self.softPauseTask = nil
+                    return
+                }
+                node.volume = target * Float(steps - step) / Float(steps)
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.primaryNode.pause()
+            self.secondaryNode.pause()
+            node.volume = target
+            self.softPauseTask = nil
+        }
+    }
+
+    /// Cancels an in-flight soft pause and restores the node level. Returns true
+    /// if the active node was still playing (i.e. resuming just means carrying on).
+    private func cancelSoftPause() -> Bool {
+        guard let task = softPauseTask else { return false }
+        task.cancel()
+        softPauseTask = nil
+        activeNode.volume = min(audioSettings.volume, 1.0)
+        return activeNode.isPlaying
     }
 
     /// Arms (or re-arms) the grace-period timer that releases the audio
@@ -125,6 +173,13 @@ extension AudioPlayerManager {
             // user's chosen Speed setting is honored on resume too.
             opusPlayer?.rate = Float(audioSettings.speed)
             isPlaying = true
+            updateNowPlaying()
+            return
+        }
+        if cancelSoftPause() {
+            // The fade hadn't finished: the node never stopped, so just carry on.
+            isPlaying = true
+            startTimer()
             updateNowPlaying()
             return
         }
@@ -176,8 +231,12 @@ extension AudioPlayerManager {
     func stop() {
         tearDownOpusPlayer()
         appLog("Stopped — \(currentSong?.displayName ?? "nothing playing")", category: "audio")
+        softPauseTask?.cancel()
+        softPauseTask = nil
         primaryNode.stop()
         secondaryNode.stop()
+        primaryNode.volume = min(audioSettings.volume, 1.0)
+        secondaryNode.volume = min(audioSettings.volume, 1.0)
         isCrossfading = false
         crossfadeTimer?.invalidate()
         crossfadeTimer = nil
