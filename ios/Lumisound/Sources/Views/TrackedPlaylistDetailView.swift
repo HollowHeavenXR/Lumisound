@@ -170,7 +170,7 @@ struct TrackedPlaylistDetailView: View {
     private var heroArtwork: some View {
         Group {
             if let first = tracks.first, let url = URL(string: first.thumbnailURL), !first.thumbnailURL.isEmpty {
-                AsyncImage(url: url) { phase in
+                CachedAsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image): image.resizable().aspectRatio(contentMode: .fill)
                     default: placeholderThumb
@@ -271,7 +271,7 @@ struct TrackedPlaylistDetailView: View {
     @ViewBuilder
     private func thumbnail(for track: StreamTrack) -> some View {
         if let url = URL(string: track.thumbnailURL), !track.thumbnailURL.isEmpty {
-            AsyncImage(url: url) { phase in
+            CachedAsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image): image.resizable().aspectRatio(contentMode: .fill)
                 default: placeholderThumb

@@ -24,7 +24,7 @@ struct StreamTrackGridCell: View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomTrailing) {
                 GeometryReader { geo in
-                    AsyncImage(url: URL(string: track.thumbnailURL)) { phase in
+                    CachedAsyncImage(url: URL(string: track.thumbnailURL)) { phase in
                         switch phase {
                         case .success(let image):
                             image

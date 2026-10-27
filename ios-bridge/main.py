@@ -38,7 +38,6 @@ import urllib.error
 import email_validator
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -1648,57 +1647,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Compresses large JSON responses (e.g. /user/sync, /api/library/server,
-# /user/export) — pure win for mobile clients on cellular, no new dependency.
-app.add_middleware(GZipMiddleware, minimum_size=1024)
-
-
-@app.middleware("http")
-async def _security_headers(request: Request, call_next):
-    """Standard hardening headers on every response.
-
-    Most of this API is consumed by the app, where these matter little. They
-    matter for the parts a BROWSER reaches: the admin dashboard, the shared
-    playlist pages, the artwork and audio the proxy serves. Those are the
-    surfaces where a missing header turns a small bug into a real one.
-
-    `nosniff` is the one that earns its place here regardless of caller: this
-    server returns user-supplied bytes on several routes (uploaded artwork,
-    downloaded audio, imported lyrics), and content-type sniffing is precisely
-    how a file that claims to be an image gets executed as something else.
-    """
-    response = await call_next(request)
-    headers = response.headers
-    # setdefault, so a route that has deliberately chosen its own value — the
-    # shared-playlist pages set their own framing policy — is never overridden.
-    headers.setdefault("X-Content-Type-Options", "nosniff")
-    headers.setdefault("X-Frame-Options", "DENY")
-    headers.setdefault("Referrer-Policy", "no-referrer")
-    # Only meaningful over TLS, which is how the app reaches this (via the
-    # tunnel). Harmless over plain HTTP, where browsers ignore it.
-    headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-    # This API serves data and media, never scripted documents of its own. The
-    # admin dashboard is the one HTML page here and it carries its own inline
-    # styles/scripts, so it is left to set its own policy rather than being
-    # broken by a blanket one.
-    if not request.url.path.startswith("/admin"):
-        headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
-    return response
-
-# Latency visibility: previously there was no per-request timing anywhere on
-# the server. Slow requests (>2s) are logged at WARNING so they show up
-# alongside other stability signals without flooding logs on every request.
-_SLOW_REQUEST_THRESHOLD = 2.0
-
-
-@app.middleware("http")
-async def _log_slow_requests(request: Request, call_next):
-    start = time.monotonic()
-    response = await call_next(request)
-    elapsed = time.monotonic() - start
-    if elapsed > _SLOW_REQUEST_THRESHOLD:
-        logger.warning("slow request: %s %s took %.2fs (status %d)", request.method, request.url.path, elapsed, response.status_code)
-    return response
+# One pure-ASGI layer does gzip (text types only), security headers and
+# slow-request logging -- see asgi_perf.py for why the BaseHTTPMiddleware
+# versions and Starlette's level-9 GZipMiddleware were replaced.
+from asgi_perf import PerfMiddleware
+app.add_middleware(PerfMiddleware)
 
 # ---------------------------------------------------------------------------
 # Simple in-memory search cache  (TTL = 5 minutes)

@@ -123,7 +123,7 @@ private struct DiscoverMixRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            AsyncImage(url: URL(string: track.thumbnailURL)) { phase in
+            CachedAsyncImage(url: URL(string: track.thumbnailURL)) { phase in
                 switch phase {
                 case .success(let image):
                     image

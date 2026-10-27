@@ -169,7 +169,7 @@ struct SubscriptionFeedView: View {
     private func thumbnail(for item: SubscriptionFeedItem) -> some View {
         let thumbURLString = item.track?.thumbnailURL ?? item.channelThumbnail ?? ""
         if let url = URL(string: thumbURLString), !thumbURLString.isEmpty {
-            AsyncImage(url: url) { phase in
+            CachedAsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
                     image.resizable().aspectRatio(contentMode: .fill)

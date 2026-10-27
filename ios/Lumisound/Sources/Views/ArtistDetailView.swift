@@ -214,7 +214,7 @@ private struct ArtistBioCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 if let urlString = bio.imageURL, !urlString.isEmpty, let url = URL(string: urlString) {
-                    AsyncImage(url: url) { phase in
+                    CachedAsyncImage(url: url) { phase in
                         if case .success(let image) = phase {
                             image.resizable().aspectRatio(contentMode: .fill)
                         } else {

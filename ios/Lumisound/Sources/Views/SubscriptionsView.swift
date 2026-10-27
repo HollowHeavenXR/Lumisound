@@ -492,7 +492,7 @@ struct SubscriptionsView: View {
     @ViewBuilder
     private func playlistThumbnail(for pl: TrackedPlaylist) -> some View {
         if let url = URL(string: pl.thumbnailURL), !pl.thumbnailURL.isEmpty {
-            AsyncImage(url: url) { phase in
+            CachedAsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
                     image.resizable().aspectRatio(contentMode: .fill)
@@ -526,7 +526,7 @@ struct SubscriptionsView: View {
     @ViewBuilder
     private func channelThumbnail(for sub: ArtistSubscription) -> some View {
         if let thumb = sub.channelThumbnail, let url = URL(string: thumb), !thumb.isEmpty {
-            AsyncImage(url: url) { phase in
+            CachedAsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
                     image.resizable().aspectRatio(contentMode: .fill)

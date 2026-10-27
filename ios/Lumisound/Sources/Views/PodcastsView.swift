@@ -170,7 +170,7 @@ struct PodcastsView: View {
 
     private func row(for sub: PodcastSubscription) -> some View {
         HStack(spacing: 12) {
-            AsyncImage(url: sub.artworkURL.flatMap(URL.init)) { image in
+            CachedAsyncImage(url: sub.artworkURL.flatMap(URL.init)) { image in
                 image.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
                 Rectangle().fill(AppTheme.surface)

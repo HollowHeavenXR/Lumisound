@@ -18,7 +18,7 @@ struct StreamTrackRow: View {
             // Thumbnail with a small source-icon badge in the corner — gives each
             // row an at-a-glance platform indicator even outside its grouped section.
             ZStack(alignment: .bottomTrailing) {
-                AsyncImage(url: URL(string: track.thumbnailURL)) { phase in
+                CachedAsyncImage(url: URL(string: track.thumbnailURL)) { phase in
                     switch phase {
                     case .success(let image):
                         image

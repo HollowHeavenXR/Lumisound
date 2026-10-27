@@ -410,7 +410,7 @@ struct NowPlayingActivityRow: View {
                 ArtworkThumbnail(song: song, size: 40)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else if let artworkURL {
-                AsyncImage(url: artworkURL) { phase in
+                CachedAsyncImage(url: artworkURL) { phase in
                     switch phase {
                     case .success(let image):
                         image.resizable().aspectRatio(contentMode: .fill)

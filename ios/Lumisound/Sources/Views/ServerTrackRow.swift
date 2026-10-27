@@ -15,7 +15,7 @@ struct ServerTrackRow: View {
     var body: some View {
         HStack(spacing: 12) {
             // Artwork
-            AsyncImage(url: artworkURL) { phase in
+            CachedAsyncImage(url: artworkURL) { phase in
                 switch phase {
                 case .success(let image):
                     image

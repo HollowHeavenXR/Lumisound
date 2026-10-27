@@ -75,7 +75,7 @@ struct ListeningTwinView: View {
     private func twinCard(_ twin: ListeningTwin) -> some View {
         Section {
             VStack(spacing: 14) {
-                AsyncImage(url: twin.avatarURL.flatMap(URL.init)) { phase in
+                CachedAsyncImage(url: twin.avatarURL.flatMap(URL.init)) { phase in
                     switch phase {
                     case .success(let image): image.resizable().aspectRatio(contentMode: .fill)
                     default:
@@ -151,7 +151,7 @@ struct ListeningTwinView: View {
 
     private func twinMixRow(_ track: StreamTrack) -> some View {
         HStack(spacing: 12) {
-            AsyncImage(url: URL(string: track.thumbnailURL)) { phase in
+            CachedAsyncImage(url: URL(string: track.thumbnailURL)) { phase in
                 switch phase {
                 case .success(let image): image.resizable().aspectRatio(contentMode: .fill)
                 default:
