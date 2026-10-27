@@ -64,11 +64,22 @@ extension AudioPlayerManager {
         guard !isUsingOpusPlayer, isPlaying else { return }
         appWarn("Audio engine configuration changed — restarting engine to resume playback", category: "audio")
         guard !engine.isRunning else { return }
+        // A track that is still being downloaded/transcoded schedules itself
+        // and starts the node once it lands.
+        guard !isSchedulingAsync else { return }
+        // Capture where playback was before the engine restart: the node's
+        // render clock is gone once the engine has stopped.
+        let resumeAt = position
         try? AVAudioSession.sharedInstance().setActive(true)
         startEngineIfNeeded()
-        if !activeNode.isPlaying {
-            activeNode.play()
-        }
+        // The engine stopping drops whatever was scheduled on its player nodes
+        // (see `resume()`'s engineReleasedWhileIdle case), so `play()` on the
+        // old node would start it with nothing to render: silence with
+        // `isPlaying` still true until the stall detector reschedules it
+        // three seconds later. Schedule the track again from where it was.
+        guard engine.isRunning, currentSong != nil else { return }
+        appLog("Engine restarted after configuration change — rescheduling from \(String(format: "%.1f", resumeAt))s", category: "audio")
+        playCurrent(from: resumeAt)
     }
 
     func handleAudioInterruption(_ notification: Notification) {
