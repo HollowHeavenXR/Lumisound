@@ -51,6 +51,9 @@ extension StreamingService {
                 return try JSONDecoder().decode([StreamTrack].self, from: data)
             }
             searchResults = tracks
+            // Start fetching the first screenful of thumbnails now so rows
+            // render with artwork already decoded instead of popping in.
+            RemoteImageLoader.shared.prefetch(tracks.prefix(24).compactMap { URL(string: $0.thumbnailURL) })
             appLog("Search returned \(tracks.count) result(s) for \"\(query)\"", category: "network")
         } catch {
             appError("Search failed: \(error.localizedDescription)", category: "network")

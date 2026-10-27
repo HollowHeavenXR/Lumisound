@@ -412,14 +412,24 @@ struct LaunchView: View {
             // screen from flickering and covers the moment before the scan
             // and sync have flipped their flags on; the cap means a stuck
             // scan or sync can never trap the user here.
-            let minimumHold: UInt64 = 1_200_000_000   //  1.2 s
+            let minimumHold: UInt64 = 800_000_000     //  0.8 s
             let maximumHold: UInt64 = 10_000_000_000  // 10.0 s
             let pollInterval: UInt64 = 250_000_000    //  0.25 s
 
             try? await Task.sleep(nanoseconds: minimumHold)
             await MainActor.run { minimumHoldPassed = true }
             var waited = minimumHold
-            while await MainActor.run(body: { library.isScanning || account.isSyncing }), waited < maximumHold {
+            // A network sync only holds the screen briefly when the library is
+            // already on screen from its snapshot; the sync finishes behind
+            // the app instead of keeping the user waiting up to 10 s.
+            let syncGrace: UInt64 = 2_000_000_000     //  2.0 s
+            while waited < maximumHold {
+                let elapsed = waited
+                let stillBusy = await MainActor.run {
+                    library.isScanning
+                        || (account.isSyncing && (library.allSongs.isEmpty || elapsed < syncGrace))
+                }
+                guard stillBusy else { break }
                 try? await Task.sleep(nanoseconds: pollInterval)
                 waited += pollInterval
             }
