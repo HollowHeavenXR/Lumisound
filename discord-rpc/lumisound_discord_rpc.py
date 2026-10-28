@@ -307,7 +307,15 @@ def main() -> None:
     config = load_config(config_path)
     bridge = BridgeClient(config.get("bridge_url") or DEFAULT_BRIDGE_URL, config_path, config)
     
-    rpc_config = bridge.get_rpc_config()
+    # At login the bridge (Docker in WSL) may not be reachable yet (HTTP 530/timeouts);
+    # keep retrying instead of exiting.
+    while True:
+        try:
+            rpc_config = bridge.get_rpc_config()
+            break
+        except Exception as exc:
+            log(f"bridge not ready ({exc!r}); retrying in 10s")
+            time.sleep(10)
     client_id = config.get("discord_client_id") or (rpc_config.get("discord_client_id") if rpc_config else None)
     
     ipc = DiscordIPC(client_id)
@@ -332,7 +340,11 @@ def main() -> None:
 
     while True:
         if time.time() - last_rpc_check > 300:
-            new_rpc = bridge.get_rpc_config()
+            try:
+                new_rpc = bridge.get_rpc_config()
+            except Exception as exc:
+                log(f"rpc-config refresh failed ({exc!r}); keeping current client id")
+                new_rpc = None
             if new_rpc and new_rpc.get("discord_client_id") != client_id:
                 client_id = new_rpc["discord_client_id"]
                 ipc.close()
@@ -345,7 +357,13 @@ def main() -> None:
             time.sleep(poll_interval)
             continue
 
-        state = bridge.get_playback_state()
+        try:
+            state = bridge.get_playback_state()
+        except Exception as exc:
+            # A single timeout/5xx from the bridge used to kill the whole daemon.
+            log(f"bridge request failed ({exc!r}); retrying")
+            time.sleep(poll_interval)
+            continue
         activity = build_activity(state, config.get("large_image"), config.get("small_image"))
         signature = (activity.get("details"), activity.get("state")) if activity else None
         now = time.time()
