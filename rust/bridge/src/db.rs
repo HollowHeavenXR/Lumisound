@@ -34,6 +34,32 @@ pub async fn migrate(pool: &PgPool, schema_sql: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// SQL helpers the Rust queries use. `lumi_iso` renders a timestamp exactly
+/// like Python's datetime.isoformat() (6-digit fraction, or none at .000000),
+/// which the apps' fixed-format date parsers depend on.
+pub async fn ensure_helpers(pool: &PgPool) -> anyhow::Result<()> {
+    sqlx::raw_sql(
+        r#"CREATE OR REPLACE FUNCTION lumi_iso(t timestamp) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $f$
+             SELECT CASE WHEN t IS NULL THEN NULL
+                         WHEN date_part('microseconds', t)::bigint % 1000000 = 0 THEN to_char(t, 'YYYY-MM-DD"T"HH24:MI:SS')
+                         ELSE to_char(t, 'YYYY-MM-DD"T"HH24:MI:SS.US') END
+           $f$;"#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Python isoformat() of a naive timestamp.
+pub fn py_iso(t: &chrono::NaiveDateTime) -> String {
+    use chrono::Timelike;
+    if t.nanosecond() / 1000 == 0 {
+        t.format("%Y-%m-%dT%H:%M:%S").to_string()
+    } else {
+        t.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
+    }
+}
+
 /// Insert into ios_app_event_log; never fails the caller.
 pub async fn log_event(
     pool: &PgPool,

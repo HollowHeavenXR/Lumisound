@@ -48,6 +48,9 @@ pub struct Inner {
     pub motion_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
     pub motion_sem: tokio::sync::Semaphore,
     pub re_chosen_format: regex::Regex,
+    pub auth_attempts: DashMap<String, Vec<Instant>>,
+    pub release_cache: TtlCache<(), Value>,
+    pub release_stale: std::sync::Mutex<Option<Value>>,
 }
 
 impl std::ops::Deref for AppState {
@@ -60,6 +63,9 @@ impl std::ops::Deref for AppState {
 impl AppState {
     pub async fn new(cfg: Config) -> anyhow::Result<Self> {
         let db = crate::db::connect(&cfg).await?;
+        if let Err(e) = crate::db::ensure_helpers(&db).await {
+            tracing::error!("could not install SQL helpers: {e}");
+        }
         let http = reqwest::Client::builder()
             .user_agent("Lumisound/2.0 (+https://github.com/HollowHeavenXR/Lumisound)")
             .connect_timeout(std::time::Duration::from_secs(10))
@@ -108,6 +114,9 @@ impl AppState {
             motion_locks: DashMap::new(),
             motion_sem: tokio::sync::Semaphore::new(2),
             re_chosen_format: regex::Regex::new(r"Downloading \d+ format\(s\): ([0-9+]+)").unwrap(),
+            auth_attempts: DashMap::new(),
+            release_cache: TtlCache::new(Duration::from_secs(300), 2),
+            release_stale: std::sync::Mutex::new(None),
             cdn,
             cfg,
             db,
@@ -130,6 +139,7 @@ impl AppState {
                 st.session_cache.retain(|_, until| *until > now);
                 st.stream_tickets.sweep();
                 st.stream_urls.sweep();
+                st.auth_attempts.retain(|_, v| v.iter().any(|t| now.duration_since(*t) < Duration::from_secs(60)));
             }
         });
     }

@@ -29,8 +29,8 @@ responses against Python, then flip. When the list below is all checked, delete 
         status/result/pending), /api/track, /api/resolve, /api/playlist/*, /api/spotify/resolve,
         /api/radio, /api/motion-artwork — yt-dlp wrapper (spawn, JSON parse, progress, cookies,
         PO token, adaptive limiter)
-- [ ] 2. Auth: /auth/* (register, login, 2FA, sessions, password, delete, me), Discord OAuth
-- [ ] 3. Library core: /user/playlists*, /user/favorites, /user/settings*, /user/sync, /user/backups,
+- [x] 2. Auth: /auth/* (register, login, 2FA, sessions, password, delete, me), Discord OAuth
+- [x] 3. Library core: /user/playlists*, /user/favorites, /user/settings*, /user/sync, /user/backups,
         /user/folder-backups, /user/library/*, /user/history, /user/queue, /user/playback-state
 - [ ] 4. Cloud music + lock system: /user/music/* (upload, stream, artwork, waveform, metadata,
         delete), /api/library/server*, /user/storage/usage, locked_media.py (.lms), media backfill
@@ -85,3 +85,11 @@ responses against Python, then flip. When the list below is all checked, delete 
   unpinned/latest (Python pinned 2026.08.19, which no longer reads RD mixes).
 - Push (APNs/FCM) sender is a stub: neither is configured on this host. Port
   it with group 7.
+- Dates: apps parse `yyyy-MM-dd'T'HH:mm:ss.SSSSSS` (or no fraction). SQL uses
+  `lumi_iso(ts)` (installed by the bridge at startup) and Rust `db::py_iso`
+  to match Python isoformat() exactly. Don't use to_json(timestamp).
+- Python's /user/playlists/{id} (declared first) shadowed /user/playlists/folders and
+  /shared-with-me (both 404'd). axum prefers static segments, so folders now works;
+  shared-with-me still 404s until collaborators (group 6) are ported.
+- POST /user/history stays on Python (method fallback) until scrobbling (group 7).
+- Sync push / restore / queue / inventory now run in one transaction (Python was autocommit).

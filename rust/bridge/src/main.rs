@@ -13,6 +13,7 @@ mod auth;
 mod cache;
 mod config;
 mod db;
+mod email;
 mod error;
 mod extract;
 mod files;
@@ -23,6 +24,7 @@ mod proxy;
 mod routes;
 mod state;
 mod storage;
+mod totp;
 mod youtube;
 mod ytdlp;
 

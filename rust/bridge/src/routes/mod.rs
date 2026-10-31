@@ -6,13 +6,17 @@ use axum::middleware;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 
+mod account;
 mod health;
+mod library;
 mod live;
 pub mod media;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(health::routes())
+        .merge(account::routes())
+        .merge(library::routes())
         .merge(live::routes())
         .merge(media::routes())
         .fallback(proxy::fallback)
