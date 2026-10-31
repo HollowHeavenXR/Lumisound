@@ -21890,6 +21890,26 @@ async def friend_suggestions(limit: int = Query(10, ge=1, le=30), payload: dict 
 # consistent with the existing architecture and needs no new infra.
 _LIVE_CONNECTIONS: dict[str, set[WebSocket]] = {}
 
+# During the Rust port the Rust bridge owns /ws/live; this process hands its
+# live events to it over localhost (see RUST-PORT.md).
+LIVE_PUSH_URL: str = os.getenv("LIVE_PUSH_URL", "")
+_LIVE_PUSH_TOKEN: str = hashlib.sha256(
+    f"{os.getenv('IOS_JWT_SECRET', '').strip()}|live-push".encode()
+).hexdigest()
+
+
+def _post_live_push_sync(user_ids: list[str], event: dict) -> None:
+    try:
+        req = urllib.request.Request(
+            LIVE_PUSH_URL,
+            data=json.dumps({"user_ids": user_ids, "event": event}).encode(),
+            headers={"Content-Type": "application/json", "X-Internal-Token": _LIVE_PUSH_TOKEN},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=3).close()
+    except Exception as exc:
+        logger.debug("live push relay failed: %s", exc)
+
 
 async def _push_live_event(user_id: str, event: dict) -> None:
     """Best-effort: sends `event` (a small JSON dict, always including a
@@ -21899,6 +21919,9 @@ async def _push_live_event(user_id: str, event: dict) -> None:
     is a live-update CHANNEL, not a durable delivery guarantee, so callers
     should always fire it via `asyncio.create_task` and never let it block
     or fail the request that triggered it."""
+    if LIVE_PUSH_URL:
+        await asyncio.to_thread(_post_live_push_sync, [user_id], event)
+        return
     sockets = _LIVE_CONNECTIONS.get(user_id)
     if not sockets:
         return
@@ -21927,6 +21950,10 @@ async def _push_live_event_to_friends(user_id: str, event: dict) -> None:
                 friend_ids = [r[0] for r in await cur.fetchall()]
     except Exception as exc:
         logger.debug("_push_live_event_to_friends: friend lookup failed for %s: %s", user_id, exc)
+        return
+    if LIVE_PUSH_URL:
+        if friend_ids:
+            await asyncio.to_thread(_post_live_push_sync, friend_ids, event)
         return
     for friend_id in friend_ids:
         if friend_id in _LIVE_CONNECTIONS:

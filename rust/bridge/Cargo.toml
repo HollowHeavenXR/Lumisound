@@ -1,0 +1,36 @@
+[package]
+name = "lumisound-bridge"
+version.workspace = true
+edition.workspace = true
+description = "Lumisound server (replaces the Python ios-bridge)"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "cors"] }
+tower = "0.5"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "json", "chrono", "uuid", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+bytes = "1"
+jsonwebtoken = "9"
+bcrypt = "0.17"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+dashmap = "6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+mimalloc = "0.1"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.9"
+urlencoding = "2"
+async-stream = "0.3"
+regex = "1"
+url = "2"
+flate2 = "1"

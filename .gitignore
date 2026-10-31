@@ -58,3 +58,8 @@ tmp/
 __pycache__/
 *.pyc
 ios-bridge/result
+
+# Rust
+rust/target/
+rust/.cargo-cache/
+ios/RustCore/
