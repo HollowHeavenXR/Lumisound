@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-pub const PORTED: &[&str] = &["media_backfill", "duplicate_scan", "storage_quota"];
+pub const PORTED: &[&str] = &["media_backfill", "duplicate_scan", "storage_quota", "weekly_mix", "artist_image"];
 
 pub fn spawn_all(st: &AppState) {
     let enabled: Vec<String> = match std::env::var("RUST_LOOPS") {
@@ -30,6 +30,14 @@ pub fn spawn_all(st: &AppState) {
     if on("storage_quota") {
         let st = st.clone();
         tokio::spawn(async move { storage_quota_loop(st).await });
+    }
+    if on("weekly_mix") {
+        let st = st.clone();
+        tokio::spawn(async move { weekly_mix_loop(st).await });
+    }
+    if on("artist_image") {
+        let st = st.clone();
+        tokio::spawn(async move { artist_image_loop(st).await });
     }
     tracing::info!("background loops enabled: {enabled:?}");
 }
@@ -396,6 +404,79 @@ async fn storage_quota_loop(st: AppState) {
             }
             (Err(e), _) | (_, Err(e)) => tracing::error!("storage quota janitor: reassert failed: {e}"),
             _ => {}
+        }
+    }
+}
+
+// ---- weekly mix ------------------------------------------------------------------------------
+
+async fn weekly_mix_loop(st: AppState) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(3600)).await;
+        let row: Option<String> = sqlx::query_scalar(
+            "SELECT m.user_id FROM ios_user_music_metadata m LEFT JOIN ios_weekly_mix_cache c ON c.user_id = m.user_id \
+             WHERE c.user_id IS NULL OR c.generated_at < NOW() - make_interval(days => 7) \
+             GROUP BY m.user_id ORDER BY MIN(c.generated_at) IS NULL DESC, MIN(c.generated_at) ASC LIMIT 1",
+        )
+        .fetch_optional(&st.db)
+        .await
+        .unwrap_or(None);
+        let Some(uid) = row else { continue };
+        match crate::routes::discovery::generate_weekly_mix(&st, &uid).await {
+            Ok(t) => {
+                let _ = crate::routes::discovery::save_weekly_mix(&st, &uid, &t).await;
+                tracing::info!("weekly mix: regenerated {} track(s) for user {uid}", t.len());
+            }
+            Err(e) => tracing::error!("weekly mix loop: pass failed: {e}"),
+        }
+    }
+}
+
+// ---- artist images ---------------------------------------------------------------------------
+
+async fn url_is_alive(st: &AppState, url: &str) -> bool {
+    for head in [true, false] {
+        let req = if head { st.http.head(url) } else { st.http.get(url).header("Range", "bytes=0-0") };
+        match req.timeout(Duration::from_secs(10)).send().await {
+            Ok(r) if r.status().as_u16() < 400 => return true,
+            Ok(r) if matches!(r.status().as_u16(), 403 | 405) => continue,
+            _ => return false,
+        }
+    }
+    false
+}
+
+async fn artist_image_loop(st: AppState) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(300)).await;
+        let rows: Vec<(String, Option<String>, Option<bool>)> = match sqlx::query_as(
+            "WITH all_artists AS (SELECT DISTINCT TRIM(artist) AS artist FROM ios_user_music_metadata WHERE artist IS NOT NULL AND TRIM(artist) != '' \
+               UNION SELECT DISTINCT TRIM(artist) AS artist FROM ios_play_history WHERE artist IS NOT NULL AND TRIM(artist) != '') \
+             SELECT a.artist, c.image_url, c.found FROM all_artists a LEFT JOIN ios_artist_image_cache c ON c.artist_name = LOWER(a.artist) \
+             WHERE c.artist_name IS NULL OR (c.found IS FALSE AND c.last_checked_at < NOW() - make_interval(days => 14)) \
+                OR (c.found IS TRUE AND c.last_checked_at < NOW() - make_interval(days => 60)) \
+             ORDER BY c.last_checked_at IS NULL DESC, c.last_checked_at ASC LIMIT 5",
+        )
+        .fetch_all(&st.db)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("artist image loop: tick failed: {e}");
+                continue;
+            }
+        };
+        for (name, url, found) in rows {
+            let key = name.trim().to_lowercase();
+            if let (Some(true), Some(u)) = (found, url.as_deref()) {
+                if url_is_alive(&st, u).await {
+                    let _ = sqlx::query("UPDATE ios_artist_image_cache SET last_checked_at = NOW() WHERE artist_name = $1").bind(&key).execute(&st.db).await;
+                    continue;
+                }
+                tracing::info!("artist image: stored image for {name:?} is no longer reachable, re-resolving");
+            }
+            let r = crate::routes::discovery::resolve_artist_image(&st, &name, st.cfg.youtube_api_key.as_deref().unwrap_or("")).await;
+            crate::routes::discovery::upsert_artist_image(&st, &key, &r).await;
         }
     }
 }

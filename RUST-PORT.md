@@ -35,7 +35,7 @@ responses against Python, then flip. When the list below is all checked, delete 
 - [x] 4. Cloud music + lock system: /user/music/* (upload, stream, artwork, waveform, metadata,
         delete), /api/library/server*, /user/storage/usage, locked_media.py (.lms), media backfill
         loop, artist image loop, duplicate scan loop
-- [ ] 5. Stats/discovery: /user/stats*, /user/on-this-day, recommendations, smart-playlists,
+- [x] 5. Stats/discovery (stations, daily-pick, liner-notes moved to 8 — they call Gemini): /user/stats*, /user/on-this-day, recommendations, smart-playlists,
         weekly-mix, discover-mix, stations, daily-pick, achievements, liner-notes, /api/artist/*
 - [ ] 6. Social: /api/social/*, /social/*, /ws/live, rooms, device-sync, shared playlists,
         collaborators, comments, presence
@@ -99,5 +99,6 @@ responses against Python, then flip. When the list below is all checked, delete 
   (rust/bridge/src/lock.rs); readable_copy handles gzip+lock together. Background loops
   media_backfill / duplicate_scan / storage_quota run in Rust (RUST_LOOPS), Python skips
   them via LEGACY_DISABLE_LOOPS (patched lifespan).
+- serde_json preserve_order is on: JSON keys keep insertion order like Python dicts.
 - Known schema quirk (unchanged): ios_user_music_metadata.id is the content hash alone, so
   two users uploading the same file share one row (second upload rewrites the first's).

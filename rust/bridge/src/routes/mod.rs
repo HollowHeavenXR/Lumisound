@@ -7,6 +7,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 
 mod account;
+pub mod discovery;
 mod health;
 mod library;
 mod live;
@@ -18,6 +19,7 @@ pub fn router(state: AppState) -> Router {
         .merge(health::routes())
         .merge(account::routes())
         .merge(library::routes())
+        .merge(discovery::routes())
         .merge(live::routes())
         .merge(music::routes())
         .merge(media::routes())
