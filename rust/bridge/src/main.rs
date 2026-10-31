@@ -9,7 +9,9 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod analysis;
 mod auth;
+mod background;
 mod cache;
 mod config;
 mod db;
@@ -17,6 +19,7 @@ mod email;
 mod error;
 mod extract;
 mod files;
+mod lock;
 mod notify;
 mod perf;
 mod probe;

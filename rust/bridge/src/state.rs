@@ -51,6 +51,9 @@ pub struct Inner {
     pub auth_attempts: DashMap<String, Vec<Instant>>,
     pub release_cache: TtlCache<(), Value>,
     pub release_stale: std::sync::Mutex<Option<Value>>,
+    /// Upload/backfill analysis runs (ffmpeg decodes) at once.
+    pub analysis_sem: tokio::sync::Semaphore,
+    pub storage_tier_sent: DashMap<String, f64>,
 }
 
 impl std::ops::Deref for AppState {
@@ -117,6 +120,8 @@ impl AppState {
             auth_attempts: DashMap::new(),
             release_cache: TtlCache::new(Duration::from_secs(300), 2),
             release_stale: std::sync::Mutex::new(None),
+            analysis_sem: tokio::sync::Semaphore::new(3),
+            storage_tier_sent: DashMap::new(),
             cdn,
             cfg,
             db,
@@ -130,6 +135,7 @@ impl AppState {
     /// Background loops that are already ported. The legacy bridge still
     /// runs the rest until their route groups move over.
     pub fn spawn_background(&self) {
+        crate::background::spawn_all(self);
         let st = self.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));

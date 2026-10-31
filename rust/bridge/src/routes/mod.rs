@@ -10,6 +10,7 @@ mod account;
 mod health;
 mod library;
 mod live;
+mod music;
 pub mod media;
 
 pub fn router(state: AppState) -> Router {
@@ -18,6 +19,7 @@ pub fn router(state: AppState) -> Router {
         .merge(account::routes())
         .merge(library::routes())
         .merge(live::routes())
+        .merge(music::routes())
         .merge(media::routes())
         .fallback(proxy::fallback)
         .layer(CompressionLayer::new().gzip(true).quality(tower_http::CompressionLevel::Precise(4)).compress_when(perf::Compressible))

@@ -1602,17 +1602,26 @@ async def _extra_logs_janitor() -> None:
 async def lifespan(app: FastAPI):
     await init_db()
     await cleanup_orphan_temp_dirs()
+    # Loops the Rust bridge has taken over (see RUST-PORT.md) are skipped
+    # here so the two servers don't do the same work twice.
+    _disabled = {s.strip() for s in os.getenv("LEGACY_DISABLE_LOOPS", "").split(",") if s.strip()}
+
+    async def _idle() -> None:
+        await asyncio.Event().wait()
+
+    def _loop(name, factory):
+        return asyncio.create_task(_idle() if name in _disabled else factory())
     janitor = asyncio.create_task(_auth_attempts_janitor())
     app_logs_janitor = asyncio.create_task(_app_logs_janitor())
     event_log_janitor = asyncio.create_task(_event_log_janitor())
     extra_logs_janitor = asyncio.create_task(_extra_logs_janitor())
     rooms_janitor = asyncio.create_task(_rooms_janitor())
     subscription_poller = asyncio.create_task(_subscription_polling_loop())
-    duplicate_scanner = asyncio.create_task(_duplicate_scan_loop())
+    duplicate_scanner = _loop("duplicate_scan", _duplicate_scan_loop)
     weekly_mix_generator = asyncio.create_task(_weekly_mix_loop())
-    media_backfiller = asyncio.create_task(_media_backfill_loop())
+    media_backfiller = _loop("media_backfill", _media_backfill_loop)
     artist_image_backfiller = asyncio.create_task(_artist_image_loop())
-    storage_quota_janitor = asyncio.create_task(_storage_quota_default_janitor())
+    storage_quota_janitor = _loop("storage_quota", _storage_quota_default_janitor)
     yield
     janitor.cancel()
     app_logs_janitor.cancel()

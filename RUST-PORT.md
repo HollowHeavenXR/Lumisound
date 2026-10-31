@@ -32,7 +32,7 @@ responses against Python, then flip. When the list below is all checked, delete 
 - [x] 2. Auth: /auth/* (register, login, 2FA, sessions, password, delete, me), Discord OAuth
 - [x] 3. Library core: /user/playlists*, /user/favorites, /user/settings*, /user/sync, /user/backups,
         /user/folder-backups, /user/library/*, /user/history, /user/queue, /user/playback-state
-- [ ] 4. Cloud music + lock system: /user/music/* (upload, stream, artwork, waveform, metadata,
+- [x] 4. Cloud music + lock system: /user/music/* (upload, stream, artwork, waveform, metadata,
         delete), /api/library/server*, /user/storage/usage, locked_media.py (.lms), media backfill
         loop, artist image loop, duplicate scan loop
 - [ ] 5. Stats/discovery: /user/stats*, /user/on-this-day, recommendations, smart-playlists,
@@ -93,3 +93,11 @@ responses against Python, then flip. When the list below is all checked, delete 
   shared-with-me still 404s until collaborators (group 6) are ported.
 - POST /user/history stays on Python (method fallback) until scrobbling (group 7).
 - Sync push / restore / queue / inventory now run in one transaction (Python was autocommit).
+- Group 4: uploads stream to disk while hashing (Python buffered 100 MB in RAM); upload
+  analysis is ONE ffmpeg decode (asplit -> loudnorm + 11025 Hz + 5512 Hz) instead of four,
+  results bit-identical to Python on test tracks. LMSLOCK1 unmask is a seekable XOR stream
+  (rust/bridge/src/lock.rs); readable_copy handles gzip+lock together. Background loops
+  media_backfill / duplicate_scan / storage_quota run in Rust (RUST_LOOPS), Python skips
+  them via LEGACY_DISABLE_LOOPS (patched lifespan).
+- Known schema quirk (unchanged): ios_user_music_metadata.id is the content hash alone, so
+  two users uploading the same file share one row (second upload rewrites the first's).
