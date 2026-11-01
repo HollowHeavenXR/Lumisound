@@ -20,11 +20,7 @@ final class ListeningGoalService: ObservableObject {
     /// given to disk, it doesn't sanitize on write.
     @Published var targetMinutes: Int? {
         didSet {
-            guard let targetMinutes, targetMinutes > 0 else {
-                UserDefaults.standard.removeObject(forKey: Self.targetMinutesKey)
-                return
-            }
-            UserDefaults.standard.set(targetMinutes, forKey: Self.targetMinutesKey)
+            goalSetTarget(minutes: targetMinutes.map(Int64.init))
         }
     }
 
@@ -32,8 +28,10 @@ final class ListeningGoalService: ObservableObject {
     @Published private(set) var hasLoaded = false
 
     private init() {
-        let stored = UserDefaults.standard.integer(forKey: Self.targetMinutesKey)
-        targetMinutes = stored > 0 ? stored : nil
+        let d = UserDefaults.standard
+        goalImportLegacy(targetMinutes: Int64(d.integer(forKey: Self.targetMinutesKey)),
+                         congratulatedWeek: d.string(forKey: Self.congratulatedWeekKey))
+        targetMinutes = goalTarget().map(Int.init)
     }
 
     var progressFraction: Double {
@@ -58,18 +56,9 @@ final class ListeningGoalService: ObservableObject {
         checkCongratulation()
     }
 
+    /// Once per ISO week (rule + state in the Rust core).
     private func checkCongratulation() {
-        guard isGoalMet else { return }
-        let weekKey = Self.currentWeekKey()
-        guard UserDefaults.standard.string(forKey: Self.congratulatedWeekKey) != weekKey else { return }
-        UserDefaults.standard.set(weekKey, forKey: Self.congratulatedWeekKey)
+        guard goalShouldCongratulate(progressMinutes: Int64(progressMinutes)) else { return }
         ToastCenter.shared.show("Weekly listening goal reached!", category: .success, icon: "checkmark.seal.fill")
-    }
-
-    private static func currentWeekKey() -> String {
-        var calendar = Calendar(identifier: .iso8601)
-        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
-        let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: Date())
-        return "\(components.yearForWeekOfYear ?? 0)-W\(components.weekOfYear ?? 0)"
     }
 }

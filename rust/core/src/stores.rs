@@ -277,3 +277,216 @@ mod tests {
         let _ = std::fs::remove_dir_all(d);
     }
 }
+
+// ---- time capsules --------------------------------------------------------------------------
+
+const CAPSULES: &str = "time_capsules";
+
+#[derive(uniffi::Record, Serialize, Deserialize, Clone, Debug)]
+pub struct TimeCapsuleRecord {
+    pub id: String,
+    pub name: String,
+    pub message: String,
+    pub song_ids: Vec<String>,
+    pub created_at: f64,
+    pub unlock_at: f64,
+    pub opened_at: Option<f64>,
+}
+
+#[uniffi::export]
+pub fn capsules_import_legacy(json: Vec<u8>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(CAPSULES) {
+        return;
+    }
+    #[derive(Deserialize)]
+    struct L {
+        id: String,
+        name: String,
+        #[serde(default)]
+        message: String,
+        #[serde(rename = "songIDs", default)]
+        song_ids: Vec<String>,
+        #[serde(rename = "createdAt")]
+        created_at: f64,
+        #[serde(rename = "unlockAt")]
+        unlock_at: f64,
+        #[serde(rename = "openedAt")]
+        opened_at: Option<f64>,
+    }
+    let v: Vec<L> = serde_json::from_slice(&json).unwrap_or_default();
+    let out: Vec<TimeCapsuleRecord> = v
+        .into_iter()
+        .map(|c| TimeCapsuleRecord { id: c.id, name: c.name, message: c.message, song_ids: c.song_ids, created_at: c.created_at + APPLE_EPOCH, unlock_at: c.unlock_at + APPLE_EPOCH, opened_at: c.opened_at.map(|d| d + APPLE_EPOCH) })
+        .collect();
+    store::save(CAPSULES, &out);
+}
+
+#[uniffi::export]
+pub fn capsules_all() -> Vec<TimeCapsuleRecord> {
+    store::load(CAPSULES)
+}
+
+/// Seal a new capsule (newest first); None when the name or songs are empty.
+#[uniffi::export]
+pub fn capsule_seal(name: String, message: String, song_ids: Vec<String>, unlock_at: f64) -> Option<TimeCapsuleRecord> {
+    let name = name.trim().to_string();
+    if name.is_empty() || song_ids.is_empty() {
+        return None;
+    }
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<TimeCapsuleRecord> = store::load(CAPSULES);
+    let c = TimeCapsuleRecord { id: uuid::Uuid::new_v4().to_string().to_uppercase(), name, message, song_ids, created_at: now(), unlock_at, opened_at: None };
+    v.insert(0, c.clone());
+    store::save(CAPSULES, &v);
+    Some(c)
+}
+
+#[uniffi::export]
+pub fn capsule_mark_opened(id: String) {
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<TimeCapsuleRecord> = store::load(CAPSULES);
+    if let Some(c) = v.iter_mut().find(|c| c.id == id && c.opened_at.is_none()) {
+        c.opened_at = Some(now());
+        store::save(CAPSULES, &v);
+    }
+}
+
+#[uniffi::export]
+pub fn capsule_delete(id: String) {
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<TimeCapsuleRecord> = store::load(CAPSULES);
+    v.retain(|c| c.id != id);
+    store::save(CAPSULES, &v);
+}
+
+// ---- deleted playlists (30-day trash) ---------------------------------------------------------
+
+const TRASH: &str = "deleted_playlists";
+const TRASH_DAYS: f64 = 30.0;
+
+#[derive(uniffi::Record, Serialize, Deserialize, Clone, Debug)]
+pub struct TrashEntry {
+    pub id: String,
+    /// The playlist as the app encodes it (opaque to the core).
+    pub playlist_json: String,
+    pub deleted_at: f64,
+}
+
+#[uniffi::export]
+pub fn trash_import_legacy(json: Vec<u8>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(TRASH) {
+        return;
+    }
+    let v: Vec<serde_json::Value> = serde_json::from_slice(&json).unwrap_or_default();
+    let out: Vec<TrashEntry> = v
+        .into_iter()
+        .filter_map(|e| Some(TrashEntry { id: e["id"].as_str()?.to_string(), playlist_json: e["playlist"].to_string(), deleted_at: e["deletedAt"].as_f64()? + APPLE_EPOCH }))
+        .collect();
+    store::save(TRASH, &out);
+}
+
+fn trash_load_fresh() -> Vec<TrashEntry> {
+    let mut v: Vec<TrashEntry> = store::load(TRASH);
+    let cutoff = now() - TRASH_DAYS * 86_400.0;
+    let before = v.len();
+    v.retain(|e| e.deleted_at >= cutoff);
+    if v.len() != before {
+        store::save(TRASH, &v);
+    }
+    v
+}
+
+/// Entries newer than 30 days (expired ones are purged), newest first.
+#[uniffi::export]
+pub fn trash_entries() -> Vec<TrashEntry> {
+    let _g = LOCK.lock().unwrap();
+    trash_load_fresh()
+}
+
+#[uniffi::export]
+pub fn trash_add(playlist_json: String) -> TrashEntry {
+    let _g = LOCK.lock().unwrap();
+    let mut v = trash_load_fresh();
+    let e = TrashEntry { id: uuid::Uuid::new_v4().to_string().to_uppercase(), playlist_json, deleted_at: now() };
+    v.insert(0, e.clone());
+    store::save(TRASH, &v);
+    e
+}
+
+/// Remove and return the playlist JSON (restore), or just drop it (purge).
+#[uniffi::export]
+pub fn trash_take(entry_id: String) -> Option<String> {
+    let _g = LOCK.lock().unwrap();
+    let mut v = trash_load_fresh();
+    let i = v.iter().position(|e| e.id == entry_id)?;
+    let e = v.remove(i);
+    store::save(TRASH, &v);
+    Some(e.playlist_json)
+}
+
+#[uniffi::export]
+pub fn trash_purge_all() {
+    let _g = LOCK.lock().unwrap();
+    store::save(TRASH, &Vec::<TrashEntry>::new());
+}
+
+// ---- weekly listening goal ------------------------------------------------------------------
+
+const GOAL: &str = "listening_goal";
+
+#[derive(Serialize, Deserialize, Default)]
+struct Goal {
+    target_minutes: Option<i64>,
+    congratulated_week: Option<String>,
+}
+
+/// ISO-8601 week key ("2026-W44") in UTC.
+pub fn iso_week_key(unix: f64) -> String {
+    use chrono::Datelike;
+    let d = chrono::DateTime::from_timestamp(unix as i64, 0).unwrap_or_default().date_naive();
+    let w = d.iso_week();
+    format!("{}-W{}", w.year(), w.week())
+}
+
+#[uniffi::export]
+pub fn goal_import_legacy(target_minutes: i64, congratulated_week: Option<String>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(GOAL) {
+        return;
+    }
+    store::save(GOAL, &Goal { target_minutes: (target_minutes > 0).then_some(target_minutes), congratulated_week });
+}
+
+#[uniffi::export]
+pub fn goal_target() -> Option<i64> {
+    let g: Goal = store::load(GOAL);
+    g.target_minutes.filter(|t| *t > 0)
+}
+
+#[uniffi::export]
+pub fn goal_set_target(minutes: Option<i64>) {
+    let _g = LOCK.lock().unwrap();
+    let mut g: Goal = store::load(GOAL);
+    g.target_minutes = minutes.filter(|m| *m > 0);
+    store::save(GOAL, &g);
+}
+
+/// True once per ISO week, the first time progress reaches the target.
+#[uniffi::export]
+pub fn goal_should_congratulate(progress_minutes: i64) -> bool {
+    let _g = LOCK.lock().unwrap();
+    let mut g: Goal = store::load(GOAL);
+    let Some(t) = g.target_minutes.filter(|t| *t > 0) else { return false };
+    if progress_minutes < t {
+        return false;
+    }
+    let wk = iso_week_key(now());
+    if g.congratulated_week.as_deref() == Some(&wk) {
+        return false;
+    }
+    g.congratulated_week = Some(wk);
+    store::save(GOAL, &g);
+    true
+}

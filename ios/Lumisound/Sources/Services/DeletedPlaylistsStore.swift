@@ -22,52 +22,42 @@ final class DeletedPlaylistsStore: ObservableObject {
     @Published private(set) var entries: [DeletedPlaylistEntry] = []
 
     private init() {
-        load()
-        purgeExpired()
+        if let data = UserDefaults.standard.data(forKey: key) { trashImportLegacy(json: data) }
+        reload()
+    }
+
+    /// The trash and its 30-day retention live in the Rust core; this is a
+    /// published mirror for the Recently Deleted screen.
+    private func reload() {
+        entries = trashEntries().compactMap { e in
+            guard let id = UUID(uuidString: e.id), let data = e.playlistJson.data(using: .utf8),
+                  let playlist = try? JSONDecoder().decode(Playlist.self, from: data) else { return nil }
+            return DeletedPlaylistEntry(id: id, playlist: playlist, deletedAt: Date(timeIntervalSince1970: e.deletedAt))
+        }
     }
 
     func trash(_ playlist: Playlist) {
-        entries.insert(DeletedPlaylistEntry(id: UUID(), playlist: playlist, deletedAt: Date()), at: 0)
-        save()
+        guard let data = try? JSONEncoder().encode(playlist), let json = String(data: data, encoding: .utf8) else { return }
+        _ = trashAdd(playlistJson: json)
+        reload()
     }
 
-    /// Removes and returns the entry's playlist so the caller can re-add
-    /// it to the live library — this store only ever holds the trashed
-    /// copy, it doesn't know how to reinsert it itself.
     func restore(entryID: DeletedPlaylistEntry.ID) -> Playlist? {
-        guard let index = entries.firstIndex(where: { $0.id == entryID }) else { return nil }
-        let entry = entries.remove(at: index)
-        save()
-        return entry.playlist
+        let playlist = entries.first { $0.id == entryID }?.playlist
+        _ = trashTake(entryId: entryID.uuidString)
+        reload()
+        return playlist
     }
 
     func purge(entryID: DeletedPlaylistEntry.ID) {
-        entries.removeAll { $0.id == entryID }
-        save()
+        _ = trashTake(entryId: entryID.uuidString)
+        reload()
     }
 
     func purgeAll() {
-        entries.removeAll()
-        save()
+        trashPurgeAll()
+        reload()
     }
 
-    func purgeExpired() {
-        let cutoff = Date().addingTimeInterval(-Self.retentionDays * 86400)
-        let before = entries.count
-        entries.removeAll { $0.deletedAt < cutoff }
-        if entries.count != before { save() }
-    }
-
-    private func load() {
-        if let data = UserDefaults.standard.data(forKey: key),
-           let decoded = try? JSONDecoder().decode([DeletedPlaylistEntry].self, from: data) {
-            entries = decoded
-        }
-    }
-
-    private func save() {
-        if let data = try? JSONEncoder().encode(entries) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
-    }
+    func purgeExpired() { reload() }
 }

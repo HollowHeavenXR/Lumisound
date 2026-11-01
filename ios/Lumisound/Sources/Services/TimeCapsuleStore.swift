@@ -31,7 +31,10 @@ final class TimeCapsuleStore: ObservableObject {
     private let key = "timeCapsules.v1"
     @Published private(set) var capsules: [TimeCapsule] = []
 
-    private init() { load() }
+    private init() {
+        if let data = UserDefaults.standard.data(forKey: key) { capsulesImportLegacy(json: data) }
+        load()
+    }
 
     /// Seals a new capsule and schedules its unlock notification. `unlockAt`
     /// should be in the future — sealing one for a past date just means it
@@ -40,12 +43,10 @@ final class TimeCapsuleStore: ObservableObject {
     func seal(name: String, message: String, songIDs: [Song.ID], unlockAt: Date) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, !songIDs.isEmpty else { return }
-        let capsule = TimeCapsule(
-            id: UUID(), name: trimmedName, message: message, songIDs: songIDs,
-            createdAt: Date(), unlockAt: unlockAt, openedAt: nil
-        )
+        guard let r = capsuleSeal(name: trimmedName, message: message, songIds: songIDs,
+                                  unlockAt: unlockAt.timeIntervalSince1970),
+              let capsule = Self.capsule(r) else { return }
         capsules.insert(capsule, at: 0)
-        save()
         if unlockAt > Date() {
             scheduleNotification(for: capsule)
         }
@@ -55,11 +56,12 @@ final class TimeCapsuleStore: ObservableObject {
         guard let index = capsules.firstIndex(where: { $0.id == id }) else { return }
         guard capsules[index].openedAt == nil else { return }
         capsules[index].openedAt = Date()
-        save()
+        capsuleMarkOpened(id: id.uuidString)
     }
 
     func delete(_ id: TimeCapsule.ID) {
         capsules.removeAll { $0.id == id }
+        capsuleDelete(id: id.uuidString)
         UNUserNotificationCenter.current().removePendingNotificationRequests(
             withIdentifiers: [notificationIdentifier(for: id)]
         )
@@ -91,16 +93,18 @@ final class TimeCapsuleStore: ObservableObject {
         }
     }
 
-    private func load() {
-        if let data = UserDefaults.standard.data(forKey: key),
-           let decoded = try? JSONDecoder().decode([TimeCapsule].self, from: data) {
-            capsules = decoded
-        }
+    private static func capsule(_ r: TimeCapsuleRecord) -> TimeCapsule? {
+        guard let id = UUID(uuidString: r.id) else { return nil }
+        return TimeCapsule(id: id, name: r.name, message: r.message, songIDs: r.songIds,
+                           createdAt: Date(timeIntervalSince1970: r.createdAt),
+                           unlockAt: Date(timeIntervalSince1970: r.unlockAt),
+                           openedAt: r.openedAt.map { Date(timeIntervalSince1970: $0) })
     }
 
-    private func save() {
-        if let data = try? JSONEncoder().encode(capsules) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
+    /// Capsules live in the Rust core store (rust/core/src/stores.rs).
+    private func load() {
+        capsules = capsulesAll().compactMap(Self.capsule)
     }
+
+    private func save() {}
 }
