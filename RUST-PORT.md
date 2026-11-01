@@ -66,20 +66,31 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
 - [x] A. Crate + UniFFI + build-core.sh + CI step in all 6 workflows (CI build green 2026-11-01)
 - [ ] B. API client + auth/token store + all AccountService+* calls
       [x] _makeRequest -> Rust ApiClient (retries, FastAPI errors, 401)
-      [ ] StreamingService request builder (X-API-Key routes) -> ApiClient
+      [x] every URLSession.shared.data/upload in the iOS app -> Core.data(for:) (Rust http_send)
       [ ] token/session store, sync debounce + inventory diff logic
-      [ ] LiveUpdateService socket -> Rust (tokio-tungstenite), events to Swift callback
+      [x] LiveUpdateService socket -> Rust live.rs (typed events, backoff)
 - [ ] C. Lock system
       [x] LMSLOCK1 lock/unlock (streamed, atomic), playable cache, vault (AES-GCM), xattr tag
       [ ] LumisoundExclusiveExtensionService.convert pipeline + relock/integrity passes
       [ ] AppLockService state (LocalAuthentication prompt itself stays Swift)
 - [ ] D. Download manager (BackgroundDownloadManager, StreamingService+DownloadToLibrary,
       DownloadLedgerStore, DownloadFailureStore, AudioTagWriter -> lofty)
-- [ ] E. Audio engine: symphonia decode + cpal output, queue, gapless, crossfade, EQ/effects,
+      [x] core store.rs (Application Support/LumisoundCore JSON docs) + downloads.rs
+          (ledger, in-flight claims, failure cool-offs, dest naming, formats)
+      [ ] job flow (start/poll/relay/direct), finalize+lock, tagging
+- [ ] E. Audio engine (plan: rust/core/src/engine/: cpal output, 2 decks for gapless/
+        crossfade, decoder threads -> ring buffers, resampler, RBJ biquad EQ, freeverb,
+        fades, offline-render unit tests; Swift AudioPlayerManager calls Engine; ship
+        behind a Settings toggle until verified on device). symphonia decode + cpal output, queue, gapless, crossfade, EQ/effects,
         A-B repeat, speed/pitch, ReplayGain, visualizer taps; Swift keeps AVAudioSession +
         NowPlaying/remote commands glue only
 - [ ] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files,
       silence trim, spectral EQ, pitch contour, normalization)
+      [x] media::decode (symphonia) + media::analysis (DSP shared with bridge);
+          core analysis.rs: decode_mono, bpm (cached), key, waveform, transition, spectral
+      [x] BPMAnalyzerService on the core (AVAssetReader only for Opus/WebM)
+      [ ] Opus decode in Rust (symphonia has none; options: libopus static via audiopus_sys)
+      [ ] beat grid, fingerprint, silence trim, pitch contour, duplicates, corrupt finder
 - [ ] G. Remaining services (social, rooms, podcasts, stats, backups, cache, diagnostics,
       stores: PlayHistory/Bookmark/TimeCapsule/LongTrackResume/RecentlyDeleted, Lua engines)
 - [ ] H. Swift rewired, old Swift services deleted, tvOS/watchOS on the core, release tag
