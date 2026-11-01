@@ -490,3 +490,169 @@ pub fn goal_should_congratulate(progress_minutes: i64) -> bool {
     store::save(GOAL, &g);
     true
 }
+
+// ---- recently deleted songs (files moved into a trash folder for 30 days) -----------------------
+
+const RD: &str = "recently_deleted";
+const RD_RETENTION: f64 = 30.0 * 86_400.0;
+
+#[derive(uniffi::Record, Serialize, Deserialize, Clone, Debug)]
+pub struct DeletedSong {
+    pub id: String,
+    /// The Song as the app encodes it (opaque to the core).
+    pub song_json: String,
+    pub trash_filename: String,
+    pub deleted_at: f64,
+}
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct RestoredSong {
+    pub song_json: String,
+    pub path: String,
+}
+
+fn move_file(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::rename(src, dst) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            std::fs::copy(src, dst)?;
+            std::fs::remove_file(src)
+        }
+    }
+}
+
+#[uniffi::export]
+pub fn deleted_songs_import_legacy(json: Vec<u8>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(RD) {
+        return;
+    }
+    let v: Vec<serde_json::Value> = serde_json::from_slice(&json).unwrap_or_default();
+    let out: Vec<DeletedSong> = v
+        .into_iter()
+        .filter_map(|e| {
+            Some(DeletedSong { id: e["id"].as_str()?.to_string(), song_json: e["song"].to_string(), trash_filename: e["trashFilename"].as_str()?.to_string(), deleted_at: e["deletedAt"].as_f64()? + APPLE_EPOCH })
+        })
+        .collect();
+    store::save(RD, &out);
+}
+
+#[uniffi::export]
+pub fn deleted_songs() -> Vec<DeletedSong> {
+    store::load(RD)
+}
+
+/// Move `src_path` into `trash_dir` and remember the song; false if the move failed.
+#[uniffi::export]
+pub fn deleted_song_trash(song_id: String, song_json: String, src_path: String, trash_dir: String) -> bool {
+    let src = std::path::Path::new(&src_path);
+    let _ = std::fs::create_dir_all(&trash_dir);
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let name = format!("{}.{ext}", uuid::Uuid::new_v4().to_string().to_uppercase());
+    if move_file(src, &std::path::Path::new(&trash_dir).join(&name)).is_err() {
+        return false;
+    }
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<DeletedSong> = store::load(RD);
+    v.push(DeletedSong { id: song_id, song_json, trash_filename: name, deleted_at: now() });
+    store::save(RD, &v);
+    true
+}
+
+/// Move the file back into `restore_dir` (as `original_name`, de-duplicated)
+/// and return the stored song + its new path.
+#[uniffi::export]
+pub fn deleted_song_restore(entry_id: String, trash_dir: String, restore_dir: String, original_name: Option<String>) -> Option<RestoredSong> {
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<DeletedSong> = store::load(RD);
+    let i = v.iter().position(|e| e.id == entry_id)?;
+    let src = std::path::Path::new(&trash_dir).join(&v[i].trash_filename);
+    if !src.exists() {
+        v.remove(i);
+        store::save(RD, &v);
+        return None;
+    }
+    let _ = std::fs::create_dir_all(&restore_dir);
+    let name = original_name.filter(|n| !n.is_empty()).unwrap_or_else(|| v[i].trash_filename.clone());
+    let dest = crate::downloads::unique_destination(std::path::Path::new(&restore_dir).join(&name).to_string_lossy().into_owned());
+    move_file(&src, std::path::Path::new(&dest)).ok()?;
+    let e = v.remove(i);
+    store::save(RD, &v);
+    Some(RestoredSong { song_json: e.song_json, path: dest })
+}
+
+#[uniffi::export]
+pub fn deleted_song_purge(entry_id: String, trash_dir: String) {
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<DeletedSong> = store::load(RD);
+    if let Some(i) = v.iter().position(|e| e.id == entry_id) {
+        let _ = std::fs::remove_file(std::path::Path::new(&trash_dir).join(&v[i].trash_filename));
+        v.remove(i);
+        store::save(RD, &v);
+    }
+}
+
+#[uniffi::export]
+pub fn deleted_songs_purge_all(trash_dir: String) {
+    let _g = LOCK.lock().unwrap();
+    let v: Vec<DeletedSong> = store::load(RD);
+    for e in &v {
+        let _ = std::fs::remove_file(std::path::Path::new(&trash_dir).join(&e.trash_filename));
+    }
+    store::save(RD, &Vec::<DeletedSong>::new());
+}
+
+/// Purge entries older than 30 days; returns how many were removed.
+#[uniffi::export]
+pub fn deleted_songs_purge_expired(trash_dir: String) -> u32 {
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<DeletedSong> = store::load(RD);
+    let cutoff = now() - RD_RETENTION;
+    let (old, keep): (Vec<DeletedSong>, Vec<DeletedSong>) = v.drain(..).partition(|e| e.deleted_at < cutoff);
+    for e in &old {
+        let _ = std::fs::remove_file(std::path::Path::new(&trash_dir).join(&e.trash_filename));
+    }
+    if !old.is_empty() {
+        store::save(RD, &keep);
+    }
+    old.len() as u32
+}
+
+// ---- AI metadata-resolve suggestion cache ----------------------------------------------------
+
+const SUGGEST: &str = "intelligence_suggestions";
+
+#[derive(uniffi::Record, Serialize, Deserialize, Clone, Debug)]
+pub struct CachedSuggestion {
+    pub title: String,
+    pub artist: String,
+    pub memory_id: Option<i64>,
+}
+
+#[uniffi::export]
+pub fn suggestions_import_legacy(json: Vec<u8>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(SUGGEST) {
+        return;
+    }
+    let m: HashMap<String, HashMap<String, String>> = serde_json::from_slice(&json).unwrap_or_default();
+    let out: HashMap<String, CachedSuggestion> = m
+        .into_iter()
+        .filter_map(|(k, e)| Some((k, CachedSuggestion { title: e.get("title")?.clone(), artist: e.get("artist")?.clone(), memory_id: e.get("memory_id").and_then(|m| m.parse().ok()) })))
+        .collect();
+    store::save(SUGGEST, &out);
+}
+
+#[uniffi::export]
+pub fn suggestion_lookup(filename: String) -> Option<CachedSuggestion> {
+    let m: HashMap<String, CachedSuggestion> = store::load(SUGGEST);
+    m.get(&filename).cloned()
+}
+
+#[uniffi::export]
+pub fn suggestion_store(filename: String, title: String, artist: String, memory_id: Option<i64>) {
+    let _g = LOCK.lock().unwrap();
+    let mut m: HashMap<String, CachedSuggestion> = store::load(SUGGEST);
+    m.insert(filename, CachedSuggestion { title, artist, memory_id });
+    store::save(SUGGEST, &m);
+}
