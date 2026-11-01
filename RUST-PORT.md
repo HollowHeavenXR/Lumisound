@@ -98,8 +98,9 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [x] BPMAnalyzerService on the core (AVAssetReader only for Opus/WebM)
       [ ] Opus decode in Rust (symphonia has none; options: libopus static via audiopus_sys)
       [x] NormalizationService -> core normalization_gain (BS.1770, = ffmpeg ebur128 on test)
-      [ ] beat grid, fingerprint, silence trim, pitch contour, duplicates, corrupt finder
-          (core is_valid_audio exists; CorruptFileFinder still AVAudioFile)
+      [x] beat grid, acoustic fingerprint (+similarity), silence trim, pitch contour/hum match
+      [ ] duplicate finder orchestration, corrupt finder (core is_valid_audio exists;
+          CorruptFileFinder still AVAudioFile), library scan/index
 - [ ] G. Remaining services (social, rooms, podcasts, stats, backups, cache, diagnostics,
       stores: PlayHistory/Bookmark/TimeCapsule/LongTrackResume/RecentlyDeleted, Lua engines)
 - [ ] H. Swift rewired, old Swift services deleted, tvOS/watchOS on the core, release tag
@@ -114,7 +115,8 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
 
 ## Other
 
-- [ ] discord-rpc daemon → rust/rpc
+- [x] discord-rpc daemon → rust/rpc (binary lumisound-discord-rpc + `login`; installers updated;
+      release-rpc.yml builds Linux/macOS/Windows on rpc/v* tags — runs once merged to main)
 - [ ] README / docs updated
 
 ## Notes / decisions log
