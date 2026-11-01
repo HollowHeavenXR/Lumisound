@@ -1616,7 +1616,7 @@ async def lifespan(app: FastAPI):
     event_log_janitor = asyncio.create_task(_event_log_janitor())
     extra_logs_janitor = asyncio.create_task(_extra_logs_janitor())
     rooms_janitor = _loop("rooms", _rooms_janitor)
-    subscription_poller = asyncio.create_task(_subscription_polling_loop())
+    subscription_poller = _loop("subscriptions", _subscription_polling_loop)
     duplicate_scanner = _loop("duplicate_scan", _duplicate_scan_loop)
     weekly_mix_generator = _loop("weekly_mix", _weekly_mix_loop)
     media_backfiller = _loop("media_backfill", _media_backfill_loop)

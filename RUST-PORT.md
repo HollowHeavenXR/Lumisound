@@ -39,7 +39,7 @@ responses against Python, then flip. When the list below is all checked, delete 
         weekly-mix, discover-mix, stations, daily-pick, achievements, liner-notes, /api/artist/*
 - [x] 6. Social: /api/social/*, /social/*, /ws/live, rooms, device-sync, shared playlists,
         collaborators, comments, presence
-- [ ] 7. Integrations: subscriptions (YouTube), podcasts, scrobble (last.fm/libre.fm), Discord
+- [x] 7. Integrations: subscriptions (YouTube), podcasts, scrobble (last.fm/libre.fm), Discord
         webhook + RPC config + verification, push tokens + APNs/FCM, notifications,
         announcements, webhooks, gif search, ytdlp-cookies, API keys
 - [ ] 8. AI (Gemini over HTTP): intelligence/*, lyrics (+ transcribe), ai-dj, aria apis
@@ -92,8 +92,9 @@ responses against Python, then flip. When the list below is all checked, delete 
   sessions. raw stream URL = one yt-dlp run with chained formats (was up to 3).
   Stream proxy prefetches the next 2 MB range. yt-dlp in the Rust image is
   unpinned/latest (Python pinned 2026.08.19, which no longer reads RD mixes).
-- Push (APNs/FCM) sender is a stub: neither is configured on this host. Port
-  it with group 7.
+- Push: rust/bridge/src/push.rs (APNs HTTP/2 ES256 token, FCM v1 service-account OAuth); still
+  unconfigured on this host (no APNS_*/FCM_* env), so it no-ops like Python did.
+- POST /user/history moved to Rust with scrobbling (Last.fm/ListenBrainz/Libre.fm) + Discord now-playing.
 - Dates: apps parse `yyyy-MM-dd'T'HH:mm:ss.SSSSSS` (or no fraction). SQL uses
   `lumi_iso(ts)` (installed by the bridge at startup) and Rust `db::py_iso`
   to match Python isoformat() exactly. Don't use to_json(timestamp).

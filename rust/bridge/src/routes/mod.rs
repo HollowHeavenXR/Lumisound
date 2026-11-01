@@ -9,7 +9,8 @@ use tower_http::cors::{Any, CorsLayer};
 mod account;
 pub mod discovery;
 mod health;
-mod library;
+pub mod integrations;
+pub mod library;
 mod live;
 mod music;
 pub mod social;
@@ -24,6 +25,7 @@ pub fn router(state: AppState) -> Router {
         .merge(live::routes())
         .merge(music::routes())
         .merge(social::routes())
+        .merge(integrations::routes())
         .merge(media::routes())
         .fallback(proxy::fallback)
         .layer(CompressionLayer::new().gzip(true).quality(tower_http::CompressionLevel::Precise(4)).compress_when(perf::Compressible))

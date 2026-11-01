@@ -55,6 +55,7 @@ pub struct Inner {
     pub analysis_sem: tokio::sync::Semaphore,
     pub storage_tier_sent: DashMap<String, f64>,
     pub taste_cache: TtlCache<String, Value>,
+    pub push: crate::push::Push,
 }
 
 impl std::ops::Deref for AppState {
@@ -124,6 +125,7 @@ impl AppState {
             analysis_sem: tokio::sync::Semaphore::new(3),
             storage_tier_sent: DashMap::new(),
             taste_cache: TtlCache::new(Duration::from_secs(3600), 5000),
+            push: crate::push::Push::new(&cfg),
             cdn,
             cfg,
             db,

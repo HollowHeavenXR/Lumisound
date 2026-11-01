@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-pub const PORTED: &[&str] = &["media_backfill", "duplicate_scan", "storage_quota", "weekly_mix", "artist_image", "rooms"];
+pub const PORTED: &[&str] = &["media_backfill", "duplicate_scan", "storage_quota", "weekly_mix", "artist_image", "rooms", "subscriptions"];
 
 pub fn spawn_all(st: &AppState) {
     let enabled: Vec<String> = match std::env::var("RUST_LOOPS") {
@@ -42,6 +42,10 @@ pub fn spawn_all(st: &AppState) {
     if on("rooms") {
         let st = st.clone();
         tokio::spawn(async move { crate::routes::social::rooms_janitor(st).await });
+    }
+    if on("subscriptions") {
+        let st = st.clone();
+        tokio::spawn(async move { crate::routes::integrations::subscription_loop(st).await });
     }
     tracing::info!("background loops enabled: {enabled:?}");
 }

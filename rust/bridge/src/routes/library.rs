@@ -4,7 +4,6 @@
 use crate::auth::User;
 use crate::error::{ApiResult, AppError};
 use crate::extract::{J, Q, check_range};
-use crate::proxy;
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -32,7 +31,6 @@ pub fn routes() -> Router<AppState> {
         .route("/user/settings/expanded", get(get_expanded).put(put_expanded))
         .route("/user/library/inventory", post(upload_inventory))
         .route("/user/library/duplicates", get(library_duplicates))
-        .route("/user/history", get(get_history).fallback(proxy::fallback))
         .route("/user/sync", get(sync_pull).post(sync_push))
         .route("/user/backups", get(list_backups).delete(clear_backups))
         .route("/user/backups/{id}/restore", post(restore_backup))
@@ -474,11 +472,11 @@ async fn upload_inventory(State(st): State<AppState>, u: User, J(b): J<Inventory
 }
 
 #[derive(Deserialize)]
-struct LimitQ {
+pub struct LimitQ {
     limit: Option<i64>,
 }
 
-async fn get_history(State(st): State<AppState>, u: User, Q(q): Q<LimitQ>) -> ApiResult<Json<Value>> {
+pub async fn get_history(State(st): State<AppState>, u: User, Q(q): Q<LimitQ>) -> ApiResult<Json<Value>> {
     let limit = q.limit.unwrap_or(50);
     check_range("limit", limit, 1, 200)?;
     Ok(Json(

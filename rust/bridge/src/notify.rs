@@ -149,14 +149,8 @@ impl AppState {
         Ok(())
     }
 
-    /// APNs/FCM delivery. Neither is configured on this deployment yet, so
-    /// rows + /ws/live are the delivery path (same as the Python bridge with
-    /// its env vars unset). Full sender lands with route group 7.
-    pub async fn send_push_best_effort(&self, user_id: &str, type_: &str, _title: &str, _body: &str, _data: &Value, _content_available: bool) {
-        if self.cfg.apns_key_base64.is_none() && self.cfg.fcm_service_account_json_base64.is_none() {
-            return;
-        }
-        tracing::debug!("push for {user_id} ({type_}) skipped: sender not ported yet");
+    pub async fn send_push_best_effort(&self, user_id: &str, type_: &str, title: &str, body: &str, data: &Value, content_available: bool) {
+        self.send_push(user_id, type_, title, body, data, content_available).await
     }
 
     /// `_fire_user_webhooks`.
