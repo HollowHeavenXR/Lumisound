@@ -28,22 +28,11 @@ extension LibraryManager {
         // per-stamp matching can run entirely off the main actor against that
         // snapshot instead of calling back into the @MainActor service once
         // per file.
-        let entriesSnapshot = ScanCacheService.shared.snapshotEntries()
         let (cachedSongs, uncached): ([Song], [(url: URL, stamp: ScanCacheService.FileStamp)]) = await Task.detached(priority: .userInitiated) {
-            var cachedSongs: [Song] = []
-            var uncached: [(url: URL, stamp: ScanCacheService.FileStamp)] = []
-            for entry in stamps {
-                if let cacheEntry = entriesSnapshot[ScanCacheService.stableKey(for: entry.url)],
-                   cacheEntry.mtime == entry.stamp.mtime,
-                   cacheEntry.fileSize == entry.stamp.size {
-                    var song = cacheEntry.song
-                    song.url = entry.url
-                    cachedSongs.append(song)
-                } else {
-                    uncached.append(entry)
-                }
-            }
-            return (cachedSongs, uncached)
+            let split = ScanCacheService.partition(stamps.map(\.url))
+            let stampByPath = Dictionary(stamps.map { ($0.url.standardizedFileURL.path, $0.stamp) }, uniquingKeysWith: { a, _ in a })
+            let uncached = split.uncached.compactMap { u in stampByPath[u.path].map { (url: u, stamp: $0) } }
+            return (split.cached, uncached)
         }.value
 
         guard !uncached.isEmpty else { return cachedSongs }

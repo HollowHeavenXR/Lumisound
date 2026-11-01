@@ -132,3 +132,122 @@ mod tests {
         let _ = std::fs::remove_dir_all(d);
     }
 }
+
+// ---- scan cache: path -> (mtime, size, Song) so unchanged files skip tag reads ------------------
+
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct ScanEntry {
+    mtime: f64,
+    #[serde(rename = "fileSize")]
+    file_size: i64,
+    song: Value,
+}
+
+#[derive(Default)]
+struct ScanCache {
+    path: Option<String>,
+    entries: HashMap<String, ScanEntry>,
+    dirty: bool,
+}
+
+static SCAN: LazyLock<Mutex<ScanCache>> = LazyLock::new(|| Mutex::new(ScanCache::default()));
+
+fn stamp(p: &str) -> Option<(f64, i64)> {
+    let m = std::fs::metadata(p).ok()?;
+    let t = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs_f64();
+    Some((t, m.len() as i64))
+}
+
+/// Key: path relative to Documents when inside it, else the absolute path.
+fn scan_key(path: &str, docs: &str) -> String {
+    match path.strip_prefix(docs) {
+        Some(rest) => rest.trim_matches('/').to_string(),
+        None => path.to_string(),
+    }
+}
+
+/// Load the cache file once (same JSON layout the Swift cache used).
+#[uniffi::export]
+pub fn scan_cache_open(cache_path: String) {
+    let mut c = SCAN.lock().unwrap();
+    if c.path.as_deref() == Some(&cache_path) {
+        return;
+    }
+    c.entries = std::fs::read(&cache_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    c.path = Some(cache_path);
+    c.dirty = false;
+}
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct ScanPartition {
+    /// JSON array of cached Songs with `url` set to the file's current URL.
+    pub cached_songs_json: Vec<u8>,
+    /// Files that are new or changed since they were cached.
+    pub uncached_paths: Vec<String>,
+}
+
+/// Stat every file and split it into cache hits (unchanged mtime + size)
+/// and files that need a fresh tag read.
+#[uniffi::export]
+pub fn scan_cache_partition(paths: Vec<String>, documents_dir: String) -> ScanPartition {
+    let docs = documents_dir.trim_end_matches('/').to_string();
+    let c = SCAN.lock().unwrap();
+    let mut cached = Vec::new();
+    let mut uncached = Vec::new();
+    for p in paths {
+        let hit = stamp(&p).and_then(|(t, sz)| c.entries.get(&scan_key(&p, &docs)).filter(|e| e.file_size == sz && (e.mtime - t).abs() < 0.001));
+        match (hit, url::Url::from_file_path(&p)) {
+            (Some(e), Ok(u)) => {
+                let mut s = e.song.clone();
+                s["url"] = Value::String(u.to_string());
+                cached.push(s);
+            }
+            _ => uncached.push(p),
+        }
+    }
+    ScanPartition { cached_songs_json: serde_json::to_vec(&cached).unwrap_or_default(), uncached_paths: uncached }
+}
+
+/// Remember a freshly read song for `path` (stamped now).
+#[uniffi::export]
+pub fn scan_cache_store(path: String, documents_dir: String, song_json: Vec<u8>) {
+    let Some((t, sz)) = stamp(&path) else { return };
+    let Ok(song) = serde_json::from_slice::<Value>(&song_json) else { return };
+    let mut c = SCAN.lock().unwrap();
+    let k = scan_key(&path, documents_dir.trim_end_matches('/'));
+    c.entries.insert(k, ScanEntry { mtime: t, file_size: sz, song });
+    c.dirty = true;
+}
+
+/// Drop entries whose file no longer exists.
+#[uniffi::export]
+pub fn scan_cache_evict_missing(documents_dir: String) {
+    let docs = documents_dir.trim_end_matches('/').to_string();
+    let mut c = SCAN.lock().unwrap();
+    let before = c.entries.len();
+    c.entries.retain(|k, _| {
+        let p = if k.starts_with('/') { k.clone() } else { format!("{docs}/{k}") };
+        Path::new(&p).exists()
+    });
+    if c.entries.len() != before {
+        c.dirty = true;
+    }
+}
+
+/// Write the cache atomically if anything changed.
+#[uniffi::export]
+pub fn scan_cache_persist() {
+    let mut c = SCAN.lock().unwrap();
+    if !c.dirty {
+        return;
+    }
+    let Some(path) = c.path.clone() else { return };
+    if let Ok(b) = serde_json::to_vec(&c.entries) {
+        if library_snapshot_save(path, b) {
+            c.dirty = false;
+        }
+    }
+}
