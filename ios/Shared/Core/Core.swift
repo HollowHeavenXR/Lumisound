@@ -72,3 +72,16 @@ extension Core {
                                httpVersion: "HTTP/1.1", headerFields: fields)!
     }
 }
+
+// MARK: - Startup
+
+extension Core {
+    /// Call once at launch, before any store is touched: core state lives in
+    /// Application Support/LumisoundCore (backed up, not purged like caches).
+    static func bootstrap() {
+        let fm = FileManager.default
+        let base = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
+            ?? fm.temporaryDirectory
+        coreConfigure(dataDir: base.appendingPathComponent("LumisoundCore", isDirectory: true).path)
+    }
+}

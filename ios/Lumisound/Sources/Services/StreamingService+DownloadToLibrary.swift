@@ -987,15 +987,7 @@ extension StreamingService {
         guard fm.fileExists(atPath: preferred.path) else {
             return (preferred, false)
         }
-        let ext = preferred.pathExtension
-        let base = preferred.deletingPathExtension().lastPathComponent
-        var n = 2
-        var candidate = dir.appendingPathComponent("\(base) (\(n))").appendingPathExtension(ext)
-        while fm.fileExists(atPath: candidate.path) {
-            n += 1
-            candidate = dir.appendingPathComponent("\(base) (\(n))").appendingPathExtension(ext)
-        }
-        return (candidate, false)
+        return (URL(fileURLWithPath: uniqueDestination(preferred: preferred.path)), false)
     }
 
     /// Builds the `/api/download/status` or `/api/download/result` URL for a given
@@ -1013,34 +1005,11 @@ extension StreamingService {
 
     /// Maps a format value to the appropriate file extension.
     func fileExtension(for format: String) -> String {
-        switch format {
-        case "mp3":  return "mp3"
-        case "flac": return "flac"
-        case "opus": return "opus"
-        case "wav":  return "wav"
-        default:     return "m4a"   // m4a and best both produce m4a
-        }
+        downloadExtension(format: format)
     }
 
-    /// Maps the `/api/download` response's `Content-Type` (set by the bridge's
-    /// `content_type_map` from yt-dlp's *actual* output container, which can differ
-    /// from the requested `format` when that container isn't available for a given
-    /// video) back to a file extension. Returns `nil` for missing/unrecognized
-    /// content types so the caller can fall back to the requested format's extension.
     func extensionForContentType(_ contentType: String?) -> String? {
-        guard let contentType else { return nil }
-        // Strip any "; charset=..." parameters before matching.
-        let base = contentType.split(separator: ";").first.map(String.init)?
-            .trimmingCharacters(in: .whitespaces).lowercased() ?? ""
-        switch base {
-        case "audio/mpeg":      return "mp3"
-        case "audio/mp4":       return "m4a"
-        case "audio/flac":      return "flac"
-        case "audio/ogg":       return "opus"
-        case "audio/wav", "audio/x-wav", "audio/wave": return "wav"
-        case "audio/webm":      return "webm"
-        default:                return nil
-        }
+        contentTypeExtension(contentType: contentType)
     }
 
     // MARK: - Artwork prefetch with fallback

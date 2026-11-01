@@ -7,10 +7,12 @@ uniffi::setup_scaffolding!();
 
 pub mod appearance;
 pub mod client;
+pub mod downloads;
 pub mod live;
 pub mod lock;
 pub mod error;
 pub mod retry;
+pub mod store;
 
 use std::future::Future;
 use std::sync::LazyLock;

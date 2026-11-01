@@ -55,6 +55,7 @@ struct LumisoundApp: App {
     @State private var isSnapshotBlurred = false
 
     init() {
+        Core.bootstrap()
         // Must happen before the app finishes launching — too late if done
         // from a View's .task/.onAppear. See BackgroundRefreshService's docs
         // for what this actually does (and doesn't) guarantee.
