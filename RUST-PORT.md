@@ -64,23 +64,25 @@ rust/media (shared with the bridge). Swift glue: ios/Shared/Core/Core.swift.
 Swift models stay Codable view-data shapes; logic moves to Rust.
 
 - [x] A. Crate + UniFFI + build-core.sh + CI step in all 6 workflows (CI build green 2026-11-01)
-- [ ] B. API client + auth/token store + all AccountService+* calls
+- [x] B. API client + auth/token store + all AccountService+* calls
       [x] _makeRequest -> Rust ApiClient (retries, FastAPI errors, 401)
-      [x] every URLSession.shared.data/upload in the iOS app -> Core.data(for:) (Rust http_send)
-      [ ] token/session store, sync debounce + inventory diff logic
+      [x] every URLSession.shared.data/upload/download in the iOS app -> Core.data/upload/download (Rust http_send / http_download_file)
+      [x] sync payload/pull merge plan (sync.rs), inventory ids/unchanged-skip/retried replace,
+          retry policy; token stays in the Keychain (Security framework, Swift-only), debounce is a Swift Task
       [x] LiveUpdateService socket -> Rust live.rs (typed events, backoff)
-- [ ] C. Lock system
+- [x] C. Lock system
       [x] LMSLOCK1 lock/unlock (streamed, atomic), playable cache, vault (AES-GCM), xattr tag
-      [ ] LumisoundExclusiveExtensionService.convert pipeline + relock/integrity passes
-      [ ] AppLockService state (LocalAuthentication prompt itself stays Swift)
-- [ ] D. Download manager (BackgroundDownloadManager, StreamingService+DownloadToLibrary,
+      [x] convert pipeline (lms_convert: lock, round-trip verify, adopt/replace) + in-place relock
+      [x] AppLock state machine (applock.rs; LocalAuthentication prompt itself stays Swift)
+- [x] D. Download manager (BackgroundDownloadManager, StreamingService+DownloadToLibrary,
       DownloadLedgerStore, DownloadFailureStore, AudioTagWriter -> lofty)
       [x] core store.rs (Application Support/LumisoundCore JSON docs) + downloads.rs
           (ledger, in-flight claims, failure cool-offs, dest naming, formats)
       [x] bridge job flow (start/poll/stream result) -> core bridge_download_job
       [x] tag writing/reading (lofty; MP4 freeform, ID3 TXXX, Vorbis) — verified with ffprobe
-      [ ] direct/relay transports, finalize+lock
-- [ ] E. Audio engine — rust/core/src/engine/ (deck threads: symphonia + rubato -> rtrb
+      [x] direct/relay transports (bridge_direct_fetch / bridge_relay_download), finalize
+          (downloads_finalize_file), ledger-aware destination; lock via lms_convert
+- [x] E. Audio engine — rust/core/src/engine/ (deck threads: symphonia + rubato -> rtrb
         rings; realtime mixer: gapless, crossfade cmd, RBJ 10-band EQ, Freeverb, mono,
         night-mode compressor, de-click/pause fades, per-track gain, peaks; cpal output on
         iOS/macOS; offline-render tests). CI green 2026-11-01.
@@ -91,13 +93,13 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [x] speed/pitch (WSOLA time-stretch + pitch resample), 8D rotation, tremolo, visualizer tap,
           spectrum FFT in Rust
       [x] vibrato (modulated delay), spatial audio + head tracking (binaural: Woodworth ITD + Brown–Duda head shadow)
-      [ ] beat-match rate nudge during smart crossfade (fade itself works)
+      [x] beat-matched smart crossfade (per-deck tempo ramp, exact position tracking, beatmatch_ratio)
       [x] ReplayGain/normalization applied in-engine (set_track_gain)
       [x] streams play on the engine once downloaded; Opus via its transcoded AAC copy
       [x] music haptics (fed through the visualizer tap)
-      [ ] AVAudioEngine/AVPlayer remain only as fallback (Apple Music ipod-library:// items can only be read by
+      [x] AVAudioEngine/AVPlayer remain only as fallback (Apple Music ipod-library:// items can only be read by
           AVFoundation; decode failures; Settings toggle off)
-- [ ] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files,
+- [x] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files,
       silence trim, spectral EQ, pitch contour, normalization)
       [x] media::decode (symphonia) + media::analysis (DSP shared with bridge);
           core analysis.rs: decode_mono, bpm (cached), key, waveform, transition, spectral
@@ -108,14 +110,17 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [x] corrupt/truncated check (core validate_audio; AVAudioFile only for Opus)
       [x] duplicate grouping + text normalisation (core duplicates.rs)
       [x] scan-time tag/property reading (core scan_read_track, lofty)
-- [ ] G. Remaining services (social, rooms, podcasts, stats, backups, cache, diagnostics,
+- [x] G. Remaining services (social, rooms, podcasts, stats, backups, cache, diagnostics,
       stores: PlayHistory/Bookmark/TimeCapsule/LongTrackResume/RecentlyDeleted, Lua engines)
       [x] library snapshot load/re-anchor/group/save (core library.rs)
       [x] PlayHistory, Bookmark, LongTrackResume stores (core stores.rs)
       [x] TimeCapsule, DeletedPlaylists, RecentlyDeleted, ListeningGoal, IntelligenceSuggestionCache
       [x] TrackedPlaylist store, ScanCache (batch partition)
       [x] Lua engines on a Rust Lua 5.4 runtime (mlua, sandboxed, json module); LuaSwift removed
-      [ ] sync payload/merge, tracked-playlist auto-download orchestration
+      [x] sync payload/merge, tracked-playlist pass rules + LocalCopyIndex pre-download gate
+      [x] metadata lookup chain, artwork processing, artist photos, smart playlists, moods (metadata.rs, smart.rs, mood.rs)
+      [x] AI DJ session (aidj.rs), cache housekeeping (cache.rs), logging + events (logger.rs, iOS + tvOS),
+          document import + Documents scan orchestration (import.rs)
 - [ ] H. Swift rewired, old Swift services deleted, tvOS/watchOS on the core, release tag
       [x] tvOS app links the core (all HTTP via Core.data); universal iOS simulator slice
       [x] watchOS app links the core (arm64_32/arm64 device + universal simulator) — CI green

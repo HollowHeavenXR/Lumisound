@@ -44,18 +44,34 @@ logic around them is kept minimal and calls into the core.
 | Media export/encode | `AudioEncoderService`, `ClipExportService`, `LyricVideoExportService`, `AIDJSessionExportService` | AVAssetWriter/AVAssetExportSession (AAC/H.264 encoding uses Apple's encoders; no Rust AAC encoder ships on iOS) |
 | Photo picker | `BackgroundService` | PhotosUI |
 
-## 3. Still Swift logic, to move next
+## 3. Moved in phase J (were still Swift)
 
-- AVAudioEngine/AVPlayer path in `AudioPlayerManager` kept only as a fallback:
-  Apple Music `ipod-library://` items (AVFoundation-only), decode failures, and
-  the Settings toggle. Beat-matched tempo nudge during smart crossfade.
-- Sync payload build/merge (`AccountService+Sync`) and the per-feature
-  `AccountService+*` request/decode wrappers (transport is already Rust).
-- Metadata enrichment and artwork (`MetadataFetchService`, `ArtworkService`,
-  `ArtistImageService`); scan orchestration in `LibraryManager+*` (tag reading
-  and the scan cache are Rust).
-- Smart-playlist rule evaluation outside Lua, mood playlists, AI DJ scripting.
-- `.lms` conversion pipeline (`LumisoundExclusiveExtensionService.convert`),
-  tracked-playlist auto-download orchestration, direct/relay transports.
-- `DocumentImportService`, `M3UImportService`, `CacheManagerService`,
-  `DiagnosticsSnapshotService`, `AppLogger`/`RemoteLogger` formatting.
+| Swift (now a wrapper) | Rust |
+|---|---|
+| Beat-matched tempo nudge in smart crossfade | `engine/` (`crossfade_to(tempo_match)`, `beatmatch_ratio`) |
+| `AccountService+Sync` payload + pull merge, inventory upload, `NetworkRetry` policy | `sync.rs`, `retry.rs` |
+| `MetadataFetchService`, `ArtworkService` processing, `ArtistImageService` lookup | `metadata.rs`, `media/artwork.rs` |
+| Smart-playlist rules, `MoodPlaylistService` classification | `smart.rs`, `mood.rs` |
+| `AIDJService` (announce decisions, duck plan, session log, transition request) | `aidj.rs` |
+| `.lms` conversion (`LumisoundExclusiveExtensionService.convert`, relock) | `lock.rs` (`lms_convert`, `lms_relock_in_place`) |
+| `TrackedPlaylistStore.runAutoDownloads` rules, `LibraryManager+DuplicateDetection` | `stores.rs` (`tracked_due`, `tracked_batch_verdict`), `duplicates.rs` (`LocalCopyIndex`) |
+| Direct/relay download transports, finalize, destination resolution | `downloads.rs` |
+| `DocumentImportService`, Documents scan orchestration, watched-folder leftover cleanup | `import.rs` |
+| `CacheManagerService` | `cache.rs` |
+| `AppLogger`, `RemoteLogger`, `TVAppLogger`, `TVRemoteLogger` | `logger.rs` |
+| `AppLockService` state | `applock.rs` |
+| Every `URLSession` data/upload/download call | `client.rs` (`Core.data/upload/download`) |
+
+## 4. Intentionally still Swift
+
+- AVAudioEngine/AVPlayer path in `AudioPlayerManager`: fallback only, for Apple
+  Music `ipod-library://` items (readable only through AVFoundation), files the
+  core can't decode, and the Settings toggle.
+- AVFoundation tag reading in `DocumentImportService`: only for files lofty
+  can't parse (rules applied are the core's), plus video first-frame thumbnails.
+- Image caches (`CachedAsyncImage`, `TVAuthImage`): `URLCache`-backed UI caches.
+- `DiagnosticsSnapshotService`: reads live SwiftUI-observable state and UIKit
+  /Mach device info, then hands it to the core's `logger_event`.
+- `PodcastDownloadManager` scheduling, `BackgroundDownloadManager`
+  (`UIApplication` background tasks); transfers themselves are the core's.
+- Debounce timers and `Task` orchestration that glue SwiftUI state to core calls.
