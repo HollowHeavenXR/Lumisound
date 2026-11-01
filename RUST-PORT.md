@@ -78,12 +78,18 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [x] core store.rs (Application Support/LumisoundCore JSON docs) + downloads.rs
           (ledger, in-flight claims, failure cool-offs, dest naming, formats)
       [ ] job flow (start/poll/relay/direct), finalize+lock, tagging
-- [ ] E. Audio engine (plan: rust/core/src/engine/: cpal output, 2 decks for gapless/
-        crossfade, decoder threads -> ring buffers, resampler, RBJ biquad EQ, freeverb,
-        fades, offline-render unit tests; Swift AudioPlayerManager calls Engine; ship
-        behind a Settings toggle until verified on device). symphonia decode + cpal output, queue, gapless, crossfade, EQ/effects,
-        A-B repeat, speed/pitch, ReplayGain, visualizer taps; Swift keeps AVAudioSession +
-        NowPlaying/remote commands glue only
+- [ ] E. Audio engine — rust/core/src/engine/ (deck threads: symphonia + rubato -> rtrb
+        rings; realtime mixer: gapless, crossfade cmd, RBJ 10-band EQ, Freeverb, mono,
+        night-mode compressor, de-click/pause fades, per-track gain, peaks; cpal output on
+        iOS/macOS; offline-render tests). CI green 2026-11-01.
+      [x] Local files play through it (AudioPlayerManager+RustEngine.swift; Settings >
+          Playback "Lumisound Audio Engine" toggle, key rust_audio_engine, default on;
+          decode failure -> automatic AVAudioEngine fallback)
+      [ ] crossfade via engine.crossfade_to (+ smart crossfade plan, beat-match)
+      [ ] ReplayGain/normalization gain_db from analysis; speed/pitch (time-stretch)
+      [ ] streams (downloadAndSchedule -> engine once cached), Opus decode
+      [ ] spatial/8D/special effects, visualizer FFT taps, music haptics feed
+      [ ] then delete the AVAudioEngine graph (EngineConfig/SpatialAudio/Effects nodes)
 - [ ] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files,
       silence trim, spectral EQ, pitch contour, normalization)
       [x] media::decode (symphonia) + media::analysis (DSP shared with bridge);
