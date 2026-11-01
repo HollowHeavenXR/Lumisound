@@ -65,109 +65,58 @@ final class TrackedPlaylistStore: ObservableObject {
 
     private let key = "trackedPlaylists.v1"
 
-    init() { load() }
+    init() {
+        if let data = UserDefaults.standard.data(forKey: key) { trackedImportLegacy(json: data) }
+        load()
+    }
 
-    // MARK: Mutations
+    // Store rules (URL de-dup, naming, merge) and persistence live in the
+    // Rust core (rust/core/src/stores.rs); `playlists` mirrors it.
 
-    /// Adds a playlist if its URL isn't already tracked (case-insensitive,
-    /// trimmed). Returns false if it was a duplicate or the URL was empty.
     @discardableResult
     func add(url: String, name: String, thumbnailURL: String = "") -> Bool {
-        let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedURL.isEmpty else { return false }
-        let normalized = trimmedURL.lowercased()
-        guard !playlists.contains(where: { $0.url.lowercased() == normalized }) else { return false }
-
-        let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pl = TrackedPlaylist(
-            url: trimmedURL,
-            name: displayName.isEmpty ? defaultName(for: trimmedURL) : displayName,
-            thumbnailURL: thumbnailURL
-        )
-        playlists.append(pl)
-        save()
-        return true
+        let ok = trackedAdd(url: url, name: name, thumbnailUrl: thumbnailURL)
+        if ok { load() }
+        return ok
     }
 
     func remove(id: String) {
-        playlists.removeAll { $0.id == id }
-        save()
+        trackedRemove(id: id)
+        load()
     }
 
-    /// Merges tracked playlists pulled from the account backup (see
-    /// `AccountService.pullSync`) — adds any not already tracked (reusing
-    /// `add`'s existing case-insensitive URL dedup) and carries over
-    /// autoDownload/destinationFolder for newly-added entries only, so a
-    /// playlist already tracked on this device keeps whatever settings it
-    /// already has rather than being overwritten by a stale server value.
     func mergeFromSync(_ remote: [TrackedPlaylist]) {
-        for entry in remote {
-            let trimmedURL = entry.url.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard add(url: trimmedURL, name: entry.name, thumbnailURL: entry.thumbnailURL) else { continue }
-            guard let idx = playlists.firstIndex(where: { $0.url.lowercased() == trimmedURL.lowercased() }) else { continue }
-            if let autoDownload = entry.autoDownload { playlists[idx].autoDownload = autoDownload }
-            if let destinationFolder = entry.destinationFolder { playlists[idx].destinationFolder = destinationFolder }
-        }
-        save()
+        trackedMerge(remote: remote.map(Self.record))
+        load()
     }
 
-    /// Updates the cached track count (and optionally the thumbnail/name) after a
-    /// successful resolve.
     func updateMetadata(id: String, trackCount: Int? = nil, thumbnailURL: String? = nil, name: String? = nil) {
-        guard let idx = playlists.firstIndex(where: { $0.id == id }) else { return }
-        if let trackCount { playlists[idx].lastTrackCount = trackCount }
-        if let thumbnailURL, !thumbnailURL.isEmpty { playlists[idx].thumbnailURL = thumbnailURL }
-        if let name, !name.isEmpty { playlists[idx].name = name }
-        save()
+        trackedUpdateMetadata(id: id, trackCount: trackCount.map(Int64.init), thumbnailUrl: thumbnailURL, name: name)
+        load()
     }
 
     func setAutoDownload(id: String, _ on: Bool) {
-        guard let idx = playlists.firstIndex(where: { $0.id == id }) else { return }
-        playlists[idx].autoDownload = on
-        save()
+        trackedSetAutoDownload(id: id, on: on)
+        load()
     }
 
-    /// Sets this playlist's destination subfolder (see `DownloadFolderPicker`).
-    /// Pass "" to clear it and fall back to the global Download Folder setting.
     func setDestinationFolder(id: String, _ folder: String) {
-        guard let idx = playlists.firstIndex(where: { $0.id == id }) else { return }
-        playlists[idx].destinationFolder = folder.isEmpty ? nil : folder
-        save()
+        trackedSetDestination(id: id, folder: folder)
+        load()
     }
 
     private func markAutoChecked(id: String) {
-        guard let idx = playlists.firstIndex(where: { $0.id == id }) else { return }
-        playlists[idx].lastAutoCheck = Date()
-        save()
+        trackedMarkChecked(id: id)
+        load()
     }
 
-    // MARK: Auto-download
+    private static func record(_ p: TrackedPlaylist) -> TrackedPlaylistRecord {
+        TrackedPlaylistRecord(id: p.id, url: p.url, name: p.name, thumbnailUrl: p.thumbnailURL,
+                              dateAdded: p.dateAdded.timeIntervalSince1970, lastTrackCount: Int64(p.lastTrackCount),
+                              autoDownload: p.autoDownload, lastAutoCheck: p.lastAutoCheck?.timeIntervalSince1970,
+                              destinationFolder: p.destinationFolder)
+    }
 
-    /// Tracks in flight at once during a single playlist's auto-download
-    /// pass (see `runAutoDownloads`). Matches the bridge's own
-    /// `_YTDLP_SEMAPHORE` (main.py) exactly — the bridge already caps
-    /// itself at this many concurrent yt-dlp processes GLOBALLY, across
-    /// every user and every request path, so anything this client sends
-    /// beyond that just queues there harmlessly. Sending this many at once
-    /// (instead of 1) is what actually lets this client reach that existing
-    /// server-side capacity instead of leaving slots idle the whole time.
-    /// Dropped 4 -> 2 alongside _YTDLP_SEMAPHORE (2026-08): the bridge's
-    /// host runs many other memory-capped containers on one small box, and
-    /// 4-way concurrency was enough to push it into swapping/timing out
-    /// under a burst of several playlists downloading at once.
-    ///
-    /// Back to 4 (2026-09), because the reason it was cut no longer holds. That
-    /// cut predates the bridge's `_AdaptiveLimiter`, which samples MemAvailable
-    /// and holds concurrency down to `_YTDLP_SAFE` (2) on its own whenever the
-    /// host is actually under pressure — so the swapping this number was
-    /// protecting against is now handled by the side that can actually measure
-    /// it, instead of by a client guessing conservatively on the host's behalf.
-    /// `_YTDLP_MAX` is 4 and this was the binding constraint: the client was
-    /// leaving half the bridge's capacity idle even when the host was perfectly
-    /// healthy, which is the failure mode this number was originally raised to
-    /// fix. Anything beyond the bridge's own cap simply queues there harmlessly,
-    /// so being wrong in this direction costs a little queueing, not a swap
-    /// storm.
     private static let autoDownloadConcurrency = 4
 
     /// Guards against concurrent `runAutoDownloads` calls — it's triggered
@@ -525,27 +474,12 @@ final class TrackedPlaylistStore: ObservableObject {
 
     // MARK: Helpers
 
-    /// A readable fallback name derived from the playlist URL's `list=` id.
-    private func defaultName(for url: String) -> String {
-        if let comps = URLComponents(string: url),
-           let list = comps.queryItems?.first(where: { $0.name == "list" })?.value, !list.isEmpty {
-            return "Playlist \(list.prefix(8))"
-        }
-        return "Tracked Playlist"
-    }
-
-    // MARK: Persistence
-
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return }
-        if let decoded = try? JSONDecoder().decode([TrackedPlaylist].self, from: data) {
-            playlists = decoded
-        }
-    }
-
-    private func save() {
-        if let data = try? JSONEncoder().encode(playlists) {
-            UserDefaults.standard.set(data, forKey: key)
+        playlists = trackedAll().map {
+            TrackedPlaylist(id: $0.id, url: $0.url, name: $0.name, thumbnailURL: $0.thumbnailUrl,
+                            dateAdded: Date(timeIntervalSince1970: $0.dateAdded), lastTrackCount: Int($0.lastTrackCount),
+                            autoDownload: $0.autoDownload, lastAutoCheck: $0.lastAutoCheck.map { Date(timeIntervalSince1970: $0) },
+                            destinationFolder: $0.destinationFolder)
         }
     }
 }

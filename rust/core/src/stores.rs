@@ -656,3 +656,161 @@ pub fn suggestion_store(filename: String, title: String, artist: String, memory_
     m.insert(filename, CachedSuggestion { title, artist, memory_id });
     store::save(SUGGEST, &m);
 }
+
+// ---- tracked (auto-downloading) playlists -----------------------------------------------------
+
+const TRACKED: &str = "tracked_playlists";
+
+#[derive(uniffi::Record, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct TrackedPlaylistRecord {
+    pub id: String,
+    pub url: String,
+    pub name: String,
+    pub thumbnail_url: String,
+    pub date_added: f64,
+    pub last_track_count: i64,
+    pub auto_download: Option<bool>,
+    pub last_auto_check: Option<f64>,
+    pub destination_folder: Option<String>,
+}
+
+#[uniffi::export]
+pub fn tracked_import_legacy(json: Vec<u8>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(TRACKED) {
+        return;
+    }
+    let v: Vec<serde_json::Value> = serde_json::from_slice(&json).unwrap_or_default();
+    let out: Vec<TrackedPlaylistRecord> = v
+        .into_iter()
+        .filter_map(|e| {
+            Some(TrackedPlaylistRecord {
+                id: e["id"].as_str()?.to_string(),
+                url: e["url"].as_str()?.to_string(),
+                name: e["name"].as_str().unwrap_or("").to_string(),
+                thumbnail_url: e["thumbnailURL"].as_str().unwrap_or("").to_string(),
+                date_added: e["dateAdded"].as_f64().unwrap_or(0.0) + APPLE_EPOCH,
+                last_track_count: e["lastTrackCount"].as_i64().unwrap_or(0),
+                auto_download: e["autoDownload"].as_bool(),
+                last_auto_check: e["lastAutoCheck"].as_f64().map(|d| d + APPLE_EPOCH),
+                destination_folder: e["destinationFolder"].as_str().map(str::to_string),
+            })
+        })
+        .collect();
+    store::save(TRACKED, &out);
+}
+
+#[uniffi::export]
+pub fn tracked_all() -> Vec<TrackedPlaylistRecord> {
+    store::load(TRACKED)
+}
+
+/// "Playlist <first 8 of list=…>" or "Tracked Playlist".
+pub fn tracked_default_name(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.query_pairs().find(|(k, _)| k == "list").map(|(_, v)| v.into_owned()))
+        .filter(|l| !l.is_empty())
+        .map(|l| format!("Playlist {}", l.chars().take(8).collect::<String>()))
+        .unwrap_or_else(|| "Tracked Playlist".into())
+}
+
+fn tracked_add_locked(v: &mut Vec<TrackedPlaylistRecord>, url: &str, name: &str, thumb: &str) -> bool {
+    let url = url.trim();
+    if url.is_empty() || v.iter().any(|p| p.url.to_lowercase() == url.to_lowercase()) {
+        return false;
+    }
+    let name = name.trim();
+    v.push(TrackedPlaylistRecord {
+        id: uuid::Uuid::new_v4().to_string().to_uppercase(),
+        url: url.to_string(),
+        name: if name.is_empty() { tracked_default_name(url) } else { name.to_string() },
+        thumbnail_url: thumb.to_string(),
+        date_added: now(),
+        last_track_count: 0,
+        auto_download: None,
+        last_auto_check: None,
+        destination_folder: None,
+    });
+    true
+}
+
+/// Add a playlist URL (case-insensitive de-dup); false when empty or already tracked.
+#[uniffi::export]
+pub fn tracked_add(url: String, name: String, thumbnail_url: String) -> bool {
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<TrackedPlaylistRecord> = store::load(TRACKED);
+    let ok = tracked_add_locked(&mut v, &url, &name, &thumbnail_url);
+    if ok {
+        store::save(TRACKED, &v);
+    }
+    ok
+}
+
+#[uniffi::export]
+pub fn tracked_remove(id: String) {
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<TrackedPlaylistRecord> = store::load(TRACKED);
+    v.retain(|p| p.id != id);
+    store::save(TRACKED, &v);
+}
+
+/// Adds remote playlists not tracked here yet (keeping their auto-download
+/// choice and folder).
+#[uniffi::export]
+pub fn tracked_merge(remote: Vec<TrackedPlaylistRecord>) {
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<TrackedPlaylistRecord> = store::load(TRACKED);
+    for r in remote {
+        if !tracked_add_locked(&mut v, &r.url, &r.name, &r.thumbnail_url) {
+            continue;
+        }
+        let last = v.last_mut().unwrap();
+        if r.auto_download.is_some() {
+            last.auto_download = r.auto_download;
+        }
+        if r.destination_folder.is_some() {
+            last.destination_folder = r.destination_folder;
+        }
+    }
+    store::save(TRACKED, &v);
+}
+
+fn tracked_edit(id: &str, f: impl FnOnce(&mut TrackedPlaylistRecord)) {
+    let _g = LOCK.lock().unwrap();
+    let mut v: Vec<TrackedPlaylistRecord> = store::load(TRACKED);
+    if let Some(p) = v.iter_mut().find(|p| p.id == id) {
+        f(p);
+        store::save(TRACKED, &v);
+    }
+}
+
+#[uniffi::export]
+pub fn tracked_update_metadata(id: String, track_count: Option<i64>, thumbnail_url: Option<String>, name: Option<String>) {
+    tracked_edit(&id, |p| {
+        if let Some(c) = track_count {
+            p.last_track_count = c;
+        }
+        if let Some(t) = thumbnail_url.filter(|t| !t.is_empty()) {
+            p.thumbnail_url = t;
+        }
+        if let Some(n) = name.filter(|n| !n.is_empty()) {
+            p.name = n;
+        }
+    });
+}
+
+#[uniffi::export]
+pub fn tracked_set_auto_download(id: String, on: bool) {
+    tracked_edit(&id, |p| p.auto_download = Some(on));
+}
+
+#[uniffi::export]
+pub fn tracked_set_destination(id: String, folder: String) {
+    tracked_edit(&id, |p| p.destination_folder = (!folder.is_empty()).then_some(folder));
+}
+
+#[uniffi::export]
+pub fn tracked_mark_checked(id: String) {
+    tracked_edit(&id, |p| p.last_auto_check = Some(now()));
+}
