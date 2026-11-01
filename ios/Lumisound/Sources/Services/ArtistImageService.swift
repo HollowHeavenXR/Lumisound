@@ -87,19 +87,8 @@ final class ArtistImageService {
         // Try the full name, then the cleaned primary-artist name (strips
         // "feat."/"&"/"," collaborators that prevent an exact match), across
         // each public source in turn.
-        let candidates = artistNameCandidates(from: artist)
-        var image: UIImage?
-        for name in candidates {
-            if let found = await fetchFromDeezer(artist: name) { image = found; break }
-        }
-        // Fall back to MusicBrainz + Wikimedia Commons (true artist photos) when
-        // Deezer has no match for any name variant.
-        if image == nil {
-            for name in candidates {
-                if let found = await fetchFromMusicBrainz(artist: name) { image = found; break }
-            }
-        }
-
+        // Deezer -> MusicBrainz -> Wikimedia Commons lookup in the Rust core.
+        let image = await artistImageFetch(artist: artist).flatMap { UIImage(data: $0) }
         guard let image else {
             markNoImage(key)
             return nil

@@ -129,3 +129,94 @@ pub async fn metadata_lookup(title: String, artist: String) -> Option<MetaLookup
     CACHE.lock().unwrap().insert(key, res.clone());
     res
 }
+
+// ---- artist photos ----------------------------------------------------------------------------
+
+const MB_UA: &str = "Lumisound/1.0 (https://github.com/HollowHeavenXR/Lumisound)";
+
+/// The full credit plus the primary artist before the first feat./&/x/vs.
+pub fn artist_candidates(artist: &str) -> Vec<String> {
+    let full = artist.trim().to_string();
+    let lower = full.to_lowercase();
+    let cut = [" feat.", " feat ", " ft.", " ft ", " featuring ", " & ", ", ", " x ", " vs.", " vs "].iter().filter_map(|s| lower.find(s)).min();
+    let mut out = vec![full.clone()];
+    if let Some(c) = cut {
+        let primary = full[..c].trim().to_string();
+        if !primary.is_empty() && primary.to_lowercase() != lower {
+            out.push(primary);
+        }
+    }
+    out
+}
+
+async fn bytes(url: &str) -> Option<Vec<u8>> {
+    let r = crate::client::http_client().get(url).timeout(Duration::from_secs(15)).send().await.ok()?;
+    if r.status().as_u16() != 200 {
+        return None;
+    }
+    let b = r.bytes().await.ok()?.to_vec();
+    (b.len() > 200).then_some(b)
+}
+
+async fn deezer_artist(name: &str) -> Option<Vec<u8>> {
+    let v = get(&format!("https://api.deezer.com/search/artist?q={}&limit=1", urlencoding::encode(name)), None).await?;
+    let first = v["data"].as_array()?.first()?.clone();
+    for k in ["picture_xl", "picture_big", "picture_medium"] {
+        if let Some(u) = first[k].as_str().filter(|u| !u.is_empty() && !u.contains("artist//")) {
+            if let Some(b) = bytes(u).await {
+                return Some(b);
+            }
+        }
+    }
+    None
+}
+
+async fn commons_url(resource: &str) -> Option<String> {
+    if !resource.contains("commons.wikimedia.org") {
+        return None;
+    }
+    let file = &resource[resource.find("File:")?..];
+    let v = get(&format!("https://commons.wikimedia.org/w/api.php?action=query&titles={}&prop=imageinfo&iiprop=url&iiurlwidth=500&format=json", urlencoding::encode(file)), Some(MB_UA)).await?;
+    let page = v["query"]["pages"].as_object()?.values().next()?.clone();
+    let info = page["imageinfo"].as_array()?.first()?.clone();
+    s(&info["thumburl"]).or_else(|| s(&info["url"]))
+}
+
+async fn musicbrainz_artist(name: &str) -> Option<Vec<u8>> {
+    let v = get(&format!("https://musicbrainz.org/ws/2/artist/?query=artist:{}&fmt=json&limit=1", urlencoding::encode(name)), Some(MB_UA)).await?;
+    let mbid = v["artists"].as_array()?.first()?["id"].as_str()?.to_string();
+    let rel = get(&format!("https://musicbrainz.org/ws/2/artist/{mbid}?inc=url-rels&fmt=json"), Some(MB_UA)).await?;
+    for r in rel["relations"].as_array()?.iter().filter(|r| r["type"] == "image") {
+        let Some(res) = r["url"]["resource"].as_str() else { continue };
+        let url = commons_url(res).await.unwrap_or_else(|| res.to_string());
+        if let Some(b) = bytes(&url).await {
+            return Some(b);
+        }
+    }
+    None
+}
+
+/// Artist photo bytes from Deezer, falling back to MusicBrainz → Wikimedia
+/// Commons; each tried for the full credit, then the primary artist.
+#[uniffi::export]
+pub async fn artist_image_fetch(artist: String) -> Option<Vec<u8>> {
+    let a = artist.trim().to_string();
+    if a.is_empty() || a.eq_ignore_ascii_case("unknown artist") {
+        return None;
+    }
+    crate::on_rt(async move {
+        let names = artist_candidates(&a);
+        for n in &names {
+            if let Some(b) = deezer_artist(n).await {
+                return Some(b);
+            }
+        }
+        for n in &names {
+            if let Some(b) = musicbrainz_artist(n).await {
+                return Some(b);
+            }
+        }
+        None
+    })
+    .await
+}
