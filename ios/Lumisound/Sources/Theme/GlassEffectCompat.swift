@@ -24,6 +24,18 @@ import SwiftUI
 // fallback branch below.
 
 extension View {
+    /// `material` in Classic under Liquid Glass; the selected interface
+    /// style's surface otherwise (and always in Lumen). For Classic views
+    /// that paint a material directly.
+    @ViewBuilder
+    func styleAwareMaterial<S: Shape>(_ material: Material, in shape: S) -> some View {
+        if InterfaceEdition.isLumen || !Appearance.isLiquidGlass {
+            self.styledSurface(in: shape, tint: nil)
+        } else {
+            self.background(material, in: shape)
+        }
+    }
+
     /// The configured glass tint as a shape fill, sized to fill the background.
     /// Returns an empty view when the tint is effectively clear.
     @ViewBuilder
@@ -41,7 +53,7 @@ extension View {
     /// never in front of it.
     @ViewBuilder
     func adaptiveGlass<S: Shape>(in shape: S, fallback: Material = .ultraThinMaterial) -> some View {
-        if InterfaceEdition.isLumen {
+        if InterfaceEdition.isLumen || !Appearance.isLiquidGlass {
             self.lumenSurfaceBackground(in: shape, tint: nil)
         } else {
             if #available(iOS 26.0, *) {
@@ -58,7 +70,7 @@ extension View {
     /// tint instead of a translucent material.
     @ViewBuilder
     func adaptiveGlass<S: Shape, F: ShapeStyle>(in shape: S, fallback: F) -> some View {
-        if InterfaceEdition.isLumen {
+        if InterfaceEdition.isLumen || !Appearance.isLiquidGlass {
             self.lumenSurfaceBackground(in: shape, tint: nil)
         } else {
             if #available(iOS 26.0, *) {
@@ -82,7 +94,7 @@ extension View {
     /// behaviour is wrong under a row that is often just a toggle or a slider.
     @ViewBuilder
     func adaptiveGlass<S: Shape, F: ShapeStyle>(sectionTint: Color, in shape: S, fallback: F) -> some View {
-        if InterfaceEdition.isLumen {
+        if InterfaceEdition.isLumen || !Appearance.isLiquidGlass {
             self.lumenSurfaceBackground(in: shape, tint: sectionTint.opacity(0.25))
         } else {
             if #available(iOS 26.0, *) {
@@ -97,7 +109,7 @@ extension View {
     /// tappable floating controls), falling back to the given `Material`.
     @ViewBuilder
     func adaptiveGlass<S: Shape>(tint: Color, in shape: S, fallback: Material = .ultraThinMaterial) -> some View {
-        if InterfaceEdition.isLumen {
+        if InterfaceEdition.isLumen || !Appearance.isLiquidGlass {
             self.lumenSurfaceBackground(in: shape, tint: tint)
         } else {
             if #available(iOS 26.0, *) {
@@ -112,7 +124,7 @@ extension View {
     /// highlighted card), falling back to an arbitrary `ShapeStyle`.
     @ViewBuilder
     func adaptiveGlass<S: Shape, F: ShapeStyle>(tint: Color, in shape: S, fallback: F) -> some View {
-        if InterfaceEdition.isLumen {
+        if InterfaceEdition.isLumen || !Appearance.isLiquidGlass {
             self.lumenSurfaceBackground(in: shape, tint: tint)
         } else {
             if #available(iOS 26.0, *) {
@@ -123,10 +135,11 @@ extension View {
         }
     }
 
-    // MARK: Lumen
+    // MARK: Styled surfaces
     //
-    // In the Lumen edition every card these helpers draw becomes a Lumen
-    // surface — lifted ink with a hairline top light, the tint (when there
+    // In the Lumen edition — and in Classic whenever an interface style other
+    // than Liquid Glass is selected — every card these helpers draw becomes
+    // the selected style's surface — lifted ink with a hairline top light, the tint (when there
     // is one) laid over it — so the classic screens' glass cards read as
     // part of the redesign. Lumen's own floating chrome, which should stay
     // real glass, uses `lumenGlass` instead.

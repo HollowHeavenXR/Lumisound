@@ -13,6 +13,10 @@ final class Appearance: ObservableObject {
     @Published private(set) var styleID: String
     @Published private(set) var density: Density
     @Published private(set) var tokens: AppearanceTokens
+    /// Bumped when a style change should repaint screens that read colors
+    /// through static getters (`AppTheme`); `ContentView` rebuilds on it.
+    @Published private(set) var paletteStamp = 0
+    private var paletteDirty = false
 
     /// Snapshot readable from non-isolated contexts (static color getters).
     nonisolated(unsafe) static var current: AppearanceTokens = appearanceTokens(
@@ -62,13 +66,39 @@ final class Appearance: ObservableObject {
         self.density = density
         tokens = appearanceTokens(styleId: style, density: density)
         Self.current = tokens
-        if push { onChange?(style, Self.densityName(density)) }
+        paletteDirty = true
+        if push {
+            onChange?(style, Self.densityName(density))
+        } else {
+            commitPalette() // synced from another device: repaint now
+        }
+    }
+
+    /// Repaints every screen with the current style (called when the user
+    /// leaves the Appearance screen, so picking doesn't throw them out of it;
+    /// cards and panels already repaint live).
+    func commitPalette() {
+        guard paletteDirty else { return }
+        paletteDirty = false
+        paletteStamp += 1
     }
 
     /// Set by AccountService to sync the choice to the account.
     var onChange: ((String, String) -> Void)?
 
     nonisolated static var isLiquidGlass: Bool { current.surfaceKind == .liquidGlass }
+
+    /// Liquid Glass tokens: Classic's look is its own palette under Liquid
+    /// Glass, so another style only replaces the colors it actually changes.
+    nonisolated(unsafe) static let liquidGlassBase = appearanceTokens(styleId: "liquid_glass", density: .regular)
+
+    /// For Classic: the selected style's color for `pick`, or nil when the
+    /// style keeps the base color (Classic then keeps its own).
+    nonisolated static func classicColor(_ pick: (AppearanceTokens) -> Rgba) -> Color? {
+        guard !isLiquidGlass else { return nil }
+        let v = pick(current)
+        return v == pick(liquidGlassBase) ? nil : v.color
+    }
 }
 
 extension Rgba {

@@ -280,7 +280,7 @@ struct SongsTab: View {
                             .font(.subheadline.weight(.bold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .background(.ultraThinMaterial, in: Capsule())
+                            .styleAwareMaterial(.ultraThinMaterial, in: Capsule())
                             .foregroundStyle(AppTheme.textPrimary)
                             .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
                     }
