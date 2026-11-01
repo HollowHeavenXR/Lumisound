@@ -7,7 +7,7 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY bridge bridge
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target \
-    cargo build --release -p lumisound-bridge && cp target/release/lumisound-bridge /lumisound-bridge
+    CARGO_BUILD_JOBS=3 cargo build --release -p lumisound-bridge && cp target/release/lumisound-bridge /lumisound-bridge
 
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl unzip ca-certificates atomicparsley aria2 \

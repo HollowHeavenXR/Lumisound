@@ -37,7 +37,7 @@ responses against Python, then flip. When the list below is all checked, delete 
         loop, artist image loop, duplicate scan loop
 - [x] 5. Stats/discovery (stations, daily-pick, liner-notes moved to 8 — they call Gemini): /user/stats*, /user/on-this-day, recommendations, smart-playlists,
         weekly-mix, discover-mix, stations, daily-pick, achievements, liner-notes, /api/artist/*
-- [ ] 6. Social: /api/social/*, /social/*, /ws/live, rooms, device-sync, shared playlists,
+- [x] 6. Social: /api/social/*, /social/*, /ws/live, rooms, device-sync, shared playlists,
         collaborators, comments, presence
 - [ ] 7. Integrations: subscriptions (YouTube), podcasts, scrobble (last.fm/libre.fm), Discord
         webhook + RPC config + verification, push tokens + APNs/FCM, notifications,
@@ -59,6 +59,15 @@ responses against Python, then flip. When the list below is all checked, delete 
 - [ ] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files, tags)
 - [ ] G. Remaining services (social, rooms, podcasts, stats, backups, cache, diagnostics…)
 - [ ] H. Swift rewired, old Swift services deleted, tvOS/watchOS on the core, release tag
+- [ ] I. Appearance system (user ask 2026-10-31): more styles besides Liquid Glass. Theme
+        definitions/tokens + selection/persistence live in Rust core (`appearance` module:
+        styles e.g. Liquid Glass, Solid, Midnight OLED, Paper/Light, Vapor/Neon, Minimal Mono,
+        accent + density + corner + blur params); Swift only maps tokens -> SwiftUI modifiers.
+        Picker in Settings, synced via user settings.
+- [ ] J. Audit: every remaining Swift file is view/app-shell/UniFFI glue only (list exceptions
+        that iOS strictly requires: AVAudioSession, MPNowPlaying/RemoteCommand, BGTask,
+        URLSession background transfers, Keychain, WidgetKit/ActivityKit/AppIntents/CarPlay
+        entry points, WatchConnectivity)
 
 ## Other
 
@@ -90,7 +99,7 @@ responses against Python, then flip. When the list below is all checked, delete 
   to match Python isoformat() exactly. Don't use to_json(timestamp).
 - Python's /user/playlists/{id} (declared first) shadowed /user/playlists/folders and
   /shared-with-me (both 404'd). axum prefers static segments, so folders now works;
-  shared-with-me still 404s until collaborators (group 6) are ported.
+  shared-with-me now served (group 6). Same shadowing fixed for /api/social/presence/listening-together.
 - POST /user/history stays on Python (method fallback) until scrobbling (group 7).
 - Sync push / restore / queue / inventory now run in one transaction (Python was autocommit).
 - Group 4: uploads stream to disk while hashing (Python buffered 100 MB in RAM); upload

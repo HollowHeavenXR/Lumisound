@@ -44,3 +44,4 @@ base64 = "0.22"
 rustfft = "6"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 crc32fast = "1"
+md-5 = "0.10"

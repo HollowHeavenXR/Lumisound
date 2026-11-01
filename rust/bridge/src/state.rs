@@ -54,6 +54,7 @@ pub struct Inner {
     /// Upload/backfill analysis runs (ffmpeg decodes) at once.
     pub analysis_sem: tokio::sync::Semaphore,
     pub storage_tier_sent: DashMap<String, f64>,
+    pub taste_cache: TtlCache<String, Value>,
 }
 
 impl std::ops::Deref for AppState {
@@ -122,6 +123,7 @@ impl AppState {
             release_stale: std::sync::Mutex::new(None),
             analysis_sem: tokio::sync::Semaphore::new(3),
             storage_tier_sent: DashMap::new(),
+            taste_cache: TtlCache::new(Duration::from_secs(3600), 5000),
             cdn,
             cfg,
             db,

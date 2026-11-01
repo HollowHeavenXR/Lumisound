@@ -27,6 +27,7 @@ mod proxy;
 mod routes;
 mod state;
 mod storage;
+mod taste;
 mod totp;
 mod youtube;
 mod ytdlp;

@@ -1287,6 +1287,7 @@ dependencies = [
  "hmac",
  "idna",
  "jsonwebtoken",
+ "md-5",
  "mimalloc",
  "rand 0.9.5",
  "regex",
