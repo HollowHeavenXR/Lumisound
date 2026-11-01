@@ -565,50 +565,21 @@ extension StreamingService {
     /// failure (including a 403 if it turns out these ARE IP-locked too)
     /// throws, and the caller falls through to `attemptRelayDownload`.
     private func attemptDirectFetch(track: StreamTrack, safeName: String, importDir: URL) async throws -> URL {
-        var queryItems: [URLQueryItem] = [
+        var components = URLComponents()
+        components.path = "/api/stream"
+        components.queryItems = [
             URLQueryItem(name: "id", value: track.id),
             URLQueryItem(name: "source", value: track.source),
             URLQueryItem(name: "format", value: preferredFormat),
+            URLQueryItem(name: "url", value: track.youtubeURL),
         ]
-        queryItems.append(URLQueryItem(name: "url", value: track.youtubeURL))
-
-        var components = URLComponents()
-        components.path = "/api/stream"
-        components.queryItems = queryItems
-
-        guard var resolveRequest = makeRequest(components.string ?? "/api/stream") else {
+        guard let request = transportRequest(components.string ?? "/api/stream"), let url = request.url else {
             throw StreamingError.invalidURL
         }
-        if let accountToken = AccountService.shared?.token {
-            resolveRequest.setValue(accountToken, forHTTPHeaderField: "X-Account-Token")
+        let raw = try await runTransport(named: "lumisound.download.direct.\(safeName)") {
+            try await bridgeDirectFetch(resolveUrl: url.absoluteString, headers: Self.coreHeaders(request), tmpDir: Self.transportTmpDir)
         }
-        resolveRequest.timeoutInterval = 15
-
-        let (resolveData, resolveResponse) = try await Core.data(for: resolveRequest)
-        guard let resolveHTTP = resolveResponse as? HTTPURLResponse, resolveHTTP.statusCode == 200 else {
-            throw StreamingError.invalidURL
-        }
-        struct ResolvedURL: Decodable { let url: String }
-        guard let resolved = try? JSONDecoder().decode(ResolvedURL.self, from: resolveData),
-              let rawURL = URL(string: resolved.url) else {
-            throw StreamingError.invalidURL
-        }
-
-        var fetchRequest = URLRequest(url: rawURL)
-        fetchRequest.timeoutInterval = 120
-        let (rawFileURL, fetchResponse) = try await BackgroundDownloadManager.run(
-            named: "lumisound.download.direct.\(safeName)"
-        ) {
-            try await Core.download(for: fetchRequest)
-        }
-        guard let fetchHTTP = fetchResponse as? HTTPURLResponse, (200..<300).contains(fetchHTTP.statusCode) else {
-            try? FileManager.default.removeItem(at: rawFileURL)
-            throw StreamingError.incompleteDownload
-        }
-
-        return try await finalizeRelayedFile(
-            rawFileURL: rawFileURL, track: track, safeName: safeName, importDir: importDir
-        )
+        return try await finalizeRelayedFile(raw: raw, track: track, safeName: safeName, importDir: importDir)
     }
 
     /// Any source, m4a format only (see the exclusion of "best" above): fetches
@@ -627,163 +598,105 @@ extension StreamingService {
         if track.source == "soundcloud" || track.source == "bandcamp" {
             queryItems.append(URLQueryItem(name: "url", value: track.youtubeURL))
         }
-        // Defense-in-depth dedupe, mirroring the job-based path below — this
-        // endpoint has no yt-dlp job to naturally slot an ownership check into,
-        // so without this the relay path would re-fetch from the CDN even for a
-        // track the server-side inventory already knows is owned (e.g. synced
-        // from another device, not yet reflected in this device's local library).
+        // Defense-in-depth dedupe, mirroring the job-based path: the server's
+        // inventory may already know this track is owned (synced from another
+        // device, not yet in this device's local library).
         if !existingIDs.isEmpty {
             queryItems.append(URLQueryItem(name: "existing_ids", value: existingIDs))
         }
-
         var components = URLComponents()
         components.path = "/api/download/relay"
         components.queryItems = queryItems
-
-        guard var request = makeRequest(components.string ?? "/api/download/relay") else {
+        guard let request = transportRequest(components.string ?? "/api/download/relay"), let url = request.url else {
             throw StreamingError.invalidURL
         }
+        let raw = try await runTransport(named: "lumisound.download.relay.\(safeName)") {
+            try await bridgeRelayDownload(url: url.absoluteString, headers: Self.coreHeaders(request), tmpDir: Self.transportTmpDir)
+        }
+        return try await finalizeRelayedFile(raw: raw, track: track, safeName: safeName, importDir: importDir)
+    }
+
+    private static var transportTmpDir: String {
+        FileManager.default.temporaryDirectory.appendingPathComponent("lumisound-dl").path
+    }
+
+    private static func coreHeaders(_ request: URLRequest) -> [HttpHeader] {
+        (request.allHTTPHeaderFields ?? [:]).map { HttpHeader(name: $0.key, value: $0.value) }
+    }
+
+    private func transportRequest(_ path: String) -> URLRequest? {
+        guard var request = makeRequest(path) else { return nil }
         if let accountToken = AccountService.shared?.token {
             request.setValue(accountToken, forHTTPHeaderField: "X-Account-Token")
         }
-        request.timeoutInterval = 180
-
-        let (rawFileURL, response) = try await BackgroundDownloadManager.run(
-            named: "lumisound.download.relay.\(safeName)"
-        ) {
-            try await Core.download(for: request)
-        }
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            try? FileManager.default.removeItem(at: rawFileURL)
-            throw StreamingError.incompleteDownload
-        }
-        let downloadedSize = (try? FileManager.default.attributesOfItem(atPath: rawFileURL.path))?[.size] as? Int64 ?? 0
-        let expectedSize = http.expectedContentLength
-        if downloadedSize <= 0 || (expectedSize > 0 && downloadedSize != expectedSize) {
-            try? FileManager.default.removeItem(at: rawFileURL)
-            throw StreamingError.incompleteDownload
-        }
-
-        return try await finalizeRelayedFile(
-            rawFileURL: rawFileURL, track: track, safeName: safeName, importDir: importDir
-        )
+        return request
     }
 
-    /// Shared tail for both faster-transport paths above: tags the raw
-    /// downloaded file on-device (see `AudioTagWriter`), moves it into place,
-    /// validates it, and pre-seeds the artwork cache — mirroring the
-    /// equivalent steps in `attemptDownload` for the job-based path. Both
-    /// faster paths only ever produce m4a-compatible containers.
-    private func finalizeRelayedFile(
-        rawFileURL: URL, track: StreamTrack, safeName: String, importDir: URL
-    ) async throws -> URL {
-        let sourceTrackID = "\(track.source):\(track.id)"
-        let taggedURL = await AudioTagWriter.tag(
-            fileAt: rawFileURL,
-            title: track.title,
-            artist: track.artist,
-            album: nil,
-            sourceTrackID: sourceTrackID,
-            thumbnailURL: track.thumbnailURL
-        )
-        let finalRawURL = taggedURL ?? rawFileURL
-        if taggedURL != nil {
-            try? FileManager.default.removeItem(at: rawFileURL)
-        } else {
-            appWarn("finalizeRelayedFile: on-device tagging failed for \"\(track.title)\" — importing untagged", category: "network")
-        }
-
-        let (destURL, alreadyComplete) = await resolveDownloadDestination(
-            preferred: importDir.appendingPathComponent("\(safeName).\(finalRawURL.pathExtension.isEmpty ? "m4a" : finalRawURL.pathExtension)"),
-            sourceTrackID: sourceTrackID
-        )
-        if alreadyComplete {
-            try? FileManager.default.removeItem(at: finalRawURL)
-            return destURL
-        }
+    /// Runs a Rust-core transfer under a background-task assertion; any core
+    /// failure is a plain "incomplete" so the caller falls through to the
+    /// next transport.
+    private func runTransport(named name: String, _ body: () async throws -> JobResult) async throws -> JobResult {
         do {
-            try FileManager.default.moveItem(at: finalRawURL, to: destURL)
-        } catch {
-            appError("finalizeRelayedFile: move failed for \"\(track.title)\": \(error)", category: "network")
-            throw error
+            return try await BackgroundDownloadManager.run(named: name, work: body)
+        } catch let e as JobError {
+            appWarn("transport \(name): \(e)", category: "network")
+            throw StreamingError.incompleteDownload
         }
+    }
 
-        let isValid = await Task.detached(priority: .utility) {
-            CorruptFileFinderService.isValidAudioFile(at: destURL, expectedDuration: track.duration)
+    /// Shared tail for both faster transports: tag, move into place (ledger-
+    /// aware destination), validate — in the Rust core (`downloads_finalize_file`).
+    /// AVFoundation tagging is only the fallback for containers the core can't
+    /// tag. Then pre-seeds the artwork cache.
+    private func finalizeRelayedFile(raw: JobResult, track: StreamTrack, safeName: String, importDir: URL) async throws -> URL {
+        let req = FinalizeRequest(rawPath: raw.filePath, importDir: importDir.path, safeName: safeName,
+                                  sourceTrackId: track.sourceTrackID, title: track.title, artist: track.artist,
+                                  thumbnailUrl: track.thumbnailURL, expectedDuration: track.duration,
+                                  contentType: raw.contentType)
+        let result = await Task.detached(priority: .utility) { () -> Result<FinalizeOutcome, Error> in
+            Result { try downloadsFinalizeFile(req: req, verifier: AVFoundationAudioVerifier.shared) }
         }.value
-        guard isValid else {
-            try? FileManager.default.removeItem(at: destURL)
+        let outcome: FinalizeOutcome
+        switch result {
+        case .success(let o): outcome = o
+        case .failure(FinalizeError.Corrupt):
             appWarn("finalizeRelayedFile: corrupt/unreadable/truncated file for \"\(track.title)\" — discarding", category: "network")
             throw StreamingError.corruptDownload
+        case .failure(let e):
+            appError("finalizeRelayedFile: \(e) for \"\(track.title)\"", category: "network")
+            throw e
         }
-
+        var destURL = URL(fileURLWithPath: outcome.path)
+        if outcome.alreadyComplete { return destURL }
+        if !outcome.tagged {
+            if let tagged = await AudioTagWriter.tag(fileAt: destURL, title: track.title, artist: track.artist, album: nil,
+                                                     sourceTrackID: track.sourceTrackID, thumbnailURL: track.thumbnailURL) {
+                let fm = FileManager.default
+                let final = destURL.deletingPathExtension().appendingPathExtension(tagged.pathExtension)
+                try? fm.removeItem(at: destURL)
+                if (try? fm.moveItem(at: tagged, to: final)) != nil { destURL = final }
+            } else {
+                appWarn("finalizeRelayedFile: on-device tagging failed for \"\(track.title)\" — importing untagged", category: "network")
+            }
+        }
         appLog("Download complete: \(destURL.lastPathComponent)", category: "network")
         await prefetchArtworkWithFallback(for: track, cacheKey: destURL.lastPathComponent)
         return destURL
     }
 
-    /// Resolves a safe, non-colliding destination path for a track about to be
-    /// moved into place. A filename collision at `preferred` does NOT necessarily
-    /// mean "we already have this track" — titles routinely collide (different
-    /// artists' same-titled songs, covers, remasters), and a stale/partial file
-    /// from an interrupted previous download can share the same name too.
-    /// Trusting a bare filename match here was the cause of two user-visible
-    /// bugs: a different track silently never downloading because it happened to
-    /// share a sanitized filename with something already on disk, and the app
-    /// reporting a track as "downloaded" when the file at that path was actually
-    /// corrupt or belonged to a different track entirely.
-    ///
-    /// Only treats an existing file as "this exact track, already downloaded" if
-    /// the download ledger confirms *this* `sourceTrackID` is the one that
-    /// produced that exact filename, AND the file still passes an audio
-    /// integrity check. Otherwise returns a disambiguated sibling path
-    /// ("Title (2).ext", "Title (3).ext", ...) so the real download can proceed
-    /// without clobbering or being silently mistaken for something else.
+    /// Safe, non-colliding destination for a finished download (Rust core
+    /// `downloads_resolve_destination`): only a ledger entry for THIS
+    /// `sourceTrackID` whose file still verifies counts as "already have it" —
+    /// a bare filename collision never does (titles collide; stale partials
+    /// share names) and gets a "Title (2).ext" sibling instead. The ledger is
+    /// consulted first because a converted track no longer exists at its
+    /// original extension.
     func resolveDownloadDestination(preferred: URL, sourceTrackID: String) async -> (url: URL, alreadyComplete: Bool) {
-        let fm = FileManager.default
-        let dir = preferred.deletingLastPathComponent()
-
-        // Consult the ledger BEFORE checking whether `preferred`'s own path
-        // exists — a track that's already been downloaded AND converted
-        // (LumisoundExclusiveExtensionService.convert re-encodes to a fresh
-        // "<name>.m4a.lms" and deletes the original) no longer has anything
-        // at `preferred`'s original requested extension at all, even though
-        // it's fully, correctly downloaded. Checking `preferred` first (as
-        // this used to) made every already-converted track look
-        // undownloaded here, so a later reconciliation pass for the same
-        // pending job re-downloaded and re-converted it from scratch —
-        // confirmed from real client logs: the same 2 tracks re-imported and
-        // re-converted 4 times over ~2 minutes, fully wasted bandwidth/CPU
-        // each time since the result was identical. The ledger's recorded
-        // filename is the only thing that still points at where a track
-        // actually lives post-conversion.
-        // A name that resolves back to `dir` itself is rejected rather than used.
-        // `appendingPathComponent("")` and `appendingPathComponent(".")` both
-        // return the DIRECTORY, and a directory passes `fileExists`, so a bad
-        // entry here could hand back the folder as though it were the track — and
-        // the caller would then try to move a download onto its own destination
-        // folder. Field logs show exactly that shape: a move refused because
-        // "an item with the same name already exists", where the name given was a
-        // folder, not a file. The origin of such an entry is still unaccounted
-        // for, so this refuses the impossible value instead of assuming where it
-        // came from.
-        if let ledgerName = DownloadLedgerStore.shared.filename(for: sourceTrackID),
-           !ledgerName.isEmpty,
-           dir.appendingPathComponent(ledgerName).standardizedFileURL != dir.standardizedFileURL {
-            let ledgerURL = dir.appendingPathComponent(ledgerName)
-            let ledgerIsValid = await Task.detached(priority: .utility) {
-                FileManager.default.fileExists(atPath: ledgerURL.path) &&
-                    CorruptFileFinderService.isValidAudioFile(at: ledgerURL)
-            }.value
-            if ledgerIsValid {
-                return (ledgerURL, true)
-            }
-        }
-
-        guard fm.fileExists(atPath: preferred.path) else {
-            return (preferred, false)
-        }
-        return (URL(fileURLWithPath: uniqueDestination(preferred: preferred.path)), false)
+        let d = await Task.detached(priority: .utility) {
+            downloadsResolveDestination(preferred: preferred.path, sourceTrackId: sourceTrackID,
+                                        verifier: AVFoundationAudioVerifier.shared)
+        }.value
+        return (URL(fileURLWithPath: d.path), d.alreadyComplete)
     }
 
     /// Builds the `/api/download/status` or `/api/download/result` URL for a given

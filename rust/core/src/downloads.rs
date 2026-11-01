@@ -396,32 +396,200 @@ pub async fn bridge_download_job(method: String, start_url: String, headers: Vec
         if !(200..300).contains(&code) {
             return Err(retry(format!("HTTP {code} fetching result")));
         }
-        let ct = r.headers().get("content-type").and_then(|v| v.to_str().ok()).map(str::to_string);
-        let expected = r.content_length();
-        let _ = tokio::fs::create_dir_all(&tmp_dir).await;
-        let path = std::path::Path::new(&tmp_dir).join(format!("dl-{}.part", uuid::Uuid::new_v4().simple()));
-        let mut f = tokio::fs::File::create(&path).await.map_err(|e| retry(e.to_string()))?;
-        let mut n = 0u64;
-        let mut stream = r.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let Ok(c) = chunk else {
-                let _ = tokio::fs::remove_file(&path).await;
-                return Err(retry("transfer interrupted"));
-            };
-            n += c.len() as u64;
-            if f.write_all(&c).await.is_err() {
-                let _ = tokio::fs::remove_file(&path).await;
-                return Err(retry("write failed"));
-            }
-        }
-        let _ = f.flush().await;
-        if n == 0 || expected.is_some_and(|e| e != n) {
-            let _ = tokio::fs::remove_file(&path).await;
-            return Err(retry(format!("incomplete download ({n}/{} bytes)", expected.map(|e| e as i64).unwrap_or(-1))));
-        }
-        Ok(JobResult { file_path: path.to_string_lossy().into_owned(), content_type: ct, bytes: n, job_id: job, seconds: started.elapsed().as_secs_f64() })
+        let (path, ct, n) = stream_to_tmp(r, &tmp_dir).await?;
+        Ok(JobResult { file_path: path, content_type: ct, bytes: n, job_id: job, seconds: started.elapsed().as_secs_f64() })
     })
     .await
+}
+
+/// Stream a successful response body into a fresh file in `tmp_dir`,
+/// checking it against Content-Length. Partial files are removed.
+async fn stream_to_tmp(r: reqwest::Response, tmp_dir: &str) -> Result<(String, Option<String>, u64), JobError> {
+    let ct = r.headers().get("content-type").and_then(|v| v.to_str().ok()).map(str::to_string);
+    let expected = r.content_length();
+    let _ = tokio::fs::create_dir_all(tmp_dir).await;
+    let path = std::path::Path::new(tmp_dir).join(format!("dl-{}.part", uuid::Uuid::new_v4().simple()));
+    let mut f = tokio::fs::File::create(&path).await.map_err(|e| retry(e.to_string()))?;
+    let mut n = 0u64;
+    let mut stream = r.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let Ok(c) = chunk else {
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(retry("transfer interrupted"));
+        };
+        n += c.len() as u64;
+        if f.write_all(&c).await.is_err() {
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(retry("write failed"));
+        }
+    }
+    if f.flush().await.is_err() {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(retry("write failed"));
+    }
+    if n == 0 || expected.is_some_and(|e| e != n) {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(retry(format!("incomplete download ({n}/{} bytes)", expected.map(|e| e as i64).unwrap_or(-1))));
+    }
+    Ok((path.to_string_lossy().into_owned(), ct, n))
+}
+
+/// `/api/download/relay`: the bridge resolves the CDN URL and streams the
+/// bytes straight through (one transfer instead of the job flow's two).
+#[uniffi::export]
+pub async fn bridge_relay_download(url: String, headers: Vec<HttpHeader>, tmp_dir: String) -> Result<JobResult, JobError> {
+    crate::on_rt(async move {
+        let started = Instant::now();
+        let r = apply(crate::client::http_client().get(&url).timeout(Duration::from_secs(180)), &headers).send().await.map_err(|e| retry(format!("relay network error: {e}")))?;
+        let code = r.status().as_u16();
+        if !(200..300).contains(&code) {
+            return Err(JobError::Http { code, detail: format!("relay HTTP {code}") });
+        }
+        let (path, ct, n) = stream_to_tmp(r, &tmp_dir).await?;
+        Ok(JobResult { file_path: path, content_type: ct, bytes: n, job_id: String::new(), seconds: started.elapsed().as_secs_f64() })
+    })
+    .await
+}
+
+/// SoundCloud/Bandcamp: resolve the raw CDN URL via `resolve_url`
+/// (`/api/stream`, bridge `headers`) and fetch it directly from the device,
+/// with no bridge hop for the bytes.
+#[uniffi::export]
+pub async fn bridge_direct_fetch(resolve_url: String, headers: Vec<HttpHeader>, tmp_dir: String) -> Result<JobResult, JobError> {
+    crate::on_rt(async move {
+        let started = Instant::now();
+        let http = crate::client::http_client();
+        let r = apply(http.get(&resolve_url).timeout(Duration::from_secs(15)), &headers).send().await.map_err(|e| retry(format!("resolve network error: {e}")))?;
+        if r.status().as_u16() != 200 {
+            return Err(JobError::Http { code: r.status().as_u16(), detail: "stream resolve failed".into() });
+        }
+        let v: serde_json::Value = r.json().await.map_err(|_| retry("bad resolve payload"))?;
+        let raw = v["url"].as_str().filter(|u| u.starts_with("http")).ok_or_else(|| retry("no url in resolve payload"))?.to_string();
+        let r = http.get(&raw).timeout(Duration::from_secs(120)).send().await.map_err(|e| retry(format!("CDN network error: {e}")))?;
+        let code = r.status().as_u16();
+        if !(200..300).contains(&code) {
+            return Err(JobError::Http { code, detail: format!("CDN HTTP {code}") });
+        }
+        let (path, ct, n) = stream_to_tmp(r, &tmp_dir).await?;
+        Ok(JobResult { file_path: path, content_type: ct, bytes: n, job_id: String::new(), seconds: started.elapsed().as_secs_f64() })
+    })
+    .await
+}
+
+// ---- finalize (tag -> place -> validate) -------------------------------------------------------
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct Destination {
+    pub path: String,
+    /// The ledger says this exact track already lives at `path` and it verifies.
+    pub already_complete: bool,
+}
+
+fn audio_ok(path: &str, expected: Option<f64>, verifier: &Option<std::sync::Arc<dyn crate::lock::AudioVerifier>>) -> bool {
+    let dir = std::env::temp_dir().to_string_lossy().into_owned();
+    match crate::analysis::validate_audio(path.to_string(), dir, expected) {
+        crate::analysis::AudioValidation::Valid => true,
+        crate::analysis::AudioValidation::Unsupported => verifier.as_ref().is_some_and(|v| v.is_valid_audio(path.to_string())),
+        _ => false,
+    }
+}
+
+/// Where a finished download goes. A bare filename collision is never taken
+/// as "already have it" (titles collide; stale partials share names): only a
+/// ledger entry for this `source_track_id` whose file still verifies is.
+/// Otherwise `preferred`, or "Name (2).ext"… when that is taken. A ledger
+/// name that resolves to the directory itself is ignored.
+#[uniffi::export]
+pub fn downloads_resolve_destination(preferred: String, source_track_id: String, verifier: Option<std::sync::Arc<dyn crate::lock::AudioVerifier>>) -> Destination {
+    let pref = Path::new(&preferred);
+    let dir = pref.parent().unwrap_or(Path::new("/"));
+    if let Some(name) = ledger_filename(source_track_id).filter(|n| !n.is_empty() && n != "." && n != ".." && !n.contains('/')) {
+        let p = dir.join(&name);
+        if p.is_file() && audio_ok(&p.to_string_lossy(), None, &verifier) {
+            return Destination { path: p.to_string_lossy().into_owned(), already_complete: true };
+        }
+    }
+    if !pref.exists() {
+        return Destination { path: preferred, already_complete: false };
+    }
+    Destination { path: unique_destination(preferred), already_complete: false }
+}
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct FinalizeRequest {
+    pub raw_path: String,
+    pub import_dir: String,
+    pub safe_name: String,
+    pub source_track_id: String,
+    pub title: String,
+    pub artist: String,
+    pub thumbnail_url: Option<String>,
+    /// Seconds (0 = unknown): a file much shorter than this is truncated.
+    pub expected_duration: f64,
+    /// From the response Content-Type when the raw file has no extension.
+    pub content_type: Option<String>,
+}
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct FinalizeOutcome {
+    pub path: String,
+    pub already_complete: bool,
+    /// Tags written by the core; false = container it can't tag (caller may
+    /// try the platform tagger).
+    pub tagged: bool,
+}
+
+#[derive(uniffi::Error, thiserror::Error, Debug)]
+pub enum FinalizeError {
+    #[error("move failed: {message}")]
+    Move { message: String },
+    #[error("corrupt, unreadable or truncated download")]
+    Corrupt,
+}
+
+/// Shared tail of the direct/relay transports: tag the raw file, move it to
+/// its resolved destination, verify it decodes (and isn't truncated), else
+/// delete it. The raw file is consumed either way.
+#[uniffi::export]
+pub fn downloads_finalize_file(req: FinalizeRequest, verifier: Option<std::sync::Arc<dyn crate::lock::AudioVerifier>>) -> Result<FinalizeOutcome, FinalizeError> {
+    let raw = PathBuf::from(&req.raw_path);
+    let ext = match raw.extension().and_then(|e| e.to_str()).map(str::to_lowercase) {
+        Some(e) if e != "part" && !e.is_empty() => e,
+        _ => content_type_extension(req.content_type.clone()).unwrap_or_else(|| "m4a".into()),
+    };
+    // lofty picks the parser from the extension.
+    let staged = raw.with_extension(&ext);
+    if staged != raw && std::fs::rename(&raw, &staged).is_err() {
+        let _ = std::fs::remove_file(&raw);
+        return Err(FinalizeError::Move { message: "could not stage download".into() });
+    }
+    let staged_s = staged.to_string_lossy().into_owned();
+    let tagged = tags_can_write(staged_s.clone())
+        && tags_write(staged_s.clone(), TrackTags {
+            title: Some(req.title.clone()),
+            artist: Some(req.artist.clone()),
+            source_track_id: (!req.source_track_id.is_empty()).then(|| req.source_track_id.clone()),
+            thumbnail_url: req.thumbnail_url.clone().filter(|t| !t.is_empty()),
+            ..Default::default()
+        })
+        .is_ok();
+    let preferred = Path::new(&req.import_dir).join(format!("{}.{ext}", req.safe_name));
+    let dest = downloads_resolve_destination(preferred.to_string_lossy().into_owned(), req.source_track_id.clone(), verifier.clone());
+    if dest.already_complete {
+        let _ = std::fs::remove_file(&staged);
+        return Ok(FinalizeOutcome { path: dest.path, already_complete: true, tagged });
+    }
+    let _ = std::fs::create_dir_all(&req.import_dir);
+    if let Err(e) = std::fs::rename(&staged, &dest.path).or_else(|_| std::fs::copy(&staged, &dest.path).map(|_| ()).and_then(|_| std::fs::remove_file(&staged))) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(FinalizeError::Move { message: e.to_string() });
+    }
+    let expected = (req.expected_duration > 0.0).then_some(req.expected_duration);
+    if !audio_ok(&dest.path, expected, &verifier) {
+        let _ = std::fs::remove_file(&dest.path);
+        return Err(FinalizeError::Corrupt);
+    }
+    Ok(FinalizeOutcome { path: dest.path, already_complete: false, tagged })
 }
 
 // ---- tags --------------------------------------------------------------------------------------
@@ -464,4 +632,85 @@ pub fn tags_can_write(path: String) -> bool {
 pub fn tags_read_lumisound(path: String) -> TrackTags {
     let (id, th) = lumisound_media::tags::read_lumisound(std::path::Path::new(&path));
     TrackTags { source_track_id: id, thumbnail_url: th, ..Default::default() }
+}
+
+#[cfg(test)]
+mod finalize_tests {
+    use super::*;
+
+    fn wav_bytes() -> Vec<u8> {
+        let rate = 8000u32;
+        let n = rate * 3;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + n * 2).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&(rate * 2).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&(n * 2).to_le_bytes());
+        for i in 0..n {
+            b.extend_from_slice(&(((i as f32 * 0.1).sin() * 9000.0) as i16).to_le_bytes());
+        }
+        b
+    }
+
+    fn req(raw: &Path, dir: &Path, name: &str) -> FinalizeRequest {
+        FinalizeRequest {
+            raw_path: raw.to_string_lossy().into(),
+            import_dir: dir.to_string_lossy().into(),
+            safe_name: name.into(),
+            source_track_id: format!("test:{name}-{}", uuid::Uuid::new_v4()),
+            title: "T".into(),
+            artist: "A".into(),
+            thumbnail_url: None,
+            expected_duration: 3.0,
+            content_type: Some("audio/wav".into()),
+        }
+    }
+
+    #[test]
+    fn relay_then_finalize_places_and_validates() {
+        let d = std::env::temp_dir().join(format!("fin-{}", uuid::Uuid::new_v4()));
+        let lib = d.join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let body = wav_bytes();
+        let got = rt.block_on(async {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = l.local_addr().unwrap().port();
+            let b = body.clone();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let (mut s, _) = l.accept().await.unwrap();
+                let mut buf = [0u8; 2048];
+                let _ = s.read(&mut buf).await;
+                s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: audio/wav\r\n\r\n", b.len()).as_bytes()).await.unwrap();
+                s.write_all(&b).await.unwrap();
+            });
+            bridge_relay_download(format!("http://127.0.0.1:{port}/api/download/relay?id=1"), vec![], d.join("tmp").to_string_lossy().into()).await.unwrap()
+        });
+        assert_eq!(got.bytes, body.len() as u64);
+        // .part + Content-Type -> .wav, then placed under the library.
+        let out = downloads_finalize_file(req(Path::new(&got.file_path), &lib, "Song"), None).unwrap();
+        assert!(!out.already_complete);
+        assert_eq!(Path::new(&out.path), lib.join("Song.wav"));
+        assert!(!Path::new(&got.file_path).exists());
+        // Name taken by another track -> disambiguated sibling.
+        let raw2 = d.join("raw2.wav");
+        std::fs::write(&raw2, &body).unwrap();
+        let out2 = downloads_finalize_file(req(&raw2, &lib, "Song"), None).unwrap();
+        assert_ne!(out2.path, out.path);
+        // Corrupt payload is rejected and removed.
+        let bad = d.join("bad.wav");
+        std::fs::write(&bad, vec![0u8; 4096]).unwrap();
+        assert!(matches!(downloads_finalize_file(req(&bad, &lib, "Bad"), None), Err(FinalizeError::Corrupt)));
+        assert!(!lib.join("Bad.wav").exists());
+        let _ = std::fs::remove_dir_all(d);
+    }
 }
