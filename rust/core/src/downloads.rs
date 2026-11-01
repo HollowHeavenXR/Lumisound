@@ -271,3 +271,155 @@ mod tests {
         let _ = std::fs::remove_dir_all(d);
     }
 }
+
+// ---- bridge download job: start -> poll -> fetch result ---------------------------------------
+
+use crate::client::HttpHeader;
+use futures_util::StreamExt;
+use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
+
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum JobError {
+    #[error("timed out")]
+    Timeout,
+    #[error("not found")]
+    NotFound { permanent: bool, detail: Option<String> },
+    /// Transient (network, gateway, incomplete transfer) — worth retrying.
+    #[error("{message}")]
+    Retry { message: String },
+    /// Content restriction etc. (bridge 422 detail, shown to the user).
+    #[error("{detail}")]
+    Unavailable { detail: String },
+    #[error("HTTP {code}: {detail}")]
+    Http { code: u16, detail: String },
+}
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct JobResult {
+    /// Downloaded file in `tmp_dir` (caller moves it into the library).
+    pub file_path: String,
+    pub content_type: Option<String>,
+    pub bytes: u64,
+    pub job_id: String,
+    pub seconds: f64,
+}
+
+fn retry(m: impl Into<String>) -> JobError {
+    JobError::Retry { message: m.into() }
+}
+
+fn with_job(start_url: &str, path: &str, job: &str) -> Option<String> {
+    let mut u = url::Url::parse(start_url).ok()?;
+    u.set_path(path);
+    u.set_query(None);
+    u.query_pairs_mut().append_pair("job_id", job);
+    Some(u.to_string())
+}
+
+fn apply(mut rq: reqwest::RequestBuilder, headers: &[HttpHeader]) -> reqwest::RequestBuilder {
+    for h in headers {
+        rq = rq.header(&h.name, &h.value);
+    }
+    rq
+}
+
+/// Run one bridge download job (`POST|GET start_url` -> 202 {job_id}),
+/// poll `/api/download/status` (0.4 s backoff to 3 s, 5 min cap), then
+/// stream `/api/download/result` into `tmp_dir`, checking the byte count.
+#[uniffi::export]
+pub async fn bridge_download_job(method: String, start_url: String, headers: Vec<HttpHeader>, body: Option<Vec<u8>>, tmp_dir: String) -> Result<JobResult, JobError> {
+    crate::on_rt(async move {
+        let http = crate::client::http_client();
+        let started = Instant::now();
+        let m = reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).map_err(|_| retry("bad method"))?;
+        let mut rq = apply(http.request(m, &start_url).timeout(Duration::from_secs(30)), &headers);
+        if let Some(b) = body {
+            rq = rq.body(b);
+        }
+        let r = rq.send().await.map_err(|e| retry(format!("network error starting job: {e}")))?;
+        match r.status().as_u16() {
+            202 => {}
+            408 => return Err(JobError::Timeout),
+            404 => return Err(JobError::NotFound { permanent: false, detail: None }),
+            502 | 503 | 504 | 524 => return Err(retry(format!("gateway error {}", r.status().as_u16()))),
+            s => return Err(retry(format!("unexpected start status {s}"))),
+        }
+        let v: serde_json::Value = r.json().await.map_err(|_| retry("bad start payload"))?;
+        let job = v["job_id"].as_str().ok_or_else(|| retry("no job_id"))?.to_string();
+        let status_url = with_job(&start_url, "/api/download/status", &job).ok_or_else(|| retry("bad url"))?;
+        let result_url = with_job(&start_url, "/api/download/result", &job).ok_or_else(|| retry("bad url"))?;
+        let steps = [0.4, 0.6, 1.0, 1.5, 2.0, 2.5];
+        let mut attempt = 0usize;
+        let deadline = Instant::now() + Duration::from_secs(300);
+        loop {
+            if Instant::now() > deadline {
+                return Err(retry("job poll timed out"));
+            }
+            let resp = match apply(http.get(&status_url).timeout(Duration::from_secs(30)), &headers).send().await {
+                Ok(r) => r,
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    continue;
+                }
+            };
+            if resp.status().as_u16() != 200 {
+                return Err(retry(format!("status HTTP {}", resp.status().as_u16())));
+            }
+            let s: serde_json::Value = resp.json().await.map_err(|_| retry("bad status payload"))?;
+            match s["status"].as_str() {
+                Some("pending") => {
+                    let d = steps.get(attempt).copied().unwrap_or(3.0);
+                    attempt += 1;
+                    tokio::time::sleep(Duration::from_secs_f64(d)).await;
+                }
+                Some("done") => break,
+                Some("error") => {
+                    let code = s["code"].as_u64().unwrap_or(500) as u16;
+                    let detail = s["detail"].as_str().map(str::to_string);
+                    return Err(match code {
+                        408 => JobError::Timeout,
+                        404 => JobError::NotFound { permanent: s["permanent"].as_bool() == Some(true), detail },
+                        502 | 503 | 504 | 524 => retry(format!("job gateway error {code}")),
+                        422 => JobError::Unavailable { detail: detail.unwrap_or_else(|| "This track can't be downloaded due to a YouTube content restriction.".into()) },
+                        c => JobError::Http { code: c, detail: detail.unwrap_or_default() },
+                    });
+                }
+                _ => return Err(retry("unexpected job status")),
+            }
+        }
+        let r = apply(http.get(&result_url).timeout(Duration::from_secs(600)), &headers).send().await.map_err(|e| retry(format!("network error fetching result: {e}")))?;
+        let code = r.status().as_u16();
+        if code == 404 {
+            return Err(JobError::NotFound { permanent: false, detail: Some("result already claimed".into()) });
+        }
+        if !(200..300).contains(&code) {
+            return Err(retry(format!("HTTP {code} fetching result")));
+        }
+        let ct = r.headers().get("content-type").and_then(|v| v.to_str().ok()).map(str::to_string);
+        let expected = r.content_length();
+        let _ = tokio::fs::create_dir_all(&tmp_dir).await;
+        let path = std::path::Path::new(&tmp_dir).join(format!("dl-{}.part", uuid::Uuid::new_v4().simple()));
+        let mut f = tokio::fs::File::create(&path).await.map_err(|e| retry(e.to_string()))?;
+        let mut n = 0u64;
+        let mut stream = r.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let Ok(c) = chunk else {
+                let _ = tokio::fs::remove_file(&path).await;
+                return Err(retry("transfer interrupted"));
+            };
+            n += c.len() as u64;
+            if f.write_all(&c).await.is_err() {
+                let _ = tokio::fs::remove_file(&path).await;
+                return Err(retry("write failed"));
+            }
+        }
+        let _ = f.flush().await;
+        if n == 0 || expected.is_some_and(|e| e != n) {
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(retry(format!("incomplete download ({n}/{} bytes)", expected.map(|e| e as i64).unwrap_or(-1))));
+        }
+        Ok(JobResult { file_path: path.to_string_lossy().into_owned(), content_type: ct, bytes: n, job_id: job, seconds: started.elapsed().as_secs_f64() })
+    })
+    .await
+}
