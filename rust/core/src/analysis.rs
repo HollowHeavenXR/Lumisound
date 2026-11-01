@@ -204,3 +204,364 @@ pub fn is_valid_audio(path: String, cache_dir: String, min_secs: f64) -> bool {
     let p = readable(&path, &cache_dir);
     decode::mono_pcm(Path::new(&p), 8000, Some(0.0), Some(min_secs.max(0.1))).is_some_and(|s| s.len() as f64 >= 8000.0 * min_secs.max(0.1) * 0.9)
 }
+
+// ---- cached per-file results (path|mtime|size keys, like the Swift caches) ------------------
+
+fn cached_f64(ns: &str, path: &str) -> Option<f64> {
+    let m: HashMap<String, f64> = store::load(ns);
+    m.get(&cache_key(path)).copied()
+}
+
+fn put_f64(ns: &str, path: &str, v: f64) {
+    let _g = LOCK.lock().unwrap();
+    let mut m: HashMap<String, f64> = store::load(ns);
+    if m.len() > 5000 {
+        m.clear();
+    }
+    m.insert(cache_key(path), v);
+    store::save(ns, &m);
+}
+
+/// One-time import of a Swift-era `[String: Double]` cache file into `ns`.
+#[uniffi::export]
+pub fn analysis_import_legacy(namespace: String, json: Vec<u8>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(&namespace) {
+        return;
+    }
+    let m: HashMap<String, f64> = serde_json::from_slice(&json).unwrap_or_default();
+    store::save(&namespace, &m);
+}
+
+const SILENCE_CACHE: &str = "silence_trim";
+
+/// Seconds of leading near-silence (20 ms RMS windows below max(1% of the
+/// opening peak, -50 dBFS)); 0 when under 0.25 s, capped at 10 s.
+#[uniffi::export]
+pub fn leading_silence(path: String, cache_dir: String, pcm: Option<Vec<i16>>) -> f64 {
+    if let Some(v) = cached_f64(SILENCE_CACHE, &path) {
+        return v;
+    }
+    let Some(s) = pcm.or_else(|| decode_mono(path.clone(), cache_dir, 11025, 0.0, 15.0)) else { return 0.0 };
+    let v = silence_from(&s, 11025.0);
+    put_f64(SILENCE_CACHE, &path, v);
+    v
+}
+
+pub fn silence_from(s: &[i16], sr: f64) -> f64 {
+    let w = (sr as usize) / 50;
+    if w == 0 || s.is_empty() {
+        return 0.0;
+    }
+    let rms: Vec<f64> = s
+        .chunks_exact(w)
+        .map(|c| (c.iter().map(|x| (*x as f64 / i16::MAX as f64).powi(2)).sum::<f64>() / w as f64).sqrt())
+        .collect();
+    let peak = rms.iter().cloned().fold(0.0, f64::max);
+    if peak <= 0.0 {
+        return 0.0;
+    }
+    let thr = (peak * 0.01).max(0.00316);
+    let silent = rms.iter().take_while(|r| **r < thr).count();
+    let secs = (silent * w) as f64 / sr;
+    if secs < 0.25 { 0.0 } else { secs.min(10.0) }
+}
+
+#[cfg(test)]
+mod silence_tests {
+    #[test]
+    fn detects_leading_silence() {
+        let sr = 11025usize;
+        let mut s = vec![0i16; sr]; // 1 s silence
+        s.extend((0..sr * 2).map(|i| (((i as f64) * 0.1).sin() * 12000.0) as i16));
+        let v = super::silence_from(&s, sr as f64);
+        assert!((v - 1.0).abs() < 0.03, "{v}");
+    }
+}
+
+// ---- beat grid ----------------------------------------------------------------------------------
+
+const BEAT_CACHE: &str = "beat_grid";
+
+/// Onset times (seconds) quantised to the dominant pulse; empty = none found.
+pub fn beat_grid_from(s: &[i16], sr: f64) -> Vec<f64> {
+    if s.len() < (sr as usize) * 2 {
+        return vec![];
+    }
+    let hop = ((sr as usize) / 100).max(1);
+    let (bands, win) = (8usize, hop * 2);
+    let bw = win / bands;
+    let mut frames: Vec<[f64; 8]> = Vec::with_capacity(s.len() / hop);
+    let mut off = 0;
+    while off + win <= s.len() {
+        let mut e = [0f64; 8];
+        if bw > 0 {
+            for (b, eb) in e.iter_mut().enumerate() {
+                let start = off + b * bw;
+                let end = (off + win).min(start + bw);
+                if start < end {
+                    *eb = s[start..end].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (end - start) as f64;
+                }
+            }
+        }
+        frames.push(e);
+        off += hop;
+    }
+    if frames.len() <= 20 {
+        return vec![];
+    }
+    let mut flux = vec![0f64; frames.len()];
+    for i in 1..frames.len() {
+        flux[i] = (0..bands).map(|b| (frames[i][b] - frames[i - 1][b]).max(0.0)).sum();
+    }
+    let (half, min_gap) = (50usize, 15i64);
+    let fd = hop as f64 / sr;
+    let mut onsets = Vec::new();
+    let mut last = -min_gap;
+    let mut scratch = Vec::with_capacity(half * 2);
+    for i in 0..flux.len() {
+        let (lo, hi) = (i.saturating_sub(half), (i + half).min(flux.len()));
+        scratch.clear();
+        scratch.extend_from_slice(&flux[lo..hi]);
+        let k = (hi - lo) / 2;
+        let med = *scratch.select_nth_unstable_by(k, |a, b| a.partial_cmp(b).unwrap()).1;
+        if flux[i] <= med * 1.8 + 0.0001 || (i as i64) - last < min_gap {
+            continue;
+        }
+        let (pl, ph) = (i.saturating_sub(2), (i + 3).min(flux.len()));
+        if flux[i] != flux[pl..ph].iter().cloned().fold(f64::MIN, f64::max) {
+            continue;
+        }
+        onsets.push(i as f64 * fd);
+        last = i as i64;
+    }
+    quantize_to_pulse(onsets)
+}
+
+fn quantize_to_pulse(onsets: Vec<f64>) -> Vec<f64> {
+    const TOL: f64 = 0.15;
+    let Some(&lastt) = onsets.last() else { return onsets };
+    if onsets.len() < 8 || lastt <= 0.0 {
+        return onsets;
+    }
+    let grid = 100.0;
+    let slots = (lastt * grid) as usize + 1;
+    if slots <= 8 {
+        return onsets;
+    }
+    let mut env = vec![0f64; slots];
+    for o in &onsets {
+        env[((o * grid) as usize).min(slots - 1)] = 1.0;
+    }
+    let min_lag = ((grid * 60.0 / 190.0) as usize).max(1);
+    let max_lag = ((grid * 60.0 / 70.0) as usize).min(slots - 1);
+    if max_lag <= min_lag {
+        return onsets;
+    }
+    let (mut best_lag, mut best) = (min_lag, -1.0);
+    for lag in min_lag..=max_lag {
+        let score: f64 = (0..slots - lag).map(|i| env[i] * env[i + lag]).sum();
+        if score > best {
+            best = score;
+            best_lag = lag;
+        }
+    }
+    if best <= 0.0 {
+        return onsets;
+    }
+    let period = best_lag as f64 / grid;
+    let near = |o: f64, c: f64| {
+        let d = ((o / period) % 1.0 - c).abs();
+        d.min(1.0 - d) < TOL
+    };
+    let (mut phase, mut hits) = (0.0, -1i64);
+    for step in 0..50 {
+        let c = step as f64 / 50.0;
+        let h = onsets.iter().filter(|o| near(**o, c)).count() as i64;
+        if h > hits {
+            hits = h;
+            phase = c;
+        }
+    }
+    let kept: Vec<f64> = onsets.iter().cloned().filter(|o| near(*o, phase)).collect();
+    if kept.len() >= 4.max(onsets.len() / 8) { kept } else { onsets }
+}
+
+/// Beat grid for the first 12 minutes, cached per file.
+#[uniffi::export]
+pub fn beat_grid(path: String, cache_dir: String, pcm: Option<Vec<i16>>) -> Vec<f64> {
+    {
+        let m: HashMap<String, Vec<f64>> = store::load(BEAT_CACHE);
+        if let Some(v) = m.get(&cache_key(&path)) {
+            return v.clone();
+        }
+    }
+    let v = pcm.or_else(|| decode_mono(path.clone(), cache_dir, 11025, 0.0, 720.0)).map(|s| beat_grid_from(&s, 11025.0)).unwrap_or_default();
+    let _g = LOCK.lock().unwrap();
+    let mut m: HashMap<String, Vec<f64>> = store::load(BEAT_CACHE);
+    if m.len() > 1500 {
+        m.clear();
+    }
+    m.insert(cache_key(&path), v.clone());
+    store::save(BEAT_CACHE, &m);
+    v
+}
+
+#[uniffi::export]
+pub fn beat_grid_cached(path: String) -> Option<Vec<f64>> {
+    let m: HashMap<String, Vec<f64>> = store::load(BEAT_CACHE);
+    m.get(&cache_key(&path)).cloned()
+}
+
+#[uniffi::export]
+pub fn beat_grid_import_legacy(json: Vec<u8>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(BEAT_CACHE) {
+        return;
+    }
+    let m: HashMap<String, Vec<f64>> = serde_json::from_slice(&json).unwrap_or_default();
+    store::save(BEAT_CACHE, &m);
+}
+
+#[cfg(test)]
+mod beat_tests {
+    #[test]
+    fn finds_a_steady_pulse() {
+        let sr = 11025usize;
+        let mut s = vec![0i16; sr * 8];
+        // Clicks every 0.5 s (120 BPM).
+        for k in 0..16 {
+            let at = k * sr / 2;
+            for i in 0..200 {
+                s[at + i] = (((i as f64) * 0.9).sin() * 20000.0) as i16;
+            }
+        }
+        let g = super::beat_grid_from(&s, sr as f64);
+        assert!(g.len() >= 12, "{g:?}");
+        let gaps: Vec<f64> = g.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(gaps.iter().all(|d| (d - 0.5).abs() < 0.05), "{gaps:?}");
+    }
+}
+
+// ---- hum-to-search pitch contours ----------------------------------------------------------------
+
+const PITCH_CACHE: &str = "pitch_contour";
+
+fn acf_pitch(s: &[i16], start: usize, n: usize, sr: f64) -> Option<f32> {
+    let (min_lag, max_lag) = ((sr / 1000.0) as usize, (sr / 80.0) as usize);
+    if min_lag < 1 || max_lag >= n {
+        return None;
+    }
+    let w: Vec<f64> = s[start..start + n].iter().map(|v| *v as f64).collect();
+    let mean = w.iter().sum::<f64>() / n as f64;
+    let w: Vec<f64> = w.iter().map(|v| v - mean).collect();
+    let energy: f64 = w.iter().map(|v| v * v).sum();
+    if energy <= 1_000_000.0 {
+        return None;
+    }
+    let (mut best_lag, mut best) = (0usize, 0.0f64);
+    for lag in min_lag..=max_lag {
+        let sum: f64 = (0..n - lag).map(|k| w[k] * w[k + lag]).sum();
+        if sum > best {
+            best = sum;
+            best_lag = lag;
+        }
+    }
+    (best_lag > 0 && best / energy > 0.3).then(|| (sr / best_lag as f64) as f32)
+}
+
+/// Semitone contour (relative to the median F0) from 128 ms ACF windows.
+pub fn contour_from(s: &[i16], sr: f64) -> Option<Vec<f32>> {
+    let (n, hop) = (1024usize, 512usize);
+    if s.len() < n {
+        return None;
+    }
+    let mut f0 = Vec::new();
+    let mut i = 0;
+    while i + n <= s.len() {
+        if let Some(f) = acf_pitch(s, i, n, sr) {
+            f0.push(f);
+        }
+        i += hop;
+    }
+    if f0.len() < 8 {
+        return None;
+    }
+    let mut sorted = f0.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let med = sorted[sorted.len() / 2];
+    (med > 0.0).then(|| f0.iter().map(|f| 12.0 * (f / med).log2()).collect())
+}
+
+/// Contour of the first `max_secs` (8 kHz). Library tracks are cached;
+/// pass `cache = false` for one-off recordings (the hum itself).
+#[uniffi::export]
+pub fn pitch_contour(path: String, cache_dir: String, pcm: Option<Vec<i16>>, max_secs: f64, cache: bool) -> Option<Vec<f32>> {
+    if cache {
+        let m: HashMap<String, Vec<f32>> = store::load(PITCH_CACHE);
+        if let Some(v) = m.get(&cache_key(&path)) {
+            return Some(v.clone());
+        }
+    }
+    let s = pcm.or_else(|| decode_mono(path.clone(), cache_dir, 8000, 0.0, max_secs))?;
+    let c = contour_from(&s, 8000.0)?;
+    if cache {
+        let _g = LOCK.lock().unwrap();
+        let mut m: HashMap<String, Vec<f32>> = store::load(PITCH_CACHE);
+        if m.len() > 5000 {
+            m.clear();
+        }
+        m.insert(cache_key(&path), c.clone());
+        store::save(PITCH_CACHE, &m);
+    }
+    Some(c)
+}
+
+#[uniffi::export]
+pub fn pitch_contour_cached(path: String) -> Option<Vec<f32>> {
+    let m: HashMap<String, Vec<f32>> = store::load(PITCH_CACHE);
+    m.get(&cache_key(&path)).cloned()
+}
+
+#[uniffi::export]
+pub fn pitch_contour_import_legacy(json: Vec<u8>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(PITCH_CACHE) {
+        return;
+    }
+    let m: HashMap<String, Vec<f32>> = serde_json::from_slice(&json).unwrap_or_default();
+    store::save(PITCH_CACHE, &m);
+}
+
+/// Best Pearson correlation of the query against any window of the
+/// candidate (stride 4 frames), floored at 0.
+#[uniffi::export]
+pub fn pitch_match_score(query: Vec<f32>, candidate: Vec<f32>) -> f32 {
+    if query.len() < 4 || candidate.len() < query.len() {
+        return 0.0;
+    }
+    let qm = query.iter().sum::<f32>() / query.len() as f32;
+    let qn: Vec<f32> = query.iter().map(|q| q - qm).collect();
+    let qnorm = qn.iter().map(|q| q * q).sum::<f32>().sqrt();
+    if qnorm <= 0.0 {
+        return 0.0;
+    }
+    let mut best = 0f32;
+    let mut off = 0;
+    while off + query.len() <= candidate.len() {
+        let sl = &candidate[off..off + query.len()];
+        let sm = sl.iter().sum::<f32>() / sl.len() as f32;
+        let (mut dot, mut ss) = (0f32, 0f32);
+        for (q, c) in qn.iter().zip(sl) {
+            let cn = c - sm;
+            dot += q * cn;
+            ss += cn * cn;
+        }
+        let sn = ss.sqrt();
+        if sn > 0.0 {
+            best = best.max(dot / (qnorm * sn));
+        }
+        off += 4;
+    }
+    best.max(0.0)
+}
