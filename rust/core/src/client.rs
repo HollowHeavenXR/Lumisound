@@ -203,3 +203,89 @@ pub async fn http_upload_file(method: String, url: String, headers: Vec<HttpHead
     })
     .await
 }
+
+/// Result of `http_download_file`: the body went to `file_path`, not memory.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct HttpDownload {
+    pub status: u16,
+    pub headers: Vec<HttpHeader>,
+    pub url: String,
+    pub file_path: String,
+    pub bytes: u64,
+}
+
+/// Streams a response body straight to `dest_path` (created/truncated) — the
+/// transport behind Swift's `Core.download(for:)`. Any status is returned; the
+/// file holds whatever body the server sent. A failed transfer removes the
+/// partial file.
+#[uniffi::export]
+pub async fn http_download_file(method: String, url: String, headers: Vec<HttpHeader>, body: Option<Vec<u8>>, dest_path: String, timeout_secs: f64) -> CoreResult<HttpDownload> {
+    on_rt(async move {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        let mut rq = build(&method, &url, &headers, timeout_secs)?;
+        if let Some(b) = body {
+            rq = rq.body(b);
+        }
+        let r = rq.send().await?;
+        let status = r.status().as_u16();
+        let final_url = r.url().to_string();
+        let hdrs = r.headers().iter().filter_map(|(k, v)| Some(HttpHeader { name: k.as_str().to_string(), value: v.to_str().ok()?.to_string() })).collect();
+        if let Some(parent) = std::path::Path::new(&dest_path).parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let result: CoreResult<u64> = async {
+            let f = tokio::fs::File::create(&dest_path).await?;
+            let mut w = tokio::io::BufWriter::with_capacity(256 * 1024, f);
+            let mut stream = r.bytes_stream();
+            let mut n = 0u64;
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                n += chunk.len() as u64;
+                w.write_all(&chunk).await?;
+            }
+            w.flush().await?;
+            Ok(n)
+        }
+        .await;
+        match result {
+            Ok(bytes) => Ok(HttpDownload { status, headers: hdrs, url: final_url, file_path: dest_path, bytes }),
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&dest_path).await;
+                Err(e)
+            }
+        }
+    })
+    .await
+}
+
+#[cfg(test)]
+mod download_tests {
+    use super::*;
+
+    #[test]
+    fn download_streams_to_file() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = l.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let (mut s, _) = l.accept().await.unwrap();
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf).await;
+                let body = vec![7u8; 300_000];
+                s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: audio/mp4\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+                s.write_all(&body).await.unwrap();
+            });
+            let dir = std::env::temp_dir().join(format!("lmsdl-{}", uuid::Uuid::new_v4()));
+            let dest = dir.join("a.bin").to_string_lossy().to_string();
+            let d = http_download_file("GET".into(), format!("http://127.0.0.1:{port}/x"), vec![], None, dest.clone(), 10.0).await.unwrap();
+            assert_eq!(d.status, 200);
+            assert_eq!(d.bytes, 300_000);
+            assert_eq!(std::fs::metadata(&dest).unwrap().len(), 300_000);
+            assert!(d.headers.iter().any(|h| h.name == "content-type" && h.value == "audio/mp4"));
+            let _ = std::fs::remove_dir_all(dir);
+        });
+    }
+}

@@ -147,7 +147,7 @@ final class ArtistImageService {
               let url = URL(string: "https://api.deezer.com/search/artist?q=\(encoded)&limit=1")
         else { return nil }
 
-        guard let (data, response) = try? await URLSession.shared.data(from: url),
+        guard let (data, response) = try? await Core.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let results = json["data"] as? [[String: Any]],
@@ -173,7 +173,7 @@ final class ArtistImageService {
     }
 
     private func fetchRemoteImage(url: URL) async -> UIImage? {
-        guard let (data, response) = try? await URLSession.shared.data(from: url),
+        guard let (data, response) = try? await Core.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return UIImage(data: data)
     }

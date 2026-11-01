@@ -298,7 +298,7 @@ private struct AnimatedGifPreviewCell: View {
                 return
             }
             guard let url = URL(string: urlString),
-                  let (data, resp) = try? await URLSession.shared.data(from: url),
+                  let (data, resp) = try? await Core.data(from: url),
                   let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
             else {
                 failed = true

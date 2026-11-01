@@ -88,7 +88,7 @@ enum GifSearchService {
     /// already sniff for a GIF header themselves, so no extra tagging needed.
     static func downloadData(for result: GifSearchResult) async -> Data? {
         guard let url = URL(string: result.gifURL) else { return nil }
-        guard let (data, resp) = try? await URLSession.shared.data(from: url),
+        guard let (data, resp) = try? await Core.data(from: url),
               let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
         else { return nil }
         return data

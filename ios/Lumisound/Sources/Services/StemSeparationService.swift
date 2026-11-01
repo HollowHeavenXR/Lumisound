@@ -118,7 +118,7 @@ final class StemSeparationService: ObservableObject {
         }
         var request = URLRequest(url: url)
         if let tok = account.token { request.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization") }
-        let (tempURL, response) = try await URLSession.shared.download(for: request)
+        let (tempURL, response) = try await Core.download(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw StemSeparationError.serverError((response as? HTTPURLResponse)?.statusCode ?? -1)
         }

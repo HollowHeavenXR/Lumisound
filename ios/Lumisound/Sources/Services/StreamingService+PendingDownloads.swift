@@ -151,7 +151,7 @@ extension StreamingService {
         let downloadedURL: URL
         let response: URLResponse
         do {
-            (downloadedURL, response) = try await StreamingService.bulkTransferSession.download(for: request)
+            (downloadedURL, response) = try await Core.download(for: request)
         } catch {
             appWarn("reconcilePendingDownloads: fetch failed for job \(entry.job_id): \(error.localizedDescription)", category: "network")
             return false

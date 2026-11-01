@@ -283,7 +283,7 @@ extension AudioPlayerManager {
                 for (field, value) in headers { req.setValue(value, forHTTPHeaderField: field) }
             }
 
-            guard let (downloaded, response) = try? await URLSession.shared.download(for: req) else { return }
+            guard let (downloaded, response) = try? await Core.download(for: req) else { return }
 
             if ext == "m4a", let ct = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") {
                 if ct.contains("webm") { ext = "webm" }

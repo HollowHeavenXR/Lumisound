@@ -87,7 +87,7 @@ extension StreamingService {
         // enough to hand the audio off and get a job_id back.
         request.timeoutInterval = 60
 
-        let (startData, startResponse) = try await StreamingService.bulkTransferSession.upload(for: request, fromFile: uploadURL)
+        let (startData, startResponse) = try await Core.upload(for: request, fromFile: uploadURL)
         guard let startHTTP = startResponse as? HTTPURLResponse, startHTTP.statusCode == 202 else {
             throw StreamingError.httpError((startResponse as? HTTPURLResponse)?.statusCode ?? -1)
         }

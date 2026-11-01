@@ -728,7 +728,7 @@ extension AudioPlayerManager {
                 if let headers = currentSong?.httpHeaders {
                     for (field, value) in headers { req.setValue(value, forHTTPHeaderField: field) }
                 }
-                let (downloaded, response) = try await URLSession.shared.download(for: req)
+                let (downloaded, response) = try await Core.download(for: req)
                 // See entryGen's doc comment above — a seek, skip, or track
                 // change that happened while this download was in flight
                 // already started its OWN downloadAndSchedule (or otherwise

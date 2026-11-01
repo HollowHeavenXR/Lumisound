@@ -63,7 +63,7 @@ actor MotionArtworkService {
         request.timeoutInterval = 180
 
         do {
-            let (tmpURL, response) = try await URLSession.shared.download(for: request)
+            let (tmpURL, response) = try await Core.download(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 try? FileManager.default.removeItem(at: tmpURL)
                 return nil

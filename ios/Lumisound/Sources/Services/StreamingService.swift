@@ -112,19 +112,6 @@ final class StreamingService: ObservableObject {
         return normalise(url) == normalise(defaultBridgeURL)
     }
 
-    /// Dedicated `URLSession` for actual audio-file bytes — track uploads and
-    /// downloaded-file transfers — kept separate from `URLSession.shared`
-    /// (which every lightweight interactive call in the app uses: Profile,
-    /// Presence, Friends, search, etc.). `URLSession.shared` caps concurrent
-    /// connections per host at a handful; a playlist import queues dozens of
-    /// multi-second uploads/downloads back to back, and on `.shared` those
-    /// fill every slot, so an unrelated tab's GET (e.g. opening Profile) sits
-    /// queued behind them for as long as the import runs even though the
-    /// server itself answers it instantly — the request never even reaches
-    /// the network. Giving bulk transfers their own connection pool means an
-    /// import can never starve the rest of the app's UI.
-    static let bulkTransferSession = URLSession(configuration: .default)
-
     // MARK: Available formats
 
     static let availableFormats: [(label: String, value: String)] = [

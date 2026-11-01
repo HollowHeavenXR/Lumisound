@@ -996,7 +996,7 @@ final class ArtworkService {
         }
 
         do {
-            let (data, response) = try await URLSession.shared.data(from: apiURL)
+            let (data, response) = try await Core.data(from: apiURL)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 appWarn(
                     "Artwork: iTunes lookup got HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1) (query=\"\(query)\")",

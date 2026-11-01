@@ -61,24 +61,21 @@ final class PodcastDownloadManager: ObservableObject {
         let destination = fileURL(for: episode.guid)
         let guid = episode.guid
 
-        let task = URLSession.shared.downloadTask(with: remoteURL) { [weak self] tempURL, _, error in
-            Task { @MainActor in
-                guard let self else { return }
-                self.downloadingGuids.remove(guid)
-                guard let tempURL, error == nil else {
-                    appWarn("PodcastDownloadManager: download failed for \(guid): \(error?.localizedDescription ?? "no temp file")", category: "network")
-                    return
+        Task { @MainActor [weak self] in
+            defer { self?.downloadingGuids.remove(guid) }
+            do {
+                let (tempURL, response) = try await Core.download(from: remoteURL)
+                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                    try? FileManager.default.removeItem(at: tempURL)
+                    throw URLError(.badServerResponse)
                 }
-                do {
-                    try? FileManager.default.removeItem(at: destination)
-                    try FileManager.default.moveItem(at: tempURL, to: destination)
-                    self.downloadedGuids.insert(guid)
-                } catch {
-                    appWarn("PodcastDownloadManager: couldn't save download for \(guid): \(error.localizedDescription)", category: "network")
-                }
+                try? FileManager.default.removeItem(at: destination)
+                try FileManager.default.moveItem(at: tempURL, to: destination)
+                self?.downloadedGuids.insert(guid)
+            } catch {
+                appWarn("PodcastDownloadManager: download failed for \(guid): \(error.localizedDescription)", category: "network")
             }
         }
-        task.resume()
     }
 
     func deleteDownload(guid: String) {

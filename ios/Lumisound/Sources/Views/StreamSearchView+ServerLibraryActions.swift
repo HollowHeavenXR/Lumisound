@@ -60,7 +60,7 @@ extension StreamSearchView {
 
                 for attempt in 1...maxAttempts {
                     do {
-                        let (tmpURL, response) = try await URLSession.shared.download(for: request)
+                        let (tmpURL, response) = try await Core.download(for: request)
                         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                             throw StreamingError.httpError(http.statusCode)
                         }

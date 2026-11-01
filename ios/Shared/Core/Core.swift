@@ -29,7 +29,7 @@ enum Core {
 // MARK: - HTTP transport
 
 extension Core {
-    /// Drop-in for `URLSession.shared.data(for:)`: the request runs on the
+    /// Drop-in for `Core.data(for:)`: the request runs on the
     /// Rust core's HTTP client (shared pool, HTTP/2). Any status comes back
     /// as an HTTPURLResponse, exactly like URLSession, so callers' status
     /// handling is unchanged.
@@ -60,6 +60,34 @@ extension Core {
             if Task.isCancelled { throw URLError(.cancelled) }
             throw urlError(e) ?? URLError(.unknown, userInfo: [NSLocalizedDescriptionKey: e.localizedDescription])
         }
+    }
+
+    /// Drop-in for `Core.download(for:)`: the body streams to a
+    /// temp file on the Rust core's HTTP client. As with URLSession, the
+    /// caller owns (moves or deletes) the returned file.
+    static func download(for request: URLRequest) async throws -> (URL, URLResponse) {
+        guard let url = request.url else { throw URLError(.badURL) }
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CoreDownload-\(UUID().uuidString).tmp")
+        do {
+            let dl = try await httpDownloadFile(method: request.httpMethod ?? "GET", url: url.absoluteString,
+                                                headers: headers(of: request), body: request.httpBody,
+                                                destPath: dest.path, timeoutSecs: request.timeoutInterval)
+            if Task.isCancelled { try? FileManager.default.removeItem(at: dest); throw URLError(.cancelled) }
+            let ex = HttpExchange(status: dl.status, headers: dl.headers, body: Data(), url: dl.url)
+            return (dest, response(ex, fallback: url))
+        } catch let e as CoreError {
+            if Task.isCancelled { throw URLError(.cancelled) }
+            throw urlError(e) ?? URLError(.unknown, userInfo: [NSLocalizedDescriptionKey: e.localizedDescription])
+        }
+    }
+
+    static func download(from url: URL) async throws -> (URL, URLResponse) {
+        try await download(for: URLRequest(url: url))
+    }
+
+    static func data(from url: URL) async throws -> (Data, URLResponse) {
+        try await data(for: URLRequest(url: url))
     }
 
     private static func headers(of request: URLRequest) -> [HttpHeader] {

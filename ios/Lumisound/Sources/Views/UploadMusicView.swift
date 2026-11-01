@@ -696,7 +696,7 @@ struct UploadMusicView: View {
         request.timeoutInterval = 300
 
         do {
-            let (tempURL, response) = try await URLSession.shared.download(for: request)
+            let (tempURL, response) = try await Core.download(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 errorMessage = "Restore failed: HTTP \(http.statusCode)"
                 return

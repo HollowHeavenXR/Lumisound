@@ -44,7 +44,7 @@ extension StreamingService {
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 300
 
-        let (_, response) = try await StreamingService.bulkTransferSession.upload(for: request, fromFile: fileURL)
+        let (_, response) = try await Core.upload(for: request, fromFile: fileURL)
         if let http = response as? HTTPURLResponse {
             switch http.statusCode {
             case 200..<300: break

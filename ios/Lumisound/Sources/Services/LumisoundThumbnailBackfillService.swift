@@ -193,7 +193,7 @@ enum LumisoundThumbnailBackfillService {
             return nil as URL?
         }.value
         guard let remoteURL else { return nil }
-        guard let (data, response) = try? await URLSession.shared.data(from: remoteURL),
+        guard let (data, response) = try? await Core.data(from: remoteURL),
               let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               !data.isEmpty
         else { return nil }
