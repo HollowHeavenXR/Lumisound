@@ -386,3 +386,18 @@ pub fn m3u_match(data: Vec<u8>, library: Vec<M3uCandidate>) -> M3uResult {
     }
     M3uResult { matched_song_ids: ids, total_entries: total }
 }
+
+// ---- artwork ------------------------------------------------------------------------------------
+
+/// Embedded cover art of a library file (front cover preferred).
+#[uniffi::export]
+pub fn artwork_embedded(path: String, cache_dir: String) -> Option<Vec<u8>> {
+    let readable = crate::lock::lms_playable_path(path, cache_dir);
+    lumisound_media::artwork::embedded(Path::new(&readable))
+}
+
+/// The app's artwork cleanup: trim letterbox bars, square, fit `max_dim`, JPEG.
+#[uniffi::export]
+pub fn artwork_process(image_data: Vec<u8>, max_dim: u32) -> Option<Vec<u8>> {
+    lumisound_media::artwork::process(&image_data, max_dim.max(16))
+}

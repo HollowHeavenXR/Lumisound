@@ -1,6 +1,7 @@
 //! Media primitives shared by the Lumisound bridge and app core.
 
 pub mod analysis;
+pub mod artwork;
 pub mod decode;
 pub mod lock;
 pub mod opus;
