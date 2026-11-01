@@ -13,6 +13,7 @@ pub mod client;
 pub mod downloads;
 pub mod duplicates;
 pub mod engine;
+pub mod import;
 pub mod library;
 pub mod live;
 pub mod lock;

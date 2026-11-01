@@ -275,46 +275,17 @@ pub struct ScannedTrack {
 /// roots). None when the file can't be parsed (caller falls back).
 #[uniffi::export]
 pub fn scan_read_track(path: String, cache_dir: String) -> Option<ScannedTrack> {
-    let p = Path::new(&path);
     let readable = crate::lock::lms_playable_path(path.clone(), cache_dir);
     let info = lumisound_media::tags::read_info(Path::new(&readable))?;
-    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let fallback = {
-        let mut stem = Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or(name).to_string();
-        if crate::lock::lms_is_converted(path.clone()) {
-            stem = Path::new(&stem).file_stem().and_then(|s| s.to_str()).unwrap_or(&stem).to_string();
-        }
-        stem
-    };
-    let mut title = info.title.clone().unwrap_or_else(|| fallback.clone());
-    let mut artist = info.artist.clone().unwrap_or_default();
-    if title == fallback && title.contains(" - ") {
-        let mut parts = title.split(" - ");
-        let first = parts.next().unwrap_or("").trim().to_string();
-        let rest: Vec<&str> = parts.collect();
-        if !rest.is_empty() {
-            if artist.is_empty() {
-                artist = first;
-            }
-            title = rest.join(" - ").trim().to_string();
-        }
-    }
-    let mut album = info.album.clone().unwrap_or_default();
-    let mut inferred = false;
-    if album.is_empty() {
-        let parent = p.parent().and_then(|d| d.file_name()).and_then(|n| n.to_str()).unwrap_or("");
-        if !matches!(parent, "Imported Music" | "Documents" | "") {
-            album = parent.to_string();
-            inferred = true;
-        }
-    }
+    let f = crate::import::tag_apply_fallbacks(path, info.title.clone().unwrap_or_default(), info.artist.clone().unwrap_or_default(), info.album.clone().unwrap_or_default());
+    let (title, artist, album, inferred) = (f.title, f.artist, f.album, f.album_inferred_from_folder);
     Some(ScannedTrack {
         title,
         artist,
         album,
         album_inferred_from_folder: inferred,
-        genre: info.genre.unwrap_or_default(),
-        year: info.year.unwrap_or_default(),
+        genre: info.genre.map(crate::import::tag_clean_genre).unwrap_or_default(),
+        year: info.year.map(crate::import::tag_parse_year).unwrap_or_default(),
         track_number: info.track.unwrap_or(0) as i64,
         source_track_id: info.source_id,
         duration: info.duration,
