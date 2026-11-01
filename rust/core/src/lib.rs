@@ -5,6 +5,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod analysis;
 pub mod appearance;
 pub mod client;
 pub mod downloads;

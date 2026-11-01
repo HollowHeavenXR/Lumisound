@@ -85,3 +85,27 @@ extension Core {
         coreConfigure(dataDir: base.appendingPathComponent("LumisoundCore", isDirectory: true).path)
     }
 }
+
+// MARK: - Audio decode / analysis
+
+/// Rust-core decoding (symphonia) for analysers. Lives outside the analyser
+/// types so their own `decodeMono` members don't shadow the core functions.
+enum CoreAudio {
+    /// Where `.lms` files are unlocked for reading.
+    static var unlockDir: String {
+        FileManager.default.temporaryDirectory.appendingPathComponent("lumisound_lms_playable", isDirectory: true).path
+    }
+
+    /// Mono 16-bit PCM, or nil when the core can't decode the format (Opus/WebM).
+    static func mono(path: String, sampleRate: Double, start: Double, maxSeconds: Double) -> [Int16]? {
+        decodeMono(path: path, cacheDir: unlockDir, sampleRate: UInt32(sampleRate), startSecs: start, maxSecs: maxSeconds)
+    }
+
+    static func canDecode(path: String) -> Bool {
+        decodeMono(path: path, cacheDir: unlockDir, sampleRate: 8000, startSecs: 0, maxSecs: 0.5) != nil
+    }
+
+    static func bpm(path: String, pcm: [Int16]?) -> Double? {
+        bpmEstimate(path: path, cacheDir: unlockDir, pcm: pcm)
+    }
+}

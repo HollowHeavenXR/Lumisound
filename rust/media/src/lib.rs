@@ -1,5 +1,7 @@
 //! Media primitives shared by the Lumisound bridge and app core.
 
+pub mod analysis;
+pub mod decode;
 pub mod lock;
 
 /// Audio file extensions the apps and server accept.

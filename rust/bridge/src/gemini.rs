@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn dumps_like_python() {
         let v = json!({"b": 1, "a": [1.5, "é", null], "c": {"x": true}});
-        assert_eq!(py_dumps(&v, true), r#"{"a": [1.5, "é", null], "b": 1, "c": {"x": true}}"#);
+        assert_eq!(py_dumps(&v, true), r#"{"a": [1.5, "\u00e9", null], "b": 1, "c": {"x": true}}"#);
         assert!(prompt("ARIA_PERSONA").starts_with("You are Aria Lumi"));
     }
 }
