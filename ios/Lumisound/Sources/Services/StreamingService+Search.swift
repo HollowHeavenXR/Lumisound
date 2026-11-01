@@ -43,7 +43,7 @@ extension StreamingService {
 
         do {
             let tracks = try await NetworkRetry.withRetry {
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await Core.data(for: request)
                 if let httpResponse = response as? HTTPURLResponse,
                    !(200..<300).contains(httpResponse.statusCode) {
                     throw StreamingError.httpError(httpResponse.statusCode)
@@ -78,7 +78,7 @@ extension StreamingService {
         request.timeoutInterval = 10
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let httpResponse = response as? HTTPURLResponse,
                !(200..<300).contains(httpResponse.statusCode) {
                 return []
@@ -102,7 +102,7 @@ extension StreamingService {
         request.timeoutInterval = 10
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let httpResponse = response as? HTTPURLResponse,
                !(200..<300).contains(httpResponse.statusCode) {
                 return []
@@ -135,7 +135,7 @@ extension StreamingService {
         request.timeoutInterval = 20
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let httpResponse = response as? HTTPURLResponse,
                !(200..<300).contains(httpResponse.statusCode) {
                 return nil
@@ -168,7 +168,7 @@ extension StreamingService {
         request.timeoutInterval = 20
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let httpResponse = response as? HTTPURLResponse,
                !(200..<300).contains(httpResponse.statusCode) {
                 return []
@@ -202,7 +202,7 @@ extension StreamingService {
         }
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let httpResponse = response as? HTTPURLResponse,
                !(200..<300).contains(httpResponse.statusCode) {
                 return []
@@ -231,7 +231,7 @@ extension StreamingService {
             request.setValue(accountToken, forHTTPHeaderField: "X-Account-Token")
         }
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await Core.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else { return true }
             // Only a definitive 404 ("Could not fetch track metadata" / "Track
             // not found" in main.py's track_metadata) counts as genuinely dead —

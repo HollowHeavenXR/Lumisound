@@ -120,7 +120,7 @@ extension StreamingService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
         request.httpBody = jpegData
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await Core.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw StreamingError.httpError((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
@@ -147,7 +147,7 @@ extension StreamingService {
         }
         request.httpMethod = "PATCH"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await Core.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             return false
         }

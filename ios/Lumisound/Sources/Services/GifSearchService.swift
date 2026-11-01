@@ -97,7 +97,7 @@ enum GifSearchService {
     private static func fetch(path: String, account: AccountService) async -> [GifSearchResult] {
         guard let req = account.makeBaseRequest(path, method: "GET") else { return [] }
         do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await Core.data(for: req)
             guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 // 501 = not configured server-side; anything else is a
                 // transient failure. Either way, an empty result list is the

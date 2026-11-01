@@ -159,7 +159,7 @@ final class SocialService: ObservableObject {
         req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         req.httpBody = data
         do {
-            let (_, resp) = try await URLSession.shared.data(for: req)
+            let (_, resp) = try await Core.data(for: req)
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             guard (200..<300).contains(status) else {
                 appWarn("uploadBannerData: HTTP \(status)", category: "social")
@@ -188,7 +188,7 @@ final class SocialService: ObservableObject {
         guard let account = AccountService.shared,
               let req = account.makeBaseRequest("/api/social/profile/banner/\(userId)", method: "GET")
         else { return nil }
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await Core.data(for: req),
               let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
         else { return nil }
         if isGIFData(data) { return await UIImage.gifImageAsync(data: data) }

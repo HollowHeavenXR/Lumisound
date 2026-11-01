@@ -37,7 +37,7 @@ extension AccountService {
         req.httpBody = jpeg
         appLog("uploadAvatar: uploading \(jpeg.count / 1024)KB", category: "account")
         do {
-            let (_, resp) = try await URLSession.shared.data(for: req)
+            let (_, resp) = try await Core.data(for: req)
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if (200..<300).contains(status) {
                 appLog("uploadAvatar: success", category: "account")
@@ -86,7 +86,7 @@ extension AccountService {
         req.httpBody = data
         appLog("uploadAvatarData: uploading GIF \(data.count / 1024)KB", category: "account")
         do {
-            let (_, resp) = try await URLSession.shared.data(for: req)
+            let (_, resp) = try await Core.data(for: req)
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if (200..<300).contains(status) {
                 appLog("uploadAvatarData: success", category: "account")
@@ -110,7 +110,7 @@ extension AccountService {
         guard isLoggedIn, let userId = currentUser?.id else { return }
         guard let req = makeBaseRequest("/user/avatar/\(userId)", method: "GET") else { return }
         do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await Core.data(for: req)
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             guard (200..<300).contains(status) else {
                 appWarn("loadAvatar: HTTP \(status)", category: "account")
@@ -338,6 +338,6 @@ extension AccountService {
             request.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }
         request.httpBody = data
-        _ = try? await URLSession.shared.data(for: request)
+        _ = try? await Core.data(for: request)
     }
 }

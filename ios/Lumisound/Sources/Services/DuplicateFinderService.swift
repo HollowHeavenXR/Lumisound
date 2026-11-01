@@ -116,7 +116,7 @@ final class DuplicateFinderService: ObservableObject {
         request.timeoutInterval = 90
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 cloudCheckError = "Server error (HTTP \(http.statusCode))"
                 return

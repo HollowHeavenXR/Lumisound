@@ -88,7 +88,7 @@ extension StreamingService {
         }
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let http = response as? HTTPURLResponse {
                 switch http.statusCode {
                 case 200..<300: break
@@ -168,7 +168,7 @@ extension StreamingService {
             request.setValue(accountToken, forHTTPHeaderField: "X-Account-Token")
         }
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 // Fall back to the individual-URL expander on any non-2xx.
                 return await expandPlaylistTracks(url: url, existingSongs: existingSongs)
@@ -206,7 +206,7 @@ extension StreamingService {
         struct ExpandResponse: Decodable { let source: String; let count: Int; let items: [ExpandItem] }
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return [] }
             let decoded = try JSONDecoder().decode(ExpandResponse.self, from: data)
             let haveIDs = Set(existingSongs.compactMap { $0.sourceTrackID })

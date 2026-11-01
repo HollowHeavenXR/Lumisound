@@ -125,7 +125,7 @@ extension StreamingService {
 
         let data: Data
         do {
-            let (responseData, response) = try await URLSession.shared.data(for: request)
+            let (responseData, response) = try await Core.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 appWarn("resolveLockedUserMusicURL: bad response for \(track.filename)", category: "network")
                 return nil
@@ -202,7 +202,7 @@ extension StreamingService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 20
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
                 appWarn("fetchWeeklyMix: HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)", category: "network")
                 return
@@ -224,7 +224,7 @@ extension StreamingService {
         request.timeoutInterval = 20
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
                 appWarn("fetchStorageUsage: HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)", category: "network")
                 return
@@ -268,7 +268,7 @@ extension StreamingService {
         request.timeoutInterval = 90
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
                 appWarn("fetchUserMusic: HTTP \(httpResponse.statusCode)", category: "network")
                 if httpResponse.statusCode == 401 {
@@ -327,7 +327,7 @@ extension StreamingService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
                 appWarn("fetchDownloadHistory: HTTP \(httpResponse.statusCode)", category: "network")
                 return
@@ -371,7 +371,7 @@ extension StreamingService {
 
         // Use URLSession.upload(for:fromFile:) instead of loading the whole file into memory.
         // This streams the file directly from disk, critical for large audio files.
-        let (_, response) = try await URLSession.shared.upload(for: request, fromFile: fileURL)
+        let (_, response) = try await Core.upload(for: request, fromFile: fileURL)
         if let http = response as? HTTPURLResponse {
             switch http.statusCode {
             case 200..<300: break
@@ -392,7 +392,7 @@ extension StreamingService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 20
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await Core.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw StreamingError.httpError(http.statusCode)
         }

@@ -18,7 +18,7 @@ extension StreamingService {
         guard isConfigured, let request = makeRequest("/health") else { return false }
         do {
             return try await NetworkRetry.withRetry(maxAttempts: 3, baseDelay: 0.5) {
-                let (_, response) = try await URLSession.shared.data(for: request)
+                let (_, response) = try await Core.data(for: request)
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw URLError(.badServerResponse)
                 }

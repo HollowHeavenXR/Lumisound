@@ -72,7 +72,7 @@ final class StemSeparationService: ObservableObject {
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await Core.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw StemSeparationError.serverError((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
@@ -96,7 +96,7 @@ final class StemSeparationService: ObservableObject {
             if Date() > deadline { throw StemSeparationError.timedOut }
             var request = URLRequest(url: statusURL)
             if let tok = account.token { request.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization") }
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, _) = try await Core.data(for: request)
             let status = try JSONDecoder().decode(StatusPayload.self, from: data)
             switch status.status {
             case "done":

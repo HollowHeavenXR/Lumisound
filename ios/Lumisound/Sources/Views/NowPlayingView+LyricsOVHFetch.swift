@@ -13,7 +13,7 @@ extension NowPlayingView {
         else { return nil }
 
         var req = URLRequest(url: url); req.timeoutInterval = 8
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await Core.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let lyrics = json["lyrics"] as? String,

@@ -16,6 +16,21 @@ pub struct HttpResponse {
     pub content_type: Option<String>,
 }
 
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct HttpHeader {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct HttpExchange {
+    pub status: u16,
+    pub headers: Vec<HttpHeader>,
+    pub body: Vec<u8>,
+    /// Final URL after redirects.
+    pub url: String,
+}
+
 #[derive(uniffi::Object)]
 pub struct ApiClient {
     base: RwLock<String>,
@@ -139,4 +154,52 @@ impl ApiClient {
         })
         .await
     }
+}
+
+static SHARED: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(http_client);
+
+fn build(method: &str, url: &str, headers: &[HttpHeader], timeout_secs: f64) -> CoreResult<reqwest::RequestBuilder> {
+    let m = reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).map_err(|_| CoreError::invalid("bad method"))?;
+    let mut rq = SHARED.request(m, url).timeout(Duration::from_secs_f64(timeout_secs.max(1.0)));
+    for h in headers {
+        rq = rq.header(&h.name, &h.value);
+    }
+    Ok(rq)
+}
+
+async fn exchange(rq: reqwest::RequestBuilder) -> CoreResult<HttpExchange> {
+    let r = rq.send().await?;
+    let status = r.status().as_u16();
+    let url = r.url().to_string();
+    let headers = r.headers().iter().filter_map(|(k, v)| Some(HttpHeader { name: k.as_str().to_string(), value: v.to_str().ok()?.to_string() })).collect();
+    let body = r.bytes().await?.to_vec();
+    Ok(HttpExchange { status, headers, body, url })
+}
+
+/// One HTTP exchange for an arbitrary request (any status is returned, not
+/// thrown) — the transport behind Swift's `Core.data(for:)`.
+#[uniffi::export]
+pub async fn http_send(method: String, url: String, headers: Vec<HttpHeader>, body: Option<Vec<u8>>, timeout_secs: f64) -> CoreResult<HttpExchange> {
+    on_rt(async move {
+        let mut rq = build(&method, &url, &headers, timeout_secs)?;
+        if let Some(b) = body {
+            rq = rq.body(b);
+        }
+        exchange(rq).await
+    })
+    .await
+}
+
+/// Like `http_send`, streaming the body from a file (uploads never load the
+/// whole track into memory).
+#[uniffi::export]
+pub async fn http_upload_file(method: String, url: String, headers: Vec<HttpHeader>, file_path: String, timeout_secs: f64) -> CoreResult<HttpExchange> {
+    on_rt(async move {
+        let f = tokio::fs::File::open(&file_path).await?;
+        let len = f.metadata().await?.len();
+        let stream = tokio_util::io::ReaderStream::with_capacity(f, 256 * 1024);
+        let rq = build(&method, &url, &headers, timeout_secs)?.header("Content-Length", len).body(reqwest::Body::wrap_stream(stream));
+        exchange(rq).await
+    })
+    .await
 }

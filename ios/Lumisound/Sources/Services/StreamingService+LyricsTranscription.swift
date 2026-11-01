@@ -127,7 +127,7 @@ extension StreamingService {
             let data: Data
             let resp: URLResponse
             do {
-                (data, resp) = try await URLSession.shared.data(for: statusRequest)
+                (data, resp) = try await Core.data(for: statusRequest)
             } catch {
                 appWarn("transcribeLyrics: network error polling status for \"\(song.displayName)\": \(error.localizedDescription) — retrying poll", category: "network")
                 try await Task.sleep(nanoseconds: 3_000_000_000)

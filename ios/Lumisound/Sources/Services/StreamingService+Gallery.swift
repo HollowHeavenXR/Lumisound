@@ -25,7 +25,7 @@ extension StreamingService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 20
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await Core.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw StreamingError.httpError(http.statusCode)
         }
@@ -69,7 +69,7 @@ extension StreamingService {
         request.httpBody = body
         request.timeoutInterval = 120
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await Core.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw StreamingError.httpError(http.statusCode)
         }
@@ -92,7 +92,7 @@ extension StreamingService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 20
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await Core.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw StreamingError.httpError(http.statusCode)
         }
@@ -108,7 +108,7 @@ extension StreamingService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 30
 
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        guard let (data, response) = try? await Core.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200
         else { return nil }
         return UIImage(data: data)

@@ -112,7 +112,7 @@ final class AcoustIDService {
         request.timeoutInterval = 45
         request.httpBody = clipData
 
-        let (responseData, response) = try await URLSession.shared.data(for: request)
+        let (responseData, response) = try await Core.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             if let detail = try? JSONDecoder().decode(ErrorBody.self, from: responseData) {
                 throw IdentifyError.server(detail.detail)

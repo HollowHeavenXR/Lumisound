@@ -428,7 +428,7 @@ extension StreamingService {
         let startData: Data
         let startResponse: URLResponse
         do {
-            (startData, startResponse) = try await URLSession.shared.data(for: startRequest)
+            (startData, startResponse) = try await Core.data(for: startRequest)
         } catch {
             // A raw URLError (e.g. .timedOut) here isn't a StreamingError, so the
             // outer retry loop's `catch let error as StreamingError` wouldn't see
@@ -526,7 +526,7 @@ extension StreamingService {
             let data: Data
             let resp: URLResponse
             do {
-                (data, resp) = try await URLSession.shared.data(for: statusRequest)
+                (data, resp) = try await Core.data(for: statusRequest)
             } catch {
                 // A single slow/timed-out status poll (the bridge can be briefly
                 // CPU-busy under load) shouldn't abort the whole job — wait and
@@ -788,7 +788,7 @@ extension StreamingService {
         }
         resolveRequest.timeoutInterval = 15
 
-        let (resolveData, resolveResponse) = try await URLSession.shared.data(for: resolveRequest)
+        let (resolveData, resolveResponse) = try await Core.data(for: resolveRequest)
         guard let resolveHTTP = resolveResponse as? HTTPURLResponse, resolveHTTP.statusCode == 200 else {
             throw StreamingError.invalidURL
         }
@@ -1080,7 +1080,7 @@ extension StreamingService {
         request.httpMethod = "HEAD"
         request.timeoutInterval = 5
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await Core.data(for: request)
             guard let http = response as? HTTPURLResponse else { return false }
             return (200..<300).contains(http.statusCode)
         } catch {

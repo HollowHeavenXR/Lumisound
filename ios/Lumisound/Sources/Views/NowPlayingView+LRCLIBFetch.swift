@@ -39,7 +39,7 @@ extension NowPlayingView {
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
         req.timeoutInterval = 8
 
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await Core.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let results = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
               !results.isEmpty
@@ -70,7 +70,7 @@ extension NowPlayingView {
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
         req.timeoutInterval = 8
 
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await Core.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }

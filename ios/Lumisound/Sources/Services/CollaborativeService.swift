@@ -101,7 +101,7 @@ final class CollaborativeService: ObservableObject {
         request.timeoutInterval = 20
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 errorMessage = "Server error (HTTP \(http.statusCode))."
                 return
@@ -151,7 +151,7 @@ final class CollaborativeService: ObservableObject {
         request.timeoutInterval = 20
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let http = response as? HTTPURLResponse {
                 if http.statusCode == 404 {
                     errorMessage = "Shared playlist not found. The link may have been revoked."
@@ -195,7 +195,7 @@ final class CollaborativeService: ObservableObject {
         request.timeoutInterval = 20
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await Core.data(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 errorMessage = "Failed to revoke link (HTTP \(http.statusCode))."
                 return

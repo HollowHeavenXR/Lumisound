@@ -343,7 +343,7 @@ final class AppLogger: ObservableObject {
 
         do {
             req.httpBody = try JSONEncoder().encode(entries)
-            let (_, resp) = try await URLSession.shared.data(for: req)
+            let (_, resp) = try await Core.data(for: req)
             // The bridge's /internal/logs returns 204 No Content on success
             // (see ios-bridge/main.py), not 200 — this checked for an exact
             // 200 match, so EVERY successful upload was misread as a

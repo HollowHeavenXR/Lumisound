@@ -47,7 +47,7 @@ extension StreamingService {
                 request.setValue(token, forHTTPHeaderField: "X-Account-Token")
             }
             request.timeoutInterval = 15
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 appWarn("streamTicket: HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)", category: "network")
                 return nil

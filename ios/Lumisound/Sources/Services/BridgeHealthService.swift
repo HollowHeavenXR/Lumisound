@@ -120,7 +120,7 @@ final class BridgeHealthService: ObservableObject {
     private func checkAPIKey(streaming: StreamingService) async throws -> Bool {
         // Simple check: hit /health with the API key header already applied by makePublicRequest
         guard let req = streaming.makePublicRequest("/health") else { return false }
-        let (_, resp) = try await URLSession.shared.data(for: req)
+        let (_, resp) = try await Core.data(for: req)
         return (resp as? HTTPURLResponse)?.statusCode == 200
     }
 }

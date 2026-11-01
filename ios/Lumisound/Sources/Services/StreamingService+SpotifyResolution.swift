@@ -44,7 +44,7 @@ extension StreamingService {
         }
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let http = response as? HTTPURLResponse {
                 switch http.statusCode {
                 case 200..<300: break

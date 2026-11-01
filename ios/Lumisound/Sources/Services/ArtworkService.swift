@@ -810,7 +810,7 @@ final class ArtworkService {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: req)
+            (data, response) = try await Core.data(for: req)
         } catch {
             appWarn("Artwork: fetchRemoteImage request failed for \(url.absoluteString): \(error.localizedDescription)", category: "artwork")
             return nil

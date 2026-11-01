@@ -139,6 +139,6 @@ enum RemoteLogger {
         // best-effort telemetry, not a mutation the app's correctness
         // depends on. A dropped log-event on a flaky connection is fine; a
         // retry storm from a background scan is not.
-        _ = try? await URLSession.shared.data(for: request)
+        _ = try? await Core.data(for: request)
     }
 }

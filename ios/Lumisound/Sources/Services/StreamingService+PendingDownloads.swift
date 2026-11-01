@@ -72,7 +72,7 @@ extension StreamingService {
         request.setValue(accountToken, forHTTPHeaderField: "X-Account-Token")
         request.timeoutInterval = 20
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return [] }
             return try JSONDecoder().decode(PendingDownloadsResponse.self, from: data).pending
         } catch {

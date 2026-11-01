@@ -73,7 +73,7 @@ actor MetadataFetchService {
         let query = [title, artist].filter { !$0.isEmpty }.joined(separator: " ")
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&entity=song&limit=3&country=US"),
-              let (data, response) = try? await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 10)),
+              let (data, response) = try? await Core.data(for: URLRequest(url: url, timeoutInterval: 10)),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let results = json["results"] as? [[String: Any]],
@@ -143,7 +143,7 @@ actor MetadataFetchService {
         req.setValue("Lumisound/1.0 (https://github.com/HollowHeavenXR/Lumisound)", forHTTPHeaderField: "User-Agent")
         req.timeoutInterval = 10
 
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
+        guard let (data, response) = try? await Core.data(for: req),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let recordings = json["recordings"] as? [[String: Any]],
@@ -176,7 +176,7 @@ actor MetadataFetchService {
         let query = [title, artist].filter { !$0.isEmpty }.joined(separator: " ")
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://api.deezer.com/search?q=\(encoded)&limit=3"),
-              let (data, response) = try? await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 10)),
+              let (data, response) = try? await Core.data(for: URLRequest(url: url, timeoutInterval: 10)),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let results = json["data"] as? [[String: Any]],
