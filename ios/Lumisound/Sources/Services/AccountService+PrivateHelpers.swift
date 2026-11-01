@@ -62,6 +62,7 @@ extension AccountService {
         // than in logout() because every path that ends a session comes through
         // this function — account deletion and session revocation included.
         StreamingService.clearStreamTicket()
+        syncInventoryReset()
         avatarImage = nil
         stopAutoPushTimer()
         UserDefaults.standard.removeObject(forKey: Self.userKey)

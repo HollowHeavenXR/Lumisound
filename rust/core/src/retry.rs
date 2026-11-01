@@ -39,3 +39,27 @@ fn jitter_unit() -> f64 {
     let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
     (n % 1_000_000) as f64 / 1_000_000.0
 }
+
+/// Retry policy for Swift's `NetworkRetry` (which wraps Swift closures):
+/// transient HTTP statuses.
+#[uniffi::export]
+pub fn retry_is_transient_status(status: u16) -> bool {
+    status == 408 || status == 429 || (500..=599).contains(&status)
+}
+
+/// Delay before retry number `attempt` (0-based): base·2^n + U(0, base/2).
+#[uniffi::export]
+pub fn retry_delay_secs(attempt: u32, base_delay: f64) -> f64 {
+    base_delay * 2f64.powi(attempt as i32) + jitter_unit() * base_delay * 0.5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn policy() {
+        assert!(retry_is_transient_status(503) && retry_is_transient_status(429) && !retry_is_transient_status(404));
+        let d = retry_delay_secs(2, 0.4);
+        assert!((1.6..=1.8).contains(&d), "{d}");
+    }
+}

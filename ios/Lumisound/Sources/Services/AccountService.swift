@@ -102,10 +102,6 @@ final class AccountService: ObservableObject {
     /// be worth a push.
     var lastPushedAudioSettings: AudioSettings?
 
-    /// The source-id set last uploaded by `syncLibraryInventory`, so an
-    /// unchanged library is not uploaded again.
-    var lastUploadedInventory: Set<String>?
-
     // MARK: Auto-push timer
 
     var autoPushTimer: Timer?
@@ -216,61 +212,29 @@ final class AccountService: ObservableObject {
     /// and debounced via the schedulePush path that calls it.
     func syncLibraryInventory(library: LibraryManager) async {
         guard isLoggedIn else { return }
-        // The server replaces its copy with this upload, so uploading before
-        // the library has loaded tells it this device owns nothing. Five
-        // accounts sent exactly that — a count of 0 — within two days, each
-        // one wiping the dedup state every download decision relies on.
-        guard !library.allSongs.isEmpty else {
-            appLog("syncLibraryInventory skipped — library not loaded yet", category: "account")
-            return
-        }
-        var ids = Set(library.allSongs.compactMap { $0.sourceTrackID }.filter { !$0.isEmpty })
-        let presentFilenames = Set(library.allSongs.compactMap { $0.url?.lastPathComponent })
-        for id in DownloadLedgerStore.shared.presentSourceIDs(presentFilenames: presentFilenames) {
-            ids.insert(id)
-        }
-        // Same ids as the last successful upload: the server already has this
-        // exact set. This ran after every sync push, and on a several-thousand
-        // song library that was a multi-hundred-KB upload up to fifteen times an
-        // hour with nothing in it the server did not already hold.
-        if ids == lastUploadedInventory {
-            return
-        }
-        struct InventoryBody: Encodable { let source_ids: [String] }
+        // Id gathering, the not-loaded / unchanged skips and the retried
+        // replace live in the Rust core (sync.rs).
+        let ids = syncInventoryIds(songSourceIds: library.allSongs.compactMap(\.sourceTrackID),
+                                   presentFilenames: library.allSongs.compactMap { $0.url?.lastPathComponent })
+        Core.prepare(baseURL: bridgeURL, token: token)
         do {
-            // The largest request this app makes, and the only one whose cost
-            // scales with the whole library: every owned source id in one body,
-            // which the server then replaces wholesale. 3,378 ids for the biggest
-            // account here, and the shared 20-second timeout was not enough for it
-            // — 792 "request timed out" failures accumulated on this one endpoint,
-            // more than every other sync failure combined.
-            //
-            // Retried as well as lengthened, because it is a replace and therefore
-            // idempotent: sending it twice leaves the server in the same state as
-            // sending it once.
-            _ = try await NetworkRetry.withRetry(maxAttempts: 3, baseDelay: 1.0) {
-                try await makeRequest("/user/library/inventory", method: "POST",
-                                      body: InventoryBody(source_ids: Array(ids)),
-                                      timeout: 90)
+            switch try await syncInventoryUpload(client: Core.api, ids: ids, libraryLoaded: !library.allSongs.isEmpty) {
+            case .notLoaded:
+                appLog("syncLibraryInventory skipped — library not loaded yet", category: "account")
+            case .unchanged:
+                break
+            case .uploaded(let count):
+                appLog("syncLibraryInventory: uploaded \(count) source id(s)", category: "account")
+                RemoteLogger.log(category: "sync", event: "library_inventory_synced", detail: ["count": Int(count)])
             }
-            lastUploadedInventory = ids
-            appLog("syncLibraryInventory: uploaded \(ids.count) source id(s)", category: "account")
-            // One event per debounced push, not per source id.
-            RemoteLogger.log(category: "sync", event: "library_inventory_synced", detail: ["count": ids.count])
         } catch {
-            // Same "superseded by a newer debounced call" cancellation as
-            // pushSync's identical guard — an expected, routine condition,
-            // not a real failure. See AccountService+Sync.swift's pushSync
-            // for the full reasoning.
-            if (error as? URLError)?.code == .cancelled {
+            if Task.isCancelled {
                 appLog("syncLibraryInventory superseded by a newer sync (expected)", category: "account")
                 return
             }
             appWarn("syncLibraryInventory failed: \(error.localizedDescription)", category: "account")
-            // The id count travels with the failure now. This endpoint's cost is a
-            // function of exactly that number, and without it a timeout could not
-            // be told apart from an ordinary network drop — which is why a long
-            // tail of them sat unexplained.
+            // The id count travels with the failure: this endpoint's cost is
+            // a function of exactly that number.
             RemoteLogger.logError(category: "sync", event: "library_inventory_sync_failed",
                                    message: error.localizedDescription,
                                    detail: ["sourceIDCount": ids.count])

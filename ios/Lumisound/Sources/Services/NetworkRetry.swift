@@ -25,9 +25,8 @@ enum NetworkRetry {
             } catch {
                 lastError = error
                 guard attempt < maxAttempts - 1, isTransient(error) else { throw error }
-                let backoff = baseDelay * pow(2, Double(attempt))
-                let jitter = Double.random(in: 0...(baseDelay * 0.5))
-                try? await Task.sleep(nanoseconds: UInt64((backoff + jitter) * 1_000_000_000))
+                let delay = retryDelaySecs(attempt: UInt32(attempt), baseDelay: baseDelay)
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
         }
         throw lastError ?? URLError(.unknown)
@@ -47,11 +46,10 @@ enum NetworkRetry {
             }
         }
         if let httpError = error as? StreamingError, case .httpError(let status) = httpError {
-            return status == 408 || status == 429 || (500...599).contains(status)
+            return retryIsTransientStatus(status: UInt16(clamping: status))
         }
         if let accountError = error as? AccountError {
-            let status = accountError.statusCode
-            return status == 408 || status == 429 || (500...599).contains(status)
+            return retryIsTransientStatus(status: UInt16(clamping: accountError.statusCode))
         }
         return false
     }

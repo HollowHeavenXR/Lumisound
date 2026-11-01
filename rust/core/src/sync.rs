@@ -476,3 +476,59 @@ mod tests {
         assert!(sync_should_push(false, 0, false) && !sync_should_push(false, 1, false) && sync_should_push(true, 5, true));
     }
 }
+
+// MARK: - Library inventory (/user/library/inventory)
+
+#[derive(uniffi::Enum, Clone, Debug, PartialEq)]
+pub enum InventoryOutcome {
+    /// The library hasn't loaded (uploading would tell the server we own nothing).
+    NotLoaded,
+    /// Same set as the last successful upload.
+    Unchanged,
+    Uploaded { count: u32 },
+}
+
+static LAST_INVENTORY: std::sync::Mutex<Option<u64>> = std::sync::Mutex::new(None);
+
+fn set_hash(ids: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    ids.hash(&mut h);
+    h.finish()
+}
+
+/// Owned source ids: songs' own ids plus download-ledger entries whose file
+/// is still in the library (tags that didn't survive conversion). Sorted.
+#[uniffi::export]
+pub fn sync_inventory_ids(song_source_ids: Vec<String>, present_filenames: Vec<String>) -> Vec<String> {
+    let mut set: HashSet<String> = song_source_ids.into_iter().filter(|s| !s.is_empty()).collect();
+    set.extend(crate::downloads::ledger_present_ids(present_filenames));
+    let mut v: Vec<String> = set.into_iter().collect();
+    v.sort();
+    v
+}
+
+/// Replace the server's inventory with `ids` (idempotent, so retried 3x with
+/// a 90 s timeout: it's the one request whose size scales with the library).
+/// Skipped when the library isn't loaded or the set is unchanged since the
+/// last successful upload.
+#[uniffi::export]
+pub async fn sync_inventory_upload(client: std::sync::Arc<crate::client::ApiClient>, ids: Vec<String>, library_loaded: bool) -> Result<InventoryOutcome, crate::error::CoreError> {
+    if !library_loaded {
+        return Ok(InventoryOutcome::NotLoaded);
+    }
+    let h = set_hash(&ids);
+    if *LAST_INVENTORY.lock().unwrap() == Some(h) {
+        return Ok(InventoryOutcome::Unchanged);
+    }
+    let body = serde_json::to_vec(&json!({ "source_ids": ids })).unwrap_or_default();
+    client.request_with_retry("/user/library/inventory".into(), "POST".into(), Some(body), Some(90.0), 3, 1.0).await?;
+    *LAST_INVENTORY.lock().unwrap() = Some(h);
+    Ok(InventoryOutcome::Uploaded { count: ids.len() as u32 })
+}
+
+/// Forget the last upload (sign-out / account switch).
+#[uniffi::export]
+pub fn sync_inventory_reset() {
+    *LAST_INVENTORY.lock().unwrap() = None;
+}
