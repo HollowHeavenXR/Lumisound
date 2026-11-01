@@ -36,3 +36,9 @@ hex = "0.4"
 aes-gcm = "0.10"
 base64 = "0.22"
 libc = "0.2"
+rtrb = "0.3"
+rubato = "0.15"
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "aac", "isomp4", "flac", "wav", "pcm", "ogg", "vorbis", "alac", "adpcm", "aiff", "caf"] }
+
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+cpal = "0.15"
