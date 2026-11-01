@@ -18,8 +18,12 @@
 | Path | What it is |
 |---|---|
 | [`ios/`](ios) | The Xcode project — one `xcodegen` project, five targets: the iPhone/iPad app, a Home/Lock Screen + StandBy widget, an Apple Watch app + its own complication widget, and a full Apple TV app. Install instructions, build steps, full feature docs |
+| [`rust/core/`](rust/core) | **The app engine, in Rust** (UniFFI → Swift module `LumisoundCore`): the audio engine (symphonia decode, gapless/crossfade mixer, EQ, reverb, CoreAudio output), the bridge API client and live socket, the `.lms` lock system and track vault, downloads, on-device analysis (BPM, key, loudness, beat grid, fingerprints, silence, hum-to-search), the library/scan caches and stores, the appearance system, and the Lua scripting runtime. Swift keeps the SwiftUI views and the Apple-only system APIs |
+| [`rust/media/`](rust/media) | Media primitives shared by the app and the server: lock format, decoding, analysis DSP, tag writing |
 | [`rust/bridge/`](rust/bridge) | Rust (axum + sqlx) server powering search/streaming, account sync, Aria Lumi (AI features), and all server-side features below; host deploy files in [`ios-bridge/`](ios-bridge) |
-| [`discord-rpc/`](discord-rpc) | Optional local daemon that mirrors your "now playing" to Discord Rich Presence |
+| [`rust/rpc/`](rust/rpc) + [`discord-rpc/`](discord-rpc) | Optional Rust daemon that mirrors your "now playing" to Discord Rich Presence, plus its installers |
+
+Everything functional is Rust; see [`RUST-PORT.md`](RUST-PORT.md) for what moved where.
 
 See [`ios/README.md`](ios/README.md) for installation (AltStore / Sideloadly), self-hosting the
 bridge, and build-from-source instructions.
@@ -34,6 +38,7 @@ bridge, and build-from-source instructions.
 |---|---|
 | **Playback** | Gapless, crossfade, A–B repeat, sleep timer, sleep/wake alarm with graduated volume, variable speed & pitch, auto-radio, track bookmarks |
 | **Smart Auto Crossfade** | Beatmatches outgoing/incoming tempos and snaps the fade to a downbeat, reading how the outgoing track actually sounds as it ends rather than a fixed slider |
+| **Interface styles** | Liquid Glass, Frosted, Solid, Midnight OLED, Neon, Aurora and Minimal Mono, each in Compact/Regular/Roomy density — synced to your account |
 | **Audio FX** | 10-band EQ with presets (+ Auto EQ, which switches presets per track by genre/tempo/live analysis), 23 effects (8D spatial audio, bass boost, tremolo, vibrato, nightcore, vaporwave, karaoke vocal removal…), real-room reverb (on by default, adjustable room/mix) |
 | **Per-Track Sound** | Pin EQ/effects/volume overrides to a specific song |
 | **ReplayGain & Volume Boost** | Loudness normalisation plus up to 200% volume with a limiter |
