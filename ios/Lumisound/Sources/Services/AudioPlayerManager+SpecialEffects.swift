@@ -107,6 +107,7 @@ extension AudioPlayerManager {
     // MARK: - Vibrato
 
     func startVibrato(frequency: Double = 4.5, depth: Double = 0.35) {
+        defer { applyRustModulation() }
         stopVibrato()
         vibratoFrequency = frequency
         vibratoDepth = depth
@@ -123,6 +124,7 @@ extension AudioPlayerManager {
     }
 
     func stopVibrato() {
+        defer { applyRustModulation() }
         vibratoLink?.invalidate()
         vibratoLink = nil
         isVibratoActive = false

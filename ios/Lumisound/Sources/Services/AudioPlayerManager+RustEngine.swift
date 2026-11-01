@@ -38,9 +38,8 @@ extension AudioPlayerManager {
         guard Self.rustEngineEnabled, !rustBypassOnce else { return false }
         let s = audioSettings
         if s.spatialAudioEnabled == true { return false }
-        // Effects map onto settings + an optional modulation; the engine does
-        // 8D rotation and tremolo, vibrato (pitch LFO) stays on AVAudioEngine.
-        if activeEffectNeedsPitchModulation() { return false }
+        // Effects map onto settings + a modulation (8D, tremolo, vibrato),
+        // all of which the engine does.
         return CoreAudio.canDecode(path: LumisoundExclusiveExtensionService.playableURL(for: url).path)
     }
 
@@ -155,7 +154,9 @@ extension AudioPlayerManager {
         guard isUsingRustEngine else { return }
         let pan = (is8DActive || audioSettings.eightDAudioEnabled == true) ? Float(rotationHz) : 0
         let trem = isTremoloActive ? Float(tremoloFrequency) : 0
-        Self.rust.setModulation(panHz: pan, tremoloHz: trem, tremoloDepth: isTremoloActive ? tremoloDepth : 0)
+        Self.rust.setModulation(panHz: pan, tremoloHz: trem, tremoloDepth: isTremoloActive ? tremoloDepth : 0,
+                                vibratoHz: isVibratoActive ? Float(vibratoFrequency) : 0,
+                                vibratoSemitones: isVibratoActive ? Float(vibratoDepth) : 0)
     }
 
     func rustPlay() {

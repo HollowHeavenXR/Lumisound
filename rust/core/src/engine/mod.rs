@@ -214,9 +214,10 @@ impl AudioEngine {
         self.send(Cmd::Effects { reverb_wet, reverb_preset, mono, night: night_mode });
     }
 
-    /// 8D rotation speed (Hz, 0 = off) and tremolo rate/depth (0 = off).
-    pub fn set_modulation(&self, pan_hz: f32, tremolo_hz: f32, tremolo_depth: f32) {
-        self.send(Cmd::Modulation { pan_hz, tremolo_hz, tremolo_depth });
+    /// 8D rotation speed (Hz, 0 = off), tremolo rate/depth and vibrato
+    /// rate/depth in semitones (0 = off).
+    pub fn set_modulation(&self, pan_hz: f32, tremolo_hz: f32, tremolo_depth: f32, vibrato_hz: f32, vibrato_semitones: f32) {
+        self.send(Cmd::Modulation { pan_hz, tremolo_hz, tremolo_depth, vibrato_hz, vibrato_semitones });
     }
 
     pub fn position(&self) -> f64 {
