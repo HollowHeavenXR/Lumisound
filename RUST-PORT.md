@@ -105,8 +105,8 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       stores: PlayHistory/Bookmark/TimeCapsule/LongTrackResume/RecentlyDeleted, Lua engines)
       [x] library snapshot load/re-anchor/group/save (core library.rs)
       [x] PlayHistory, Bookmark, LongTrackResume stores (core stores.rs)
-      [ ] TimeCapsule, DeletedPlaylists, RecentlyDeleted, TrackedPlaylist, ListeningGoal,
-          ScanCache, IntelligenceSuggestionCache, Lua engines, sync payload/merge
+      [x] TimeCapsule, DeletedPlaylists, RecentlyDeleted, ListeningGoal, IntelligenceSuggestionCache
+      [ ] TrackedPlaylist, ScanCache, Lua engines, sync payload/merge
 - [ ] H. Swift rewired, old Swift services deleted, tvOS/watchOS on the core, release tag
 - [x] I. Appearance system: 7 styles (Liquid Glass, Frosted, Solid, Midnight OLED, Neon,
       Aurora, Minimal Mono) + density, tokens in rust/core/src/appearance.rs, picker in
