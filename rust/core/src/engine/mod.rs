@@ -4,6 +4,7 @@
 //! configures AVAudioSession and Now Playing; it drives this through
 //! `AudioEngine` and gets track events through `EngineListener`.
 
+pub mod binaural;
 pub mod deck;
 pub mod dsp;
 pub mod mixer;
@@ -212,6 +213,12 @@ impl AudioEngine {
     /// night-mode compression.
     pub fn set_effects(&self, reverb_wet: f32, reverb_preset: String, mono: bool, night_mode: bool) {
         self.send(Cmd::Effects { reverb_wet, reverb_preset, mono, night: night_mode });
+    }
+
+    /// Binaural spatial audio (source anchored in front) and the head yaw
+    /// from the headphones' motion sensor, in degrees.
+    pub fn set_spatial(&self, enabled: bool, yaw_degrees: f32) {
+        self.send(Cmd::Spatial { enabled, yaw_deg: yaw_degrees });
     }
 
     /// 8D rotation speed (Hz, 0 = off), tremolo rate/depth and vibrato

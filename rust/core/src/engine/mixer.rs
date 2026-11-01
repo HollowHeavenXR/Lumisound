@@ -3,6 +3,7 @@
 //! atomics, so the callback never blocks.
 
 use super::deck::Deck;
+use super::binaural::Binaural;
 use super::dsp::{Compressor, Eq10, Ramp, Reverb};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -16,6 +17,8 @@ pub enum Cmd {
     Eq { gains: [f32; 10], enabled: bool },
     Effects { reverb_wet: f32, reverb_preset: String, mono: bool, night: bool },
     /// 8D auto-pan (Hz, 0 = off) and tremolo (Hz, depth 0…1; 0 = off).
+    /// Binaural "spatial audio": on/off and head yaw (degrees).
+    Spatial { enabled: bool, yaw_deg: f32 },
     Modulation { pan_hz: f32, tremolo_hz: f32, tremolo_depth: f32, vibrato_hz: f32, vibrato_semitones: f32 },
     /// Replace the playing deck immediately (load / seek).
     Replace(Box<Deck>),
@@ -99,6 +102,7 @@ pub struct Mixer {
     reverb: Reverb,
     comp: Compressor,
     mono: bool,
+    spatial: Binaural,
     pan_hz: f32,
     pan_phase: f32,
     trem_hz: f32,
@@ -116,7 +120,7 @@ pub struct Mixer {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), mono: false, pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele }
+        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -158,6 +162,10 @@ impl Mixer {
                 self.reverb.set_preset(&reverb_preset);
                 self.mono = mono;
                 self.comp.enabled = night;
+            }
+            Cmd::Spatial { enabled, yaw_deg } => {
+                self.spatial.enabled = enabled;
+                self.spatial.set_yaw(yaw_deg);
             }
             Cmd::Modulation { pan_hz, tremolo_hz, tremolo_depth, vibrato_hz, vibrato_semitones } => {
                 // Delay-line vibrato: peak pitch ratio 2^(st/12) ≈ 1 + A·2πf,
@@ -288,6 +296,7 @@ impl Mixer {
                 let m = (l + r) * 0.5;
                 (l, r) = (m, m);
             }
+            (l, r) = self.spatial.process(l, r);
             let tau = std::f32::consts::TAU;
             if self.pan_hz > 0.0 {
                 // Balance swing like AVAudioMixerNode.pan = sin(phase) * 0.5.

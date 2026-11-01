@@ -37,7 +37,6 @@ extension AudioPlayerManager {
     func rustEligible(for url: URL) -> Bool {
         guard Self.rustEngineEnabled, !rustBypassOnce else { return false }
         let s = audioSettings
-        if s.spatialAudioEnabled == true { return false }
         // Effects map onto settings + a modulation (8D, tremolo, vibrato),
         // all of which the engine does.
         return CoreAudio.canDecode(path: LumisoundExclusiveExtensionService.playableURL(for: url).path)
@@ -129,6 +128,25 @@ extension AudioPlayerManager {
         Self.rust.setEffects(reverbWet: wet, reverbPreset: s.reverbPreset.rawValue,
                              mono: s.monoAudioEnabled == true, nightMode: s.nightModeEnabled == true)
         applyRustModulation()
+        applyRustSpatial()
+    }
+
+    /// Binaural spatial audio in the engine, steered by headphone head tracking.
+    func applyRustSpatial() {
+        guard isUsingRustEngine else { return }
+        let on = audioSettings.spatialAudioEnabled == true
+        Self.rust.setSpatial(enabled: on, yawDegrees: 0)
+        let tracker = SpatialAudioService.shared
+        if on, tracker.isHeadTrackingAvailable {
+            tracker.onOrientationUpdate = { orientation in
+                Self.rust.setSpatial(enabled: true, yawDegrees: orientation.yaw)
+            }
+            tracker.startTracking()
+        } else if !on, rustSpatialTracking {
+            tracker.stopTracking()
+            tracker.onOrientationUpdate = nil
+        }
+        rustSpatialTracking = on
     }
 
     /// ReplayGain (tags or measured) applied inside the engine; volume is separate.

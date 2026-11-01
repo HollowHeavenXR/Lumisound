@@ -547,6 +547,8 @@ final class AudioPlayerManager: ObservableObject {
     var rustBypassOnce = false
     /// Feeds the visualizer from the Rust engine's output tap.
     var rustTapTimer: Timer?
+    /// Head tracking was started for the Rust engine's spatial mode.
+    var rustSpatialTracking = false
     var opusTimeObserver: Any?
     var opusStatusObserver: NSKeyValueObservation?
     var opusEndObserver: NSObjectProtocol?
