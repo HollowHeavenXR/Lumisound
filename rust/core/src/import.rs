@@ -423,3 +423,174 @@ mod tests {
         let _ = std::fs::remove_file(p);
     }
 }
+
+// ---- documents scan ---------------------------------------------------------------------------
+
+/// Containers the library imports (incl. video with audio, yt-dlp fallbacks
+/// and the `.lms` marker).
+pub const SUPPORTED: &[&str] = &["mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac", "mp4", "opus", "m4v", "mov", "webm", "ogg", "lms"];
+
+#[uniffi::export]
+pub fn import_supported_extensions() -> Vec<String> {
+    SUPPORTED.iter().map(|s| s.to_string()).collect()
+}
+
+/// "/a/./b/../c" -> "/a/c" (what `standardizedFileURL` compares by).
+pub fn normalize_path(p: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for c in p.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    format!("/{}", out.join("/"))
+}
+
+#[derive(uniffi::Record, Clone, Debug, Default)]
+pub struct DocumentsScan {
+    /// Supported audio files under the documents folder, minus pre-conversion
+    /// leftovers whose `.lms` twin exists (those are deleted).
+    pub candidates: Vec<String>,
+    /// Library paths whose file is gone.
+    pub missing: Vec<String>,
+    /// Candidates not already in the library (normalized-path compare).
+    pub new_paths: Vec<String>,
+    pub orphans_removed: u32,
+}
+
+fn walk_supported(dir: &Path, out: &mut Vec<String>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.')) {
+            continue;
+        }
+        let Ok(t) = e.file_type() else { continue };
+        if t.is_dir() {
+            // Package bundles are skipped (FileManager's .skipsPackageDescendants);
+            // ordinary folders with dots ("Vol. 2") are not.
+            const PACKAGES: &[&str] = &["app", "bundle", "framework", "photoslibrary", "musiclibrary", "logicx", "band", "pages", "numbers", "key", "rtfd", "xcodeproj", "plugin", "kext"];
+            let is_package = p.extension().and_then(|x| x.to_str()).is_some_and(|x| PACKAGES.contains(&x.to_lowercase().as_str()));
+            if !is_package {
+                walk_supported(&p, out);
+            }
+        } else if t.is_file() && p.extension().and_then(|x| x.to_str()).is_some_and(|x| SUPPORTED.contains(&x.to_lowercase().as_str())) {
+            out.push(p.to_string_lossy().into_owned());
+        }
+    }
+}
+
+/// One pass of the Documents scan: walk for supported files, find library
+/// entries whose file vanished, delete plain files whose converted `.lms`
+/// twin already exists (left behind when removing the original failed after
+/// a convert — re-importing them would duplicate the track), and list what's
+/// new. Disk work: call off the main thread.
+#[uniffi::export]
+pub fn scan_documents(docs_dir: String, library_paths: Vec<String>) -> DocumentsScan {
+    let mut found = Vec::new();
+    walk_supported(Path::new(&docs_dir), &mut found);
+    found.sort();
+    let missing = library_paths.iter().filter(|p| !Path::new(p).exists()).cloned().collect();
+    let existing: std::collections::HashSet<String> = library_paths.iter().map(|p| normalize_path(p)).collect();
+    let cleaned = scan_clean_conversion_orphans(found, library_paths);
+    let (candidates, orphans_removed) = (cleaned.remaining, cleaned.removed);
+    let new_paths = candidates.iter().filter(|p| !existing.contains(&normalize_path(p))).cloned().collect();
+    DocumentsScan { candidates, missing, new_paths, orphans_removed }
+}
+
+#[derive(uniffi::Record, Clone, Debug, Default)]
+pub struct OrphanCleanup {
+    pub remaining: Vec<String>,
+    pub removed: u32,
+}
+
+/// Delete plain candidates whose converted `.lms` twin is in `existing` or
+/// among the candidates; return the rest (watched folders use this too).
+#[uniffi::export]
+pub fn scan_clean_conversion_orphans(candidates: Vec<String>, existing: Vec<String>) -> OrphanCleanup {
+    let converted: std::collections::HashSet<String> = existing.iter().map(|p| normalize_path(p)).chain(candidates.iter().filter(|p| crate::lock::lms_is_converted((*p).clone())).map(|p| normalize_path(p))).collect();
+    let mut removed = 0;
+    let remaining = candidates
+        .into_iter()
+        .filter(|p| {
+            if crate::lock::lms_is_converted(p.clone()) || !converted.contains(&normalize_path(&format!("{p}.lms"))) {
+                return true;
+            }
+            if std::fs::remove_file(p).is_ok() {
+                removed += 1;
+            }
+            false
+        })
+        .collect();
+    OrphanCleanup { remaining, removed }
+}
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct LibraryPathEntry {
+    pub id: String,
+    pub path: String,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct ConversionPair {
+    /// The plain pre-conversion entry to drop (references move to `survivor_id`).
+    pub song_id: String,
+    pub survivor_id: String,
+    pub path: String,
+    pub converted_path: String,
+}
+
+/// Library entries that are the plain original of a track whose converted
+/// `.lms` twin is also in the library.
+#[uniffi::export]
+pub fn scan_conversion_pairs(entries: Vec<LibraryPathEntry>) -> Vec<ConversionPair> {
+    let converted: HashMap<String, &LibraryPathEntry> = entries.iter().filter(|e| crate::lock::lms_is_converted(e.path.clone())).map(|e| (normalize_path(&e.path), e)).collect();
+    if converted.is_empty() {
+        return vec![];
+    }
+    entries
+        .iter()
+        .filter(|e| !crate::lock::lms_is_converted(e.path.clone()))
+        .filter_map(|e| {
+            let twin = normalize_path(&format!("{}.lms", e.path));
+            converted.get(&twin).map(|s| ConversionPair { song_id: e.id.clone(), survivor_id: s.id.clone(), path: e.path.clone(), converted_path: s.path.clone() })
+        })
+        .collect()
+}
+
+/// Indices to keep so each normalized path (or id when pathless) appears once.
+#[uniffi::export]
+pub fn scan_unique_indices(keys: Vec<String>) -> Vec<u32> {
+    let mut seen = std::collections::HashSet::new();
+    keys.iter().enumerate().filter(|(_, k)| seen.insert(if k.starts_with('/') { normalize_path(k) } else { (*k).clone() })).map(|(i, _)| i as u32).collect()
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn scan_finds_new_missing_and_orphans() {
+        let d = std::env::temp_dir().join(format!("scan-{}", uuid::Uuid::new_v4()));
+        let m = d.join("Imported Music/Hits Vol. 2");
+        std::fs::create_dir_all(&m).unwrap();
+        for f in ["a.mp3", "b.m4a", "b.m4a.lms", "notes.txt", ".hidden.mp3"] {
+            std::fs::write(m.join(f), b"x").unwrap();
+        }
+        let lib = vec![m.join("a.mp3").to_string_lossy().into_owned(), d.join("gone.mp3").to_string_lossy().into_owned()];
+        let s = scan_documents(d.to_string_lossy().into(), lib);
+        assert_eq!(s.orphans_removed, 1);
+        assert!(!m.join("b.m4a").exists());
+        assert_eq!(s.candidates.len(), 2);
+        assert_eq!(s.missing.len(), 1);
+        assert_eq!(s.new_paths, vec![m.join("b.m4a.lms").to_string_lossy().into_owned()]);
+        let pairs = scan_conversion_pairs(vec![LibraryPathEntry { id: "1".into(), path: "/x/s.m4a".into() }, LibraryPathEntry { id: "2".into(), path: "/x/./s.m4a.lms".into() }]);
+        assert_eq!(pairs, vec![ConversionPair { song_id: "1".into(), survivor_id: "2".into(), path: "/x/s.m4a".into(), converted_path: "/x/./s.m4a.lms".into() }]);
+        assert_eq!(scan_unique_indices(vec!["/a/b".into(), "/a/./b".into(), "id".into(), "id".into()]), vec![0, 2]);
+        let _ = std::fs::remove_dir_all(d);
+    }
+}

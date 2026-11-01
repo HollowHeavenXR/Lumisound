@@ -46,12 +46,8 @@ enum DocumentImportError: LocalizedError {
 }
 
 struct DocumentImportService {
-    static let supportedExtensions: Set<String> = [
-        "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac", "mp4", "opus",
-        "m4v", "mov",  // video containers with audio tracks
-        "webm", "ogg", // yt-dlp can fall back to these containers for /api/download
-        LumisoundExclusiveExtensionService.marker  // "lms" — converted tracks, see that type
-    ]
+    /// Importable containers — the Rust core's list.
+    static let supportedExtensions: Set<String> = Set(importSupportedExtensions())
     private var supportedExtensions: Set<String> { Self.supportedExtensions }
 
     func importFiles(from urls: [URL]) async throws -> [Song] {

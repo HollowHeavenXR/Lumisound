@@ -262,94 +262,33 @@ extension LibraryManager {
         let wasActiveAtStart = UIApplication.shared.applicationState == .active
         guard FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first != nil else { return }
 
-        // Snapshot the current library's local file URLs before hopping off the
-        // main actor — cheap (URL/array copying, no I/O), and lets the eviction
-        // check below run in the same background pass as the enumeration
-        // instead of doing its own `fileExists` syscall per song back on the
-        // main actor afterward.
-        let existingSongURLs: [URL] = importedSongs.compactMap { $0.url }
-
-        // Walk the full Documents tree OFF the main actor — LibraryManager is
-        // @MainActor, so doing this enumeration inline blocked the UI every time
-        // a screen scanned on appear (Subscriptions / tracked playlists / the
-        // Cloud Services download flows), which is a big source of the "lag spike
-        // when loading" reports on large libraries. Covers root, Imported Music/,
-        // and any nested folders the user created.
-        //
-        // The eviction check (which local songs' backing files no longer exist)
-        // rides along in this same detached pass for the same reason: it used
-        // to run back on the main actor as a synchronous `fileExists` syscall
-        // per already-imported song — for a library of thousands of tracks,
-        // thousands of blocking stat() calls on the main thread on every single
-        // scan (including scans triggered very frequently, like every
-        // background-download completion) — a second, previously-unaccounted-for
-        // source of the same "lag spike" class of report as the enumeration fix
-        // above, just on the READ side of the library instead of the WRITE side.
-        let (candidates, missingURLs): ([URL], Set<URL>) = await Task.detached(priority: .utility) {
-            let fm = FileManager.default
-            guard let docsDir = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return ([], []) }
-            var result: [URL] = []
-            let enumerator = fm.enumerator(
-                at: docsDir,
-                includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            )
-            while let url = enumerator?.nextObject() as? URL {
-                guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
-                if DocumentImportService.supportedExtensions.contains(url.pathExtension.lowercased()) {
-                    result.append(url)
-                }
-            }
-            let missing = existingSongURLs.filter { !fm.fileExists(atPath: $0.path) }
-            return (result, Set(missing))
+        // Walk (off the main actor: inline it blocked the UI on every scan),
+        // vanished-file detection, deletion of pre-conversion leftovers whose
+        // `.lms` twin exists, and the new-file diff all run in the Rust core.
+        let existingPaths = importedSongs.compactMap { $0.url?.path }
+        guard let docsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path else { return }
+        let scan = await Task.detached(priority: .utility) {
+            scanDocuments(docsDir: docsPath, libraryPaths: existingPaths)
         }.value
+        let missingPaths = Set(scan.missing)
 
-        // Evict songs whose backing files no longer exist (e.g. moved by the user
-        // via Files app into an organised subfolder, or the last local file was
-        // deleted outright). Runs even when `candidates` is empty — an early
-        // return before this point used to skip eviction entirely whenever the
-        // Documents tree had zero audio files left, leaving phantom entries for
-        // deleted tracks stuck in the library forever. Pure in-memory set
-        // membership now (no I/O) — the actual stat() calls already happened
-        // in the background pass above.
-        // Always runs (not gated on `!missingURLs.isEmpty`) — a song with a nil
-        // `url` must still be evicted every pass, same as before this change,
-        // and the filter itself is cheap in-memory set membership now (no I/O),
-        // so there's no cost to skip by short-circuiting here.
         let countBeforeEviction = importedSongs.count
         MainThreadActivity.measure("scan.evict") {
             importedSongs = importedSongs.filter { song in
-                guard let url = song.url else { return false }
-                return !missingURLs.contains(url)
+                guard let path = song.url?.path else { return false }
+                return !missingPaths.contains(path)
             }
         }
         let evicted = countBeforeEviction != importedSongs.count
 
-        // One-time-per-occurrence retroactive cleanup: `cleanUpConversionOrphans`
-        // below only stops NEW duplicate pairs from being created going
-        // forward — it has nothing to say about pairs that already both got
-        // imported as separate importedSongs entries before this fix existed
-        // (each scan that created one only ever compared it against files,
-        // never against a sibling entry already sitting in the library).
-        // Sweeps every scan (cheap — pure in-memory comparison over already-
-        // loaded importedSongs, no disk I/O unless it actually finds a pair).
+        // Retroactive cleanup of pre-conversion/converted pairs that both got
+        // imported before the leftover cleanup existed.
         let mergedDuplicates = await mergeExistingConversionDuplicates()
-
-        guard !candidates.isEmpty else {
-            if evicted || mergedDuplicates > 0 { rebuildAllSongs() }
-            return
+        let cleanedUpOrphans = Int(scan.orphansRemoved)
+        if cleanedUpOrphans > 0 {
+            appLog("Local scan: cleaned up \(cleanedUpOrphans) pre-conversion leftover file(s) that already had a converted .lms counterpart", category: "library")
         }
-
-        // Off the main actor. On a several-thousand-file library this took about
-        // a second of main-thread time on every scan (URL standardisation and
-        // conversion-target derivation per file, plus any deletes), measured by
-        // the hang monitor's `scan.orphans` label in a 2s freeze at launch.
-        let importedURLs = importedSongs.compactMap { $0.url }
-        let (cleanedCandidates, cleanedUpOrphans, existingURLs) = await Task.detached(priority: .userInitiated) {
-            let existingURLs = Set(importedURLs.map(\.standardizedFileURL))
-            let cleaned = Self.cleanUpConversionOrphans(among: candidates, existingURLs: existingURLs)
-            return (cleaned.candidates, cleaned.cleanedUp, existingURLs)
-        }.value
+        let cleanedCandidates = scan.candidates.map { URL(fileURLWithPath: $0) }
         guard !cleanedCandidates.isEmpty else {
             if evicted || mergedDuplicates > 0 || cleanedUpOrphans > 0 { rebuildAllSongs() }
             return
@@ -366,13 +305,7 @@ extension LibraryManager {
             // the whole library, and URL standardisation plus a grouping
             // dictionary over thousands of songs was part of the multi-second
             // freeze on pull-to-refresh. Same first-wins result as before.
-            importedSongs = await Task.detached(priority: .userInitiated) {
-                var seen = Set<String>()
-                seen.reserveCapacity(resolved.count)
-                return resolved.filter { song in
-                    seen.insert(song.url.map { $0.standardizedFileURL.absoluteString } ?? song.id).inserted
-                }
-            }.value
+            importedSongs = Self.uniqueByPath(resolved)
             appLog("Local scan (force) complete: \(importedSongs.count) song(s)", category: "library")
             rebuildAllSongs()
             return
@@ -393,9 +326,7 @@ extension LibraryManager {
         // every background-download completion and foreground return — so
         // on a large library it fired this same multi-second main-thread
         // cost repeatedly during ordinary use, not just once.
-        let newURLs = await Task.detached(priority: .userInitiated) {
-            cleanedCandidates.filter { !existingURLs.contains($0.standardizedFileURL) }
-        }.value
+        let newURLs = scan.newPaths.map { URL(fileURLWithPath: $0) }
         guard !newURLs.isEmpty else { return }
 
         let newSongs = await resolveSongs(for: newURLs)
@@ -443,32 +374,13 @@ extension LibraryManager {
             return
         }
 
-        importedSongs.append(contentsOf: newSongs)
-        // Deduplicated with a seen-set rather than `Dictionary(grouping:)`.
-        //
-        // Grouping allocates an array per distinct key and then throws all but
-        // the first element of each away — thousands of short-lived arrays to
-        // produce a result that only ever needed one pass and one set. Same
-        // output, same first-wins ordering, without the garbage.
-        //
-        // Off the main actor, same snapshot/detach/reassign shape as the
-        // `force` path's identical dedupe above — this was the one spot that
-        // never got updated to match it. Cost here is O(whole library), not
-        // O(newSongs.count): field telemetry (MainThreadActivity's
-        // "scan.dedupe" label) showed this taking 1.3-1.5s of synchronous
-        // main-actor time even for a single new file completing in the
-        // background, worse under thermal throttling — a real contributor to
-        // "stalls during ordinary browsing," not just large imports.
-        let currentSongs = importedSongs
-        importedSongs = await Task.detached(priority: .userInitiated) {
-            var seenKeys = Set<String>()
-            seenKeys.reserveCapacity(currentSongs.count)
-            return currentSongs.filter { song in
-                let key = song.url.map { $0.standardizedFileURL.absoluteString } ?? song.id
-                return seenKeys.insert(key).inserted
-            }
-        }.value
+        importedSongs = Self.uniqueByPath(importedSongs + newSongs)
         rebuildAllSongs()
+    }
+
+    /// One song per file (normalized path; id when pathless), first wins.
+    nonisolated static func uniqueByPath(_ songs: [Song]) -> [Song] {
+        scanUniqueIndices(keys: songs.map { $0.url?.path ?? $0.id }).map { songs[Int($0)] }
     }
 
     /// Shared by every local-file scan path (Documents, watched folders,
@@ -486,22 +398,11 @@ extension LibraryManager {
     /// genuinely separate file, which is exactly how "old file + .lms file,
     /// both showing up as separate library entries" duplicates happened.
     nonisolated static func cleanUpConversionOrphans(among candidates: [URL], existingURLs: Set<URL>) -> (candidates: [URL], cleanedUp: Int) {
-        let allKnownConvertedURLs = existingURLs.union(
-            candidates.filter { LumisoundExclusiveExtensionService.isConverted($0) }.map { $0.standardizedFileURL }
-        )
-        var remaining = candidates
-        var cleanedUp = 0
-        remaining.removeAll { candidate in
-            guard let target = LumisoundExclusiveExtensionService.expectedConvertedURL(for: candidate) else { return false }
-            guard allKnownConvertedURLs.contains(target.standardizedFileURL) else { return false }
-            try? FileManager.default.removeItem(at: candidate)
-            cleanedUp += 1
-            return true
+        let r = scanCleanConversionOrphans(candidates: candidates.map(\.path), existing: existingURLs.map(\.path))
+        if r.removed > 0 {
+            appLog("Local scan: cleaned up \(r.removed) pre-conversion leftover file(s) that already had a converted .lms counterpart", category: "library")
         }
-        if cleanedUp > 0 {
-            appLog("Local scan: cleaned up \(cleanedUp) pre-conversion leftover file(s) that already had a converted .lms counterpart", category: "library")
-        }
-        return (remaining, cleanedUp)
+        return (r.remaining.map { URL(fileURLWithPath: $0) }, Int(r.removed))
     }
 
     /// Retroactive counterpart to `cleanUpConversionOrphans` — that one only
@@ -525,24 +426,13 @@ extension LibraryManager {
         // `scan.mergeConversionDuplicates` label, in 3-4s launch freezes), to
         // find nothing almost every time. It runs detached on a snapshot; only
         // the rare pairs it finds are merged here, against live state.
-        let snapshot = importedSongs
-        let pairs: [(song: Song, survivor: Song, url: URL, target: URL)] = await Task.detached(priority: .userInitiated) {
-            var convertedByTargetURL: [URL: Song] = [:]
-            for song in snapshot {
-                guard let url = song.url, LumisoundExclusiveExtensionService.isConverted(url) else { continue }
-                convertedByTargetURL[url.standardizedFileURL] = song
-            }
-            guard !convertedByTargetURL.isEmpty else { return [] }
-            var pairs: [(song: Song, survivor: Song, url: URL, target: URL)] = []
-            for song in snapshot {
-                guard let url = song.url, !LumisoundExclusiveExtensionService.isConverted(url),
-                      let target = LumisoundExclusiveExtensionService.expectedConvertedURL(for: url),
-                      let survivor = convertedByTargetURL[target.standardizedFileURL]
-                else { continue }
-                pairs.append((song, survivor, url, target))
-            }
-            return pairs
-        }.value
+        let entries = importedSongs.compactMap { song in song.url.map { LibraryPathEntry(id: song.id, path: $0.path) } }
+        let found = await Task.detached(priority: .userInitiated) { scanConversionPairs(entries: entries) }.value
+        let byID = Dictionary(importedSongs.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let pairs: [(song: Song, survivor: Song, url: URL, target: URL)] = found.compactMap { p in
+            guard let song = byID[p.songId], let survivor = byID[p.survivorId] else { return nil }
+            return (song, survivor, URL(fileURLWithPath: p.path), URL(fileURLWithPath: p.convertedPath))
+        }
         guard !pairs.isEmpty else { return 0 }
 
         let currentlyPlayingID = AudioPlayerManager.shared?.currentSong?.id
