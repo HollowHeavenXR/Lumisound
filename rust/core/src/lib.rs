@@ -8,6 +8,7 @@ uniffi::setup_scaffolding!();
 pub mod aidj;
 pub mod analysis;
 pub mod appearance;
+pub mod applock;
 pub mod cache;
 pub mod client;
 pub mod downloads;

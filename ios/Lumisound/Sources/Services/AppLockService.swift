@@ -2,53 +2,47 @@ import Foundation
 import LocalAuthentication
 import SwiftUI
 
-/// Gates the whole app behind Face ID/Touch ID/device passcode when enabled
-/// in Settings. The app now syncs personal account data (playlists, listening
-/// history, favorites) to the bridge server, so a local screen lock has real
-/// value beyond what iOS's own device lock already provides — e.g. a shared
-/// device, or someone picking up an already-unlocked phone.
+/// App Lock. The state machine (enabled flag, locked/unlocked, one prompt at
+/// a time, what a result means) is the Rust core's `AppLock`; this shows the
+/// LocalAuthentication prompt and mirrors the state for SwiftUI.
 @MainActor
 final class AppLockService: ObservableObject {
 
     static weak var shared: AppLockService?
 
-    private enum Keys {
-        static let enabled = "app_lock_enabled"
-    }
+    private static let legacyEnabledKey = "app_lock_enabled"
+    private let core: AppLock
 
     @Published var isEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(isEnabled, forKey: Keys.enabled)
-            // Turning it on locks immediately; turning it off should never
-            // leave a stale "locked" state blocking the app.
-            isUnlocked = !isEnabled
+            guard isEnabled != oldValue else { return }
+            apply(core.setEnabled(enabled: isEnabled))
         }
     }
 
-    /// True once the current session has been authenticated (or locking is
-    /// off). Drives the full-screen `AppLockView` overlay in `LumisoundApp`.
     @Published var isUnlocked: Bool
 
-    /// True while a Face ID/Touch ID/passcode prompt is in flight, so a rapid
-    /// foreground/background flicker can't fire a second concurrent prompt.
     @Published private(set) var isAuthenticating = false
 
     init() {
-        let enabled = UserDefaults.standard.bool(forKey: Keys.enabled)
-        isEnabled = enabled
-        isUnlocked = !enabled
+        let legacy = UserDefaults.standard.object(forKey: Self.legacyEnabledKey) as? Bool
+        core = AppLock(legacyEnabled: legacy)
+        let s = core.state()
+        isEnabled = s.enabled
+        isUnlocked = s.unlocked
         Self.shared = self
     }
 
-    /// Whether the device can evaluate biometrics/passcode at all — used to
-    /// hide the Settings toggle on a device with no passcode set (which
-    /// LocalAuthentication refuses to enroll against).
+    private func apply(_ s: AppLockState) {
+        if isEnabled != s.enabled { isEnabled = s.enabled }
+        isUnlocked = s.unlocked
+        isAuthenticating = s.authenticating
+    }
+
     func biometryAvailable() -> Bool {
         LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
     }
 
-    /// Human-readable name of the enrolled biometry, for the Settings label
-    /// ("Require Face ID" vs. "Require Touch ID" vs. a passcode-only fallback).
     var biometryTypeName: String {
         let context = LAContext()
         _ = context.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
@@ -60,40 +54,25 @@ final class AppLockService: ObservableObject {
         }
     }
 
-    /// Marks the app as locked. Called when the scene leaves `.active`.
-    /// No-op if locking is off.
+    /// Called when the app goes to the background.
     func lock() {
-        guard isEnabled else { return }
-        isUnlocked = false
+        apply(core.lock())
     }
 
-    /// Prompts Face ID/Touch ID, falling back to the device passcode
-    /// automatically (`.deviceOwnerAuthentication`). Safe to call repeatedly
-    /// — coalesces concurrent calls via `isAuthenticating`.
     func authenticate() async {
-        guard isEnabled, !isUnlocked, !isAuthenticating else { return }
+        guard core.beginAuthentication() else { return }
         isAuthenticating = true
-        defer { isAuthenticating = false }
-
         let context = LAContext()
         context.localizedFallbackTitle = "Use Passcode"
-
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else {
-            // No passcode set on the device at all — LocalAuthentication has
-            // nothing to check against. Don't permanently lock the user out
-            // of their own app over a device configuration this app doesn't
-            // control; just let them in.
-            isUnlocked = true
-            return
-        }
-
-        // LocalAuthentication predates Swift concurrency and only exposes a
-        // completion-handler API — no native `async throws` overload exists.
-        let success = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Lumisound") { success, _ in
-                continuation.resume(returning: success)
+        let available = context.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
+        var success = false
+        if available {
+            success = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Lumisound") { ok, _ in
+                    continuation.resume(returning: ok)
+                }
             }
         }
-        if success { isUnlocked = true }
+        apply(core.finishAuthentication(success: success, policyAvailable: available))
     }
 }
