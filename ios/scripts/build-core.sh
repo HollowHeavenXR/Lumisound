@@ -62,8 +62,10 @@ if [[ " $PLATFORMS " == *" watchos "* ]]; then
   staticlib nightly arm64_32-apple-watchos
   staticlib nightly aarch64-apple-watchos
   staticlib nightly aarch64-apple-watchos-sim
+  staticlib nightly x86_64-apple-watchos-sim
   lipo_sim "$RUST/target/watchos-device/liblumisound_core.a" arm64_32-apple-watchos aarch64-apple-watchos
-  LIBS+=("$RUST/target/watchos-device/liblumisound_core.a" "$RUST/target/aarch64-apple-watchos-sim/release/liblumisound_core.a")
+  lipo_sim "$RUST/target/watchos-sim-universal/liblumisound_core.a" aarch64-apple-watchos-sim x86_64-apple-watchos-sim
+  LIBS+=("$RUST/target/watchos-device/liblumisound_core.a" "$RUST/target/watchos-sim-universal/liblumisound_core.a")
 fi
 
 echo "==> Swift bindings"
