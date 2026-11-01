@@ -194,6 +194,13 @@ jobs:
         if: success() && steps.config.outputs.configuration == 'Release' && github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
+          # A commit that was already tagged by hand (e.g. a major release like
+          # ios/v2.0.0.0) gets no second, auto-numbered release.
+          if git ls-remote --tags origin 'refs/tags/ios/v*' | grep -q "^${GITHUB_SHA}"; then
+            echo "HEAD $GITHUB_SHA is already tagged; not auto-tagging."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Read tags from the remote rather than the checkout: actions/checkout
           # fetches shallow and without tags by default, so a local `git tag -l`
           # here would see nothing and restart versioning from scratch.
