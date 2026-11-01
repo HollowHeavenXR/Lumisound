@@ -3,6 +3,7 @@
 pub mod analysis;
 pub mod decode;
 pub mod lock;
+pub mod opus;
 pub mod tags;
 
 /// Audio file extensions the apps and server accept.

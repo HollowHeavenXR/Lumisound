@@ -96,7 +96,7 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f6
         (Some(n), None) => n as f64 / src_rate as f64,
         _ => 0.0,
     };
-    let mut dec = symphonia::default::get_codecs().make(p, &DecoderOptions::default()).map_err(|e| e.to_string())?;
+    let mut dec = lumisound_media::opus::codecs().make(p, &DecoderOptions::default()).map_err(|e| e.to_string())?;
     let mut actual_start = 0.0;
     if start > 0.0 {
         if let Ok(s) = fmt.seek(SeekMode::Accurate, SeekTo::Time { time: Time::new(start.trunc() as u64, start.fract()), track_id: Some(track.id) }) {

@@ -11,3 +11,7 @@ opt-level = 3
 lto = "thin"
 codegen-units = 8
 strip = true
+
+# opus-decoder 0.1.1 with a fix for an over-wide shift in celt/vq.rs (see the file).
+[patch.crates-io]
+opus-decoder = { path = "vendor/opus-decoder" }

@@ -56,7 +56,7 @@ pub fn mono_pcm(path: &Path, rate: u32, start: Option<f64>, max_len: Option<f64>
     let (mut fmt, id) = open(path)?;
     let params = fmt.tracks().iter().find(|t| t.id == id)?.codec_params.clone();
     let src_rate = params.sample_rate? as f64;
-    let mut dec = symphonia::default::get_codecs().make(&params, &DecoderOptions::default()).ok()?;
+    let mut dec = crate::opus::codecs().make(&params, &DecoderOptions::default()).ok()?;
     if let Some(s) = start.filter(|s| *s > 0.0) {
         let _ = fmt.seek(SeekMode::Accurate, SeekTo::Time { time: Time::new(s.trunc() as u64, s.fract()), track_id: Some(id) });
     }
@@ -120,7 +120,7 @@ pub fn planar(path: &Path, start: Option<f64>, max_len: Option<f64>) -> Option<(
     let (mut fmt, id) = open(path)?;
     let params = fmt.tracks().iter().find(|t| t.id == id)?.codec_params.clone();
     let rate = params.sample_rate?;
-    let mut dec = symphonia::default::get_codecs().make(&params, &DecoderOptions::default()).ok()?;
+    let mut dec = crate::opus::codecs().make(&params, &DecoderOptions::default()).ok()?;
     if let Some(s) = start.filter(|s| *s > 0.0) {
         let _ = fmt.seek(SeekMode::Accurate, SeekTo::Time { time: Time::new(s.trunc() as u64, s.fract()), track_id: Some(id) });
     }

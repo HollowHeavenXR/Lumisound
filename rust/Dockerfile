@@ -10,6 +10,7 @@ COPY bridge bridge
 COPY core core
 COPY media media
 COPY rpc rpc
+COPY vendor vendor
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target \
     CARGO_BUILD_JOBS=3 cargo build --release -p lumisound-bridge && cp target/release/lumisound-bridge /lumisound-bridge
 

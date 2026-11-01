@@ -328,6 +328,16 @@ extension AudioPlayerManager {
         // `effectiveExtension` (not raw `pathExtension`) so this still routes correctly
         // for a track already converted to the Lumisound-exclusive extension — its real
         // container format lives one level in, under the outer ".lms".
+        // Opus/WebM decode natively in the Rust engine (pure-Rust Opus) — no
+        // AVFoundation transcode first.
+        if ["opus", "webm", "ogg"].contains(LumisoundExclusiveExtensionService.effectiveExtension(for: url)),
+           !LumisoundExclusiveExtensionService.isConverted(url) || LumisoundExclusiveExtensionService.hasWarmPlayableCache(for: url),
+           rustEligible(for: url) {
+            tearDownOpusPlayer()
+            let gen = scheduleGeneration &+ 1
+            scheduleGeneration = gen
+            if scheduleWithRustEngine(url: url, startTime: startTime) { return }
+        }
         let fileExt = LumisoundExclusiveExtensionService.effectiveExtension(for: url)
         if ["opus", "webm", "ogg"].contains(fileExt) {
             Task { await transcodeAndSchedule(url: url, startTime: startTime) }
