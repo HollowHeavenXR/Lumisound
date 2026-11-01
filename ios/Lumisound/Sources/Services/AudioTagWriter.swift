@@ -40,7 +40,7 @@ enum AudioTagWriter {
     /// Checked through `effectiveExtension` so a `.lms`-locked file is judged by
     /// the real container inside it rather than by the lock's own extension.
     static func canTag(fileAt url: URL) -> Bool {
-        !untaggableExtensions.contains(
+        tagsCanWrite(path: url.path) || !untaggableExtensions.contains(
             LumisoundExclusiveExtensionService.effectiveExtension(for: url))
     }
 
@@ -59,6 +59,25 @@ enum AudioTagWriter {
         // at info, not warning: for an Ogg/Opus library this is the expected
         // answer for every track, and 29k warnings about an unsupported container
         // buried the telemetry it was competing with.
+        // Rust core (lofty): tags written in place on a copy, any container
+        // (Opus/Ogg included), no re-encode. AVFoundation export below is
+        // only the fallback for files lofty can't parse.
+        let effectiveExt = LumisoundExclusiveExtensionService.effectiveExtension(for: url)
+        if tagsCanWrite(path: url.path) {
+            let copy = url.deletingLastPathComponent().appendingPathComponent(UUID().uuidString).appendingPathExtension(effectiveExt)
+            do {
+                try FileManager.default.copyItem(at: url, to: copy)
+                try tagsWrite(path: copy.path, tags: TrackTags(
+                    title: title, artist: artist, album: album, genre: genre, year: year,
+                    trackNumber: trackNumber.flatMap { $0 > 0 ? UInt32($0) : nil },
+                    sourceTrackId: sourceTrackID.isEmpty ? nil : sourceTrackID, thumbnailUrl: thumbnailURL))
+                appLog("AudioTagWriter: tagged in place (\(effectiveExt), sourceTrackID: \(sourceTrackID))", category: "network")
+                return copy
+            } catch {
+                try? FileManager.default.removeItem(at: copy)
+                appWarn("AudioTagWriter: core tag write failed (\(error.localizedDescription)) — trying AVFoundation export", category: "network")
+            }
+        }
         guard canTag(fileAt: url) else {
             appLog("AudioTagWriter: \(url.lastPathComponent) is a container AVFoundation cannot tag — skipping (sourceTrackID: \(sourceTrackID))", category: "network")
             return nil

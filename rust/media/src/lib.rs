@@ -3,6 +3,7 @@
 pub mod analysis;
 pub mod decode;
 pub mod lock;
+pub mod tags;
 
 /// Audio file extensions the apps and server accept.
 pub const AUDIO_EXTS: &[&str] = &["mp3", "m4a", "aac", "wav", "aif", "aiff", "flac", "opus", "ogg", "caf", "mp4", "m4v", "webm", "mov"];

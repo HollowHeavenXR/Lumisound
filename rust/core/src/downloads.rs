@@ -423,3 +423,45 @@ pub async fn bridge_download_job(method: String, start_url: String, headers: Vec
     })
     .await
 }
+
+// ---- tags --------------------------------------------------------------------------------------
+
+#[derive(uniffi::Record, Clone, Debug, Default)]
+pub struct TrackTags {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub genre: Option<String>,
+    pub year: Option<String>,
+    pub track_number: Option<u32>,
+    pub source_track_id: Option<String>,
+    pub thumbnail_url: Option<String>,
+}
+
+/// Write tags into `path` in place (MP4/M4A, MP3, FLAC, Ogg Opus/Vorbis, WAV, AIFF).
+#[uniffi::export]
+pub fn tags_write(path: String, tags: TrackTags) -> Result<(), crate::error::CoreError> {
+    let f = lumisound_media::tags::Fields {
+        title: tags.title,
+        artist: tags.artist,
+        album: tags.album,
+        genre: tags.genre,
+        year: tags.year,
+        track: tags.track_number,
+        source_id: tags.source_track_id,
+        thumbnail: tags.thumbnail_url,
+    };
+    lumisound_media::tags::write(std::path::Path::new(&path), &f).map_err(crate::error::CoreError::invalid)
+}
+
+#[uniffi::export]
+pub fn tags_can_write(path: String) -> bool {
+    lumisound_media::tags::can_tag(std::path::Path::new(&path))
+}
+
+/// Lumisound's own source id + thumbnail, if this file carries them.
+#[uniffi::export]
+pub fn tags_read_lumisound(path: String) -> TrackTags {
+    let (id, th) = lumisound_media::tags::read_lumisound(std::path::Path::new(&path));
+    TrackTags { source_track_id: id, thumbnail_url: th, ..Default::default() }
+}

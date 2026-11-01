@@ -348,6 +348,8 @@ enum LumisoundExclusiveExtensionService {
     /// file's header promising it "MUST stay plaintext/ffprobe-readable".
     /// See `LumisoundTrackVaultService`'s one-time repair migration.
     static func hasEmbeddedSourceTag(fileURL: URL) async -> Bool {
+        // Rust core (lofty) first; AVFoundation reads older mdta-keyed tags.
+        if tagsReadLumisound(path: playableURL(for: fileURL).path).sourceTrackId != nil { return true }
         let asset = AVURLAsset(url: playableURL(for: fileURL))
         guard let items = try? await asset.load(.metadata) else { return false }
         return items.contains { item in
@@ -371,6 +373,7 @@ enum LumisoundExclusiveExtensionService {
     /// xattr vault tag, specifically for that case: a re-imported copy whose
     /// xattr is gone but whose embedded identity tag isn't.
     static func embeddedSourceTrackID(fileURL: URL) async -> String? {
+        if let id = tagsReadLumisound(path: playableURL(for: fileURL).path).sourceTrackId, !id.isEmpty { return id }
         let asset = AVURLAsset(url: playableURL(for: fileURL))
         guard let items = try? await asset.load(.metadata) else { return nil }
         for item in items {
@@ -392,6 +395,7 @@ enum LumisoundExclusiveExtensionService {
     /// repair pass instead of staying permanently missing artwork despite
     /// `hasEmbeddedSourceTag` alone now reporting `true` for them.
     static func hasEmbeddedThumbnailTag(fileURL: URL) async -> Bool {
+        if tagsReadLumisound(path: playableURL(for: fileURL).path).thumbnailUrl != nil { return true }
         let asset = AVURLAsset(url: playableURL(for: fileURL))
         guard let items = try? await asset.load(.metadata) else { return false }
         return items.contains { item in

@@ -694,7 +694,7 @@ extension StreamingService {
         }
 
         let (destURL, alreadyComplete) = await resolveDownloadDestination(
-            preferred: importDir.appendingPathComponent("\(safeName).m4a"),
+            preferred: importDir.appendingPathComponent("\(safeName).\(finalRawURL.pathExtension.isEmpty ? "m4a" : finalRawURL.pathExtension)"),
             sourceTrackID: sourceTrackID
         )
         if alreadyComplete {
