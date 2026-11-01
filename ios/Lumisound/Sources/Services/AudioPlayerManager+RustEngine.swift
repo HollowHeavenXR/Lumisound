@@ -238,7 +238,15 @@ extension AudioPlayerManager {
         rustNextDeckID = nil
         rustNextPath = nil
         let equalPower = (audioSettings.crossfadeCurve ?? .equalPower) == .equalPower
-        guard let id = try? Self.rust.crossfadeTo(path: path, secs: fade, startSecs: 0, gainDb: 0, equalPower: equalPower) else {
+        // Smart crossfade beat-matches: the incoming track runs at the
+        // outgoing tempo through the overlap, then eases to its own.
+        var tempoMatch = 1.0
+        if audioSettings.smartCrossfadeEnabled,
+           let oBPM = currentSong.flatMap({ bpmCache[$0.id] }), let iBPM = bpmCache[nextSong.id] {
+            tempoMatch = Lumisound.beatmatchRatio(outgoingBpm: oBPM, incomingBpm: iBPM)
+        }
+        guard let id = try? Self.rust.crossfadeTo(path: path, secs: fade, startSecs: 0, gainDb: 0,
+                                                  equalPower: equalPower, tempoMatch: tempoMatch) else {
             skipToNext(); return
         }
         rustDeckID = id
@@ -262,7 +270,7 @@ extension AudioPlayerManager {
             guard let self, self.scheduleGeneration == gen else { return }
             self.isCrossfading = false
         }
-        appLog(String(format: "Rust engine: crossfade %.1fs → %@", fade, nextSong.displayName), category: "audio")
+        appLog(String(format: "Rust engine: crossfade %.1fs (tempo x%.3f) → %@", fade, tempoMatch, nextSong.displayName), category: "audio")
     }
 
     // MARK: Engine events

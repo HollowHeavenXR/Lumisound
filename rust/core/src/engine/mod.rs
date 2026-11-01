@@ -135,11 +135,19 @@ impl AudioEngine {
     }
 
     /// Crossfade from the current track into `path` over `secs`.
-    pub fn crossfade_to(&self, path: String, secs: f64, start_secs: f64, gain_db: f32, equal_power: bool) -> Result<u64, EngineError> {
-        let d = self.open(&path, start_secs, gain_db)?;
+    /// `tempo_match` (1 = off) beat-matches: the incoming track plays at that
+    /// tempo ratio (pitch kept) for the first 60% of the fade, so its beats
+    /// run at the outgoing track's tempo, then eases to its own tempo by the
+    /// end. Use `beatmatch_ratio` to pick it.
+    pub fn crossfade_to(&self, path: String, secs: f64, start_secs: f64, gain_db: f32, equal_power: bool, tempo_match: f64) -> Result<u64, EngineError> {
+        let frames = (secs.max(0.0) * self.output_rate() as f64) as u64;
+        let nudge = ((tempo_match - 1.0).abs() > 1e-4 && frames > 0).then(|| {
+            let hold = frames * 3 / 5;
+            deck::Nudge { start: tempo_match.clamp(0.9, 1.1), hold_frames: hold, ramp_frames: frames - hold }
+        });
+        let d = self.open_with(&path, start_secs, gain_db, nudge)?;
         let id = d.id;
         *self.current.lock().unwrap() = Some((path, gain_db));
-        let frames = (secs.max(0.0) * self.output_rate() as f64) as u64;
         self.send(Cmd::Crossfade { deck: Box::new(d), frames, equal_power });
         Ok(id)
     }
@@ -256,6 +264,24 @@ impl AudioEngine {
     }
 }
 
+/// Tempo ratio for a beat-matched crossfade into a track at `incoming_bpm`
+/// from one at `outgoing_bpm`: the incoming track runs at the outgoing tempo.
+/// Half/double-time pairs (e.g. 70 → 140) match on the nearer multiple.
+/// Returns 1 (plain crossfade) when either BPM is unknown or the needed
+/// change is over 8%.
+#[uniffi::export]
+pub fn beatmatch_ratio(outgoing_bpm: f64, incoming_bpm: f64) -> f64 {
+    if !(outgoing_bpm > 0.0 && incoming_bpm > 0.0) {
+        return 1.0;
+    }
+    let best = [0.5, 1.0, 2.0]
+        .iter()
+        .map(|m| outgoing_bpm * m / incoming_bpm)
+        .min_by(|a, b| (a - 1.0).abs().total_cmp(&(b - 1.0).abs()))
+        .unwrap_or(1.0);
+    if (best - 1.0).abs() <= 0.08 { best } else { 1.0 }
+}
+
 /// Effective EQ gains: the user's bands (when enabled) plus bass boost on
 /// the 32/64 Hz bands, clamped to the engine's range.
 #[uniffi::export]
@@ -274,9 +300,13 @@ pub fn effective_eq_gains(bands: Vec<f32>, eq_enabled: bool, bass_boost_enabled:
 
 impl AudioEngine {
     fn open(&self, path: &str, start: f64, gain_db: f32) -> Result<deck::Deck, EngineError> {
+        self.open_with(path, start, gain_db, None)
+    }
+
+    fn open_with(&self, path: &str, start: f64, gain_db: f32, nudge: Option<deck::Nudge>) -> Result<deck::Deck, EngineError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (speed, pitch) = *self.tempo.lock().unwrap();
-        deck::open(id, path, start, self.output_rate(), db_to_lin(gain_db), speed, pitch).map_err(|m| EngineError::Open { message: m })
+        deck::open(id, path, start, self.output_rate(), db_to_lin(gain_db), speed, pitch, nudge).map_err(|m| EngineError::Open { message: m })
     }
 
     fn send(&self, c: Cmd) {
@@ -491,6 +521,48 @@ mod tests {
     }
 
     #[test]
+    fn beatmatch_ratio_picks_nearest_multiple() {
+        assert_eq!(beatmatch_ratio(120.0, 0.0), 1.0);
+        assert!((beatmatch_ratio(124.0, 120.0) - 124.0 / 120.0).abs() < 1e-9);
+        assert!((beatmatch_ratio(70.0, 136.0) - 140.0 / 136.0).abs() < 1e-9);
+        assert_eq!(beatmatch_ratio(100.0, 128.0), 1.0);
+    }
+
+    #[test]
+    fn beatmatched_crossfade_tracks_position_and_returns_to_native_tempo() {
+        let d = std::env::temp_dir().join(format!("engine-bm-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&d).unwrap();
+        let (a, b) = (d.join("a.wav"), d.join("b.wav"));
+        wav(&a, 1.0, 440.0, 48_000);
+        wav(&b, 6.0, 440.0, 48_000);
+        let l = Arc::new(L(Mutex::new(vec![])));
+        let e = AudioEngine::new(l.clone());
+        e.load(a.to_string_lossy().into(), 0.0, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        e.play();
+        pump(&e, 0.3);
+        // 1 s fade at 1.08x: 0.6 s held + 0.4 s easing back = 0.6*1.08 + 0.4*1.04.
+        e.crossfade_to(b.to_string_lossy().into(), 1.0, 0.0, 0.0, true, 1.08).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        let mut out = pump(&e, 1.0);
+        // pump renders whole 1024-frame chunks; integrate the planned tempo.
+        let played = |secs: f64| ((secs * 48_000.0) as usize / 1024 * 1024) as f64 / 48_000.0;
+        let t = played(1.0);
+        let r = t - 0.6;
+        let expect = 0.6 * 1.08 + r + 0.08 * (r - r * r / 0.8);
+        assert!((e.position() - expect).abs() < 0.01, "pos {} vs {expect}", e.position());
+        // Afterwards it runs at 1x: output time = track time.
+        out.extend(pump(&e, 2.0));
+        let after = expect + played(2.0);
+        assert!((e.position() - after).abs() < 0.01, "pos {} vs {after}", e.position());
+        // Steady tone after the fade, no seam where stretching stops.
+        let tail = &out[out.len() - 48_000 * 2..];
+        let loud = tail.iter().filter(|s| s.abs() > 0.1).count() / 2;
+        assert!(loud > 40_000, "tail loud frames {loud}");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
     fn crossfades_without_a_gap() {
         let d = std::env::temp_dir().join(format!("engine-xf-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&d).unwrap();
@@ -503,7 +575,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(150));
         e.play();
         let mut out = pump(&e, 0.4);
-        let ib = e.crossfade_to(b.to_string_lossy().into(), 0.3, 0.0, 0.0, true).unwrap();
+        let ib = e.crossfade_to(b.to_string_lossy().into(), 0.3, 0.0, 0.0, true, 1.0).unwrap();
         std::thread::sleep(Duration::from_millis(150));
         out.extend(pump(&e, 0.6));
         std::thread::sleep(Duration::from_millis(60));

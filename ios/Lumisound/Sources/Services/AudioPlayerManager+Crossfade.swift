@@ -129,29 +129,17 @@ extension AudioPlayerManager {
         let outgoingBeatMatch = usingPrimaryNode ? primaryBeatMatch : secondaryBeatMatch
         let incomingBeatMatch = usingPrimaryNode ? secondaryBeatMatch : primaryBeatMatch
 
-        // True beatmatching (Smart Auto Crossfade only): nudge both tracks'
-        // tempos toward their midpoint for the duration of the overlap, then
-        // ease the incoming track back to its native tempo as the fade
-        // completes. Only attempted when Smart Crossfade is on, both BPMs are
-        // known, and the required adjustment is modest (±8%) — outside that
-        // range (or with Smart Crossfade off) both rates stay at 1.0 for a
-        // plain volume crossfade.
+        // Beat-matching (Smart Auto Crossfade only): the incoming track runs
+        // at the outgoing track's tempo through the overlap, then eases back
+        // to its own as the fade completes. The ratio (half/double-time
+        // aware, 1.0 past ±8%) comes from the Rust core, as on the Rust engine.
         let outgoingBPM = currentSong.flatMap { bpmCache[$0.id] }
         let incomingBPM = bpmCache[nextSong.id]
         var incomingRate: Float = 1.0
-        if smartCrossfade, let oBPM = outgoingBPM, let iBPM = incomingBPM, oBPM > 0, iBPM > 0 {
-            let target = (oBPM + iBPM) / 2
-            let oRatio = target / oBPM
-            let iRatio = target / iBPM
-            if (0.92...1.08).contains(oRatio), (0.92...1.08).contains(iRatio) {
-                setBeatMatchRate(outgoingBeatMatch, Float(oRatio))
-                incomingRate = Float(iRatio)
-            } else {
-                setBeatMatchRate(outgoingBeatMatch, 1.0)
-            }
-        } else {
-            setBeatMatchRate(outgoingBeatMatch, 1.0)
+        if smartCrossfade, let oBPM = outgoingBPM, let iBPM = incomingBPM {
+            incomingRate = Float(Lumisound.beatmatchRatio(outgoingBpm: oBPM, incomingBpm: iBPM))
         }
+        setBeatMatchRate(outgoingBeatMatch, 1.0)
         setBeatMatchRate(incomingBeatMatch, incomingRate)
 
         incoming.volume = 0

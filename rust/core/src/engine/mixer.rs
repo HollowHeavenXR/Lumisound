@@ -271,7 +271,7 @@ impl Mixer {
                     let fi = shape(self.fade_in.next(), self.equal_power) * d.gain;
                     l += a * fi;
                     r += b * fi;
-                    d.frames_played += 1;
+                    d.advance();
                 }
             }
             let mut fade_done = false;
@@ -280,7 +280,7 @@ impl Mixer {
                 if d.ring.slots() >= 2 {
                     l += d.ring.pop().unwrap_or(0.0) * fg;
                     r += d.ring.pop().unwrap_or(0.0) * fg;
-                    d.frames_played += 1;
+                    d.advance();
                 }
                 fade_done = ramp.done() || d.drained();
             }

@@ -38,13 +38,52 @@ pub struct Deck {
     pub shared: Arc<DeckShared>,
     /// Per-track gain (ReplayGain / normalization), linear.
     pub gain: f32,
-    /// Playback speed (track seconds per output second).
+    /// Playback speed (track seconds per output second) the deck opened with.
     pub speed: f64,
+    /// (output frames, track seconds per output frame) runs from the decode
+    /// thread, so position stays exact while the rate changes.
+    segs: rtrb::Consumer<(u64, f64)>,
+    seg_left: u64,
+    seg_step: f64,
+    track_secs: f64,
+}
+
+/// Tempo match for a beat-matched crossfade: play at `start` × speed, hold for
+/// `hold_frames` output frames, then ease linearly to 1 over `ramp_frames`.
+#[derive(Clone, Copy, Debug)]
+pub struct Nudge {
+    pub start: f64,
+    pub hold_frames: u64,
+    pub ramp_frames: u64,
+}
+
+impl Nudge {
+    fn at(&self, frame: u64) -> f64 {
+        if frame <= self.hold_frames {
+            return self.start;
+        }
+        let t = (frame - self.hold_frames) as f64 / self.ramp_frames.max(1) as f64;
+        if t >= 1.0 { 1.0 } else { self.start + (1.0 - self.start) * t }
+    }
 }
 
 impl Deck {
     pub fn position(&self) -> f64 {
-        self.start_offset + self.frames_played as f64 / self.out_rate as f64 * self.speed
+        self.start_offset + self.track_secs
+    }
+
+    /// One output frame was played.
+    #[inline]
+    pub fn advance(&mut self) {
+        self.frames_played += 1;
+        if self.seg_left == 0 {
+            if let Ok((n, step)) = self.segs.pop() {
+                self.seg_left = n;
+                self.seg_step = step;
+            }
+        }
+        self.seg_left = self.seg_left.saturating_sub(1);
+        self.track_secs += self.seg_step;
     }
 
     pub fn duration(&self) -> f64 {
@@ -69,7 +108,7 @@ impl Drop for Deck {
 
 /// Open `path` and start decoding from `start` seconds. Returns once the
 /// container is probed (fails fast on unreadable files).
-pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f64, pitch_semitones: f64) -> Result<Deck, String> {
+pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f64, pitch_semitones: f64, nudge: Option<Nudge>) -> Result<Deck, String> {
     let speed = speed.clamp(0.25, 4.0);
     let pitch = 2f64.powf(pitch_semitones.clamp(-24.0, 24.0) / 12.0);
     // Pitch: resample to out_rate·p and play at out_rate. Tempo: WSOLA by s/p.
@@ -109,19 +148,21 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f6
     }
     let (prod, cons) = rtrb::RingBuffer::<f32>::new(RING_SAMPLES * (out_rate as usize).div_ceil(48_000).max(1));
     let shared = Arc::new(DeckShared { stop: AtomicBool::new(false), eof: AtomicBool::new(false), failed: AtomicBool::new(false), duration_bits: AtomicU64::new(duration.to_bits()) });
+    let (seg_prod, segs) = rtrb::RingBuffer::<(u64, f64)>::new(8192);
     let sh = shared.clone();
     let tid = track.id;
+    let tempo = Tempo { stretch_ratio, speed, out_rate, nudge };
     std::thread::Builder::new()
         .name("lumisound-deck".into())
         .spawn(move || {
-            let r = decode_loop(&mut *fmt, &mut *dec, tid, src_rate, target_rate, stretch_ratio, prod, &sh);
+            let r = decode_loop(&mut *fmt, &mut *dec, tid, src_rate, target_rate, tempo, prod, seg_prod, &sh);
             if r.is_err() {
                 sh.failed.store(true, Ordering::Release);
             }
             sh.eof.store(true, Ordering::Release);
         })
         .map_err(|e| e.to_string())?;
-    Ok(Deck { id, path: path.to_string(), start_offset: actual_start.max(0.0), frames_played: 0, out_rate, ring: cons, shared, gain, speed })
+    Ok(Deck { id, path: path.to_string(), start_offset: actual_start.max(0.0), frames_played: 0, out_rate, ring: cons, shared, gain, speed, segs, seg_left: 0, seg_step: speed / out_rate as f64, track_secs: 0.0 })
 }
 
 fn push_all(prod: &mut rtrb::Producer<f32>, data: &[f32], sh: &DeckShared) -> bool {
@@ -147,29 +188,66 @@ fn push_all(prod: &mut rtrb::Producer<f32>, data: &[f32], sh: &DeckShared) -> bo
     true
 }
 
+struct Tempo {
+    stretch_ratio: f64,
+    speed: f64,
+    out_rate: u32,
+    nudge: Option<Nudge>,
+}
+
+fn push_seg(segs: &mut rtrb::Producer<(u64, f64)>, frames: usize, step: f64, sh: &DeckShared) -> bool {
+    if frames == 0 {
+        return true;
+    }
+    let mut v = (frames as u64, step);
+    loop {
+        match segs.push(v) {
+            Ok(()) => return true,
+            Err(rtrb::PushError::Full(back)) => {
+                if sh.stop.load(Ordering::Acquire) {
+                    return false;
+                }
+                v = back;
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    }
+}
+
 fn decode_loop(
     fmt: &mut dyn symphonia::core::formats::FormatReader,
     dec: &mut dyn symphonia::core::codecs::Decoder,
     track_id: u32,
     src_rate: u32,
     out_rate: u32,
-    stretch_ratio: f64,
+    tempo: Tempo,
     mut prod: rtrb::Producer<f32>,
+    mut segs: rtrb::Producer<(u64, f64)>,
     sh: &DeckShared,
 ) -> Result<(), String> {
-    let mut wsola = super::stretch::Wsola::new(stretch_ratio);
+    let mut wsola = super::stretch::Wsola::new(tempo.stretch_ratio * tempo.nudge.map_or(1.0, |n| n.start));
+    let mut out_frames: u64 = 0;
     let mut stretched: Vec<f32> = Vec::with_capacity(CHUNK * 8);
     let mut resampler = if src_rate != out_rate { Some(FftFixedIn::<f32>::new(src_rate as usize, out_rate as usize, CHUNK, 2, 2).map_err(|e| e.to_string())?) } else { None };
     let mut pending: [Vec<f32>; 2] = [Vec::with_capacity(CHUNK * 2), Vec::with_capacity(CHUNK * 2)];
     let mut sbuf: Option<SampleBuffer<f32>> = None;
     let mut inter = Vec::with_capacity(CHUNK * 4);
     let mut emit = |data: &[f32], prod: &mut rtrb::Producer<f32>| -> bool {
-        if wsola.is_identity() {
-            return push_all(prod, data, sh);
-        }
-        stretched.clear();
-        wsola.process(data, &mut stretched);
-        push_all(prod, &stretched, sh)
+        let n = tempo.nudge.map_or(1.0, |n| n.at(out_frames));
+        wsola.set_ratio(tempo.stretch_ratio * n);
+        let step = tempo.speed * n / tempo.out_rate as f64;
+        let out: &[f32] = if wsola.can_bypass() {
+            data
+        } else {
+            stretched.clear();
+            wsola.process(data, &mut stretched);
+            if wsola.is_identity() {
+                wsola.drain_identity(&mut stretched);
+            }
+            &stretched
+        };
+        out_frames += (out.len() / 2) as u64;
+        push_seg(&mut segs, out.len() / 2, step, sh) && push_all(prod, out, sh)
     };
     let mut flush = |pending: &mut [Vec<f32>; 2], rs: &mut Option<FftFixedIn<f32>>, prod: &mut rtrb::Producer<f32>, inter: &mut Vec<f32>, last: bool| -> bool {
         match rs {

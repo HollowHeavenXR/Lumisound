@@ -19,21 +19,51 @@ pub struct Wsola {
     prev: Vec<[f32; 2]>,
     window: Vec<f32>,
     first: bool,
+    /// Start (in `input`) of the last segment used, for `drain_identity`.
+    last_best: usize,
 }
 
 impl Wsola {
     pub fn new(ratio: f64) -> Self {
         let window = (0..WIN).map(|i| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / WIN as f32).cos()).collect();
-        Self { ratio: ratio.clamp(0.25, 4.0), input: Vec::new(), pos: 0.0, prev: vec![[0.0; 2]; HOP], window, first: true }
+        Self { ratio: ratio.clamp(0.25, 4.0), input: Vec::new(), pos: 0.0, prev: vec![[0.0; 2]; HOP], window, first: true, last_best: 0 }
     }
 
     pub fn is_identity(&self) -> bool {
         (self.ratio - 1.0).abs() < 1e-6
     }
 
+    /// Change the ratio mid-stream (beat-matched crossfades ramp it).
+    pub fn set_ratio(&mut self, ratio: f64) {
+        self.ratio = ratio.clamp(0.25, 4.0);
+    }
+
+    /// At ratio 1 with nothing buffered the input passes straight through.
+    pub fn can_bypass(&self) -> bool {
+        self.is_identity() && self.input.is_empty()
+    }
+
+    /// Leave stretching without a seam: the pending tail plus the raw
+    /// continuation equals the source (Hann halves at 50% overlap sum to 1),
+    /// so emit `input[last_best + HOP..]` verbatim and reset.
+    pub fn drain_identity(&mut self, out: &mut Vec<f32>) {
+        let from = if self.first { self.pos as usize } else { self.last_best + HOP };
+        for f in self.input.iter().skip(from) {
+            out.push(f[0]);
+            out.push(f[1]);
+        }
+        self.input.clear();
+        self.pos = 0.0;
+        self.first = true;
+        self.last_best = 0;
+        for p in self.prev.iter_mut() {
+            *p = [0.0; 2];
+        }
+    }
+
     /// Feed interleaved stereo, append stretched interleaved stereo to `out`.
     pub fn process(&mut self, interleaved: &[f32], out: &mut Vec<f32>) {
-        if self.is_identity() {
+        if self.can_bypass() {
             out.extend_from_slice(interleaved);
             return;
         }
@@ -67,6 +97,7 @@ impl Wsola {
                 best
             };
             self.first = false;
+            self.last_best = best;
             // Overlap-add: first half with the previous tail, keep the second half.
             for i in 0..HOP {
                 let w_in = self.window[i];
@@ -82,12 +113,12 @@ impl Wsola {
             // The natural continuation of the chosen segment is `best + HOP`;
             // advance the analysis position by the stretched hop.
             self.pos += HOP as f64 * self.ratio;
-            let _ = best;
             // Drop consumed input to bound memory.
             let drop = (self.pos as usize).saturating_sub(SEEK + WIN);
             if drop > 8192 {
                 self.input.drain(..drop);
                 self.pos -= drop as f64;
+                self.last_best -= drop;
             }
         }
     }
