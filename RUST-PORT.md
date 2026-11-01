@@ -90,17 +90,19 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [x] crossfade via engine.crossfade_to (equal-power/linear, smart plan length)
       [x] speed/pitch (WSOLA time-stretch + pitch resample), 8D rotation, tremolo, visualizer tap,
           spectrum FFT in Rust
-      [ ] beat-match rate during smart crossfade, vibrato, spatial/head tracking (AV fallback)
+      [x] vibrato (modulated delay), spatial audio + head tracking (binaural: Woodworth ITD + Brown–Duda head shadow)
+      [ ] beat-match rate nudge during smart crossfade (fade itself works)
       [x] ReplayGain/normalization applied in-engine (set_track_gain)
       [x] streams play on the engine once downloaded; Opus via its transcoded AAC copy
       [x] music haptics (fed through the visualizer tap)
-      [ ] then delete the AVAudioEngine graph (EngineConfig/SpatialAudio/Effects nodes)
+      [ ] AVAudioEngine/AVPlayer remain only as fallback (Apple Music ipod-library:// items can only be read by
+          AVFoundation; decode failures; Settings toggle off)
 - [ ] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files,
       silence trim, spectral EQ, pitch contour, normalization)
       [x] media::decode (symphonia) + media::analysis (DSP shared with bridge);
           core analysis.rs: decode_mono, bpm (cached), key, waveform, transition, spectral
       [x] BPMAnalyzerService on the core (AVAssetReader only for Opus/WebM)
-      [ ] Opus decode in Rust (symphonia has none; options: libopus static via audiopus_sys)
+      [x] Opus/WebM decode in Rust (pure-Rust opus-decoder as a symphonia codec; vendored fix)
       [x] NormalizationService -> core normalization_gain (BS.1770, = ffmpeg ebur128 on test)
       [x] beat grid, acoustic fingerprint (+similarity), silence trim, pitch contour/hum match
       [x] corrupt/truncated check (core validate_audio; AVAudioFile only for Opus)
