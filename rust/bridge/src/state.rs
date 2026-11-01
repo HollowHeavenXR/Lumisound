@@ -67,6 +67,13 @@ impl std::ops::Deref for AppState {
 impl AppState {
     pub async fn new(cfg: Config) -> anyhow::Result<Self> {
         let db = crate::db::connect(&cfg).await?;
+        // Idempotent schema (CREATE/ALTER ... IF NOT EXISTS), run on every
+        // start like the Python bridge's init_db, so new columns (e.g.
+        // ios_user_settings.appearance_json) reach existing databases.
+        match crate::db::migrate(&db, include_str!("../schema.sql")).await {
+            Ok(()) => tracing::info!("schema up to date"),
+            Err(e) => tracing::error!("schema migration failed (serving anyway): {e}"),
+        }
         if let Err(e) = crate::db::ensure_helpers(&db).await {
             tracing::error!("could not install SQL helpers: {e}");
         }

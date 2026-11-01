@@ -13,7 +13,7 @@ services:
     restart: unless-stopped
     network_mode: "host"
     environment:
-      - PORT=4417
+      - PORT=4416
 
   ios-bridge:
     restart: always
@@ -48,7 +48,7 @@ services:
       # move off Mel. Override in .env if local ASR is ever wanted again.
       - LUMISOUND_WHISPER_ENABLED=${LUMISOUND_WHISPER_ENABLED:-0}
       - PORT=8002
-      - YTDLP_POT_PROVIDER_URL=http://127.0.0.1:4417
+      - YTDLP_POT_PROVIDER_URL=http://127.0.0.1:4416
       - DB_HOST=192.168.1.87
       - DB_PORT=5432
       - DB_USER=botuser
