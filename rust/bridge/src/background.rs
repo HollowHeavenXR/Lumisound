@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-pub const PORTED: &[&str] = &["media_backfill", "duplicate_scan", "storage_quota", "weekly_mix", "artist_image", "rooms", "subscriptions"];
+pub const PORTED: &[&str] = &["media_backfill", "duplicate_scan", "storage_quota", "weekly_mix", "artist_image", "rooms", "subscriptions", "log_retention"];
 
 pub fn spawn_all(st: &AppState) {
     let enabled: Vec<String> = match std::env::var("RUST_LOOPS") {
@@ -46,6 +46,10 @@ pub fn spawn_all(st: &AppState) {
     if on("subscriptions") {
         let st = st.clone();
         tokio::spawn(async move { crate::routes::integrations::subscription_loop(st).await });
+    }
+    if on("log_retention") {
+        let st = st.clone();
+        tokio::spawn(async move { log_retention_loop(st).await });
     }
     tracing::info!("background loops enabled: {enabled:?}");
 }
@@ -485,6 +489,64 @@ async fn artist_image_loop(st: AppState) {
             }
             let r = crate::routes::discovery::resolve_artist_image(&st, &name, st.cfg.youtube_api_key.as_deref().unwrap_or("")).await;
             crate::routes::discovery::upsert_artist_image(&st, &key, &r).await;
+        }
+    }
+}
+
+// ---- log retention (Python _app_logs/_event_log/_extra_logs janitors) ------------------------
+
+const RETENTION: &[(&str, &str, i32)] = &[
+    ("ios_app_logs", "created_at", 14),
+    ("ios_app_event_log", "created_at", 30),
+    ("ios_download_log", "created_at", 60),
+    ("ios_sync_log", "created_at", 30),
+    ("ios_stream_log", "created_at", 30),
+    ("ios_search_log", "searched_at", 30),
+];
+
+/// Daily prune of log-like tables and old notifications; each table on its
+/// own so one failure doesn't stop the rest.
+async fn log_retention_loop(st: AppState) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(86400)).await;
+        for (table, col, days) in RETENTION {
+            match sqlx::query(&format!("DELETE FROM {table} WHERE {col} < NOW() - make_interval(days => $1)")).bind(days).execute(&st.db).await {
+                Ok(r) if r.rows_affected() > 0 => tracing::info!("logs janitor: pruned {} rows from {table} older than {days} days", r.rows_affected()),
+                Ok(_) => {}
+                Err(e) => tracing::error!("logs janitor: prune failed for {table}: {e}"),
+            }
+        }
+        for (sql, what) in [
+            ("DELETE FROM ios_notifications WHERE read_at IS NOT NULL AND read_at < NOW() - make_interval(days => 14)", "read"),
+            ("DELETE FROM ios_notifications WHERE read_at IS NULL AND created_at < NOW() - make_interval(days => 90)", "stale unread"),
+        ] {
+            match sqlx::query(sql).execute(&st.db).await {
+                Ok(r) if r.rows_affected() > 0 => tracing::info!("logs janitor: pruned {} {what} notification(s)", r.rows_affected()),
+                Ok(_) => {}
+                Err(e) => tracing::error!("logs janitor: notification prune failed: {e}"),
+            }
+        }
+    }
+}
+
+/// `cleanup_orphan_temp_dirs`: download temp dirs (dl_*) older than an hour,
+/// plus stale stem/lyrics scratch, left behind by a crash or restart.
+pub fn cleanup_orphan_temp_dirs() {
+    let cutoff = std::time::SystemTime::now() - Duration::from_secs(3600);
+    let Ok(rd) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with("dl_") || name.starts_with("lumisound-stems-") || name.starts_with("lyr-") || name.starts_with("fp-")) {
+            continue;
+        }
+        let old = e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < cutoff);
+        if old {
+            let p = e.path();
+            let r = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+            match r {
+                Ok(()) => tracing::info!("Cleaned orphan temp entry: {}", p.display()),
+                Err(err) => tracing::warn!("Failed to clean {}: {err}", p.display()),
+            }
         }
     }
 }

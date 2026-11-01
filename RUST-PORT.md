@@ -42,9 +42,9 @@ responses against Python, then flip. When the list below is all checked, delete 
 - [x] 7. Integrations: subscriptions (YouTube), podcasts, scrobble (last.fm/libre.fm), Discord
         webhook + RPC config + verification, push tokens + APNs/FCM, notifications,
         announcements, webhooks, gif search, ytdlp-cookies, API keys
-- [ ] 8. AI (Gemini over HTTP): intelligence/*, lyrics (+ transcribe), ai-dj, aria apis
-- [ ] 9. Admin + logs: /admin*, /bug-report, /internal/logs, /api/log-event, janitors
-- [ ] 10. Stem separation (spawn demucs CLI, same wrapper pattern as yt-dlp), fingerprint (fpcalc)
+- [x] 8. AI (Gemini over HTTP): intelligence/*, lyrics (+ transcribe), ai-dj, aria apis
+- [x] 9. Admin + logs: /admin*, /bug-report, /internal/logs, /api/log-event, janitors
+- [x] 10. Stem separation (spawn demucs CLI, same wrapper pattern as yt-dlp), fingerprint (fpcalc)
 - [ ] 11. Delete Python; Dockerfile without Python app (keep yt-dlp + demucs CLIs)
 
 ## App core (Swift Services → rust/core)
@@ -80,12 +80,20 @@ responses against Python, then flip. When the list below is all checked, delete 
   ~/Projects/web-stack/docker-compose.yml but NOT deployed: the auto-mode
   classifier blocks production deploys, so the user has to run
   `cd ~/Projects/web-stack && docker compose up -d ios-bridge-legacy ios-bridge`.
-  Compose backup: scratchpad compose.before-lumi-rust.yml.
+  (The scratchpad compose backup was lost in a 2026-11-01 reboot; rollback =
+  point `ios-bridge` back at `build: ../Lumisound/ios-bridge` on :8002 and drop
+  `ios-bridge-legacy`. Prod still runs the old Python image until go-live.)
+- 2026-11-01 (user): go live with the Rust bridge ONLY after the Rust-core app
+  is verified and released on GitHub. After all phases, tag one big release
+  (app functionally all-Rust). App work happens on branch `rust-app-core`
+  (CI dispatch builds there never tag); merging to main cuts the release.
 - Test rig (isolated): network lumi-test (internal) + lumi-test-out; containers
   lumi_test_pg (tmpfs copy of discord_music_gws, webhooks/push tokens blanked),
-  lumi_py_test, lumi_rs_test. Scripts in the session scratchpad harness/:
-  restart.sh (recreate bridges), run.sh <cases.json> (diff py vs rs), dl.py.
-  Test account: rusttest / operator session minted in the copy (tokens.json).
+  lumi_py_test, lumi_rs_test. Harness lives in rust/tests/parity: setup.sh
+  (whole rig from scratch), restart.sh (recreate bridges), run.sh <cases.json>
+  (diff py vs rs), jobs.py (transcribe / stems / fingerprint end-to-end).
+  Test accounts rusttest + rustmade1, operator session minted in the copy
+  (tokens.json, gitignored).
 - Rust owns /ws/live. Python relays its live events to Rust via LIVE_PUSH_URL
   (POST /internal/live-push, X-Internal-Token = sha256(IOS_JWT_SECRET|live-push)).
 - Fixed vs Python: purpose tokens (2FA-pending, OAuth state) no longer work as
@@ -110,5 +118,14 @@ responses against Python, then flip. When the list below is all checked, delete 
   media_backfill / duplicate_scan / storage_quota run in Rust (RUST_LOOPS), Python skips
   them via LEGACY_DISABLE_LOOPS (patched lifespan).
 - serde_json preserve_order is on: JSON keys keep insertion order like Python dicts.
+- Groups 8-10: Gemini over REST (rust/bridge/src/gemini.rs; prompts/schemas extracted
+  verbatim to prompts.json; cache keys = sha256 of Python-identical json.dumps so the
+  Python and Rust bridges share ios_intelligence_cache). Lyrics transcription keeps
+  whole-track-then-windowed-repair. Stems: Demucs htdemucs spawned as a CLI (torch 2.3.1
+  + demucs 4.0.1 + baked weights in the Rust image), same pattern as yt-dlp.
+- Fixed vs Python: request bodies were capped at axum's 2 MB default (Python had none) —
+  now 256 MB globally. serde_json float_roundtrip on (exact decimals in jsonb passthrough).
+- Remaining 422 diffs are only pydantic's extra `input`/`ctx`/`type` fields in
+  validation errors; the apps read `detail` text only on 4xx.
 - Known schema quirk (unchanged): ios_user_music_metadata.id is the content hash alone, so
   two users uploading the same file share one row (second upload rewrites the first's).

@@ -459,7 +459,7 @@ struct UploadQ {
     has_artwork: bool,
 }
 
-fn truncate_bytes(s: &str, max: usize) -> String {
+pub fn truncate_bytes(s: &str, max: usize) -> String {
     let mut end = s.len().min(max);
     while !s.is_char_boundary(end) {
         end -= 1;

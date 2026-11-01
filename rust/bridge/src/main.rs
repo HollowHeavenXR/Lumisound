@@ -17,6 +17,7 @@ mod config;
 mod db;
 mod email;
 mod error;
+mod gemini;
 mod extract;
 mod files;
 mod lock;
@@ -45,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = config::Config::from_env();
     let state = state::AppState::new(cfg).await?;
+    tokio::task::spawn_blocking(background::cleanup_orphan_temp_dirs);
     state.spawn_background();
 
     let app = routes::router(state.clone());

@@ -61,19 +61,17 @@ pub fn py_iso(t: &chrono::NaiveDateTime) -> String {
 }
 
 /// Insert into ios_app_event_log; never fails the caller.
-pub async fn log_event(
-    pool: &PgPool,
-    category: &str,
-    event: &str,
-    user_id: Option<&str>,
-    level: &str,
-    message: &str,
-    detail: Option<Value>,
-) {
+pub async fn log_event(pool: &PgPool, category: &str, event: &str, user_id: Option<&str>, level: &str, message: &str, detail: Option<Value>) {
+    log_event_from(pool, "bridge", category, event, user_id, level, message, detail).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn log_event_from(pool: &PgPool, source: &str, category: &str, event: &str, user_id: Option<&str>, level: &str, message: &str, detail: Option<Value>) {
     let r = sqlx::query(
         "INSERT INTO ios_app_event_log (source, user_id, category, event, level, message, detail) \
-         VALUES ('bridge', $1, $2, $3, $4, $5, $6)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
+    .bind(truncate(source, 20))
     .bind(user_id.map(|u| truncate(u, 36)))
     .bind(truncate(category, 30))
     .bind(truncate(event, 60))

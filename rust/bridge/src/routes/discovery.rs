@@ -625,29 +625,34 @@ pub fn rotating_seed(pool: &[String], user: &str, count: usize) -> Vec<String> {
 async fn discover_mix(State(st): State<AppState>, u: User, Q(p): Q<P>) -> ApiResult<Json<Value>> {
     let limit = p.limit.unwrap_or(20);
     check_range("limit", limit, 1, 50)?;
+    Ok(Json(Value::Array(discover_tracks(&st, &u.id, limit).await?)))
+}
+
+/// `get_discover_mix` body, shared with Aria's daily pick.
+pub async fn discover_tracks(st: &AppState, user: &str, limit: i64) -> ApiResult<Vec<Value>> {
     let pool: Vec<String> = sqlx::query_scalar(
         "SELECT artist FROM ios_play_history WHERE user_id = $1 AND artist IS NOT NULL AND artist != '' GROUP BY artist ORDER BY COUNT(*) DESC, artist LIMIT 20",
     )
-    .bind(&u.id)
+    .bind(user)
     .fetch_all(&st.db)
     .await?;
-    let top = rotating_seed(&pool, &u.id, 3);
+    let top = rotating_seed(&pool, user, 3);
     let known: HashSet<String> =
         sqlx::query_scalar("SELECT song_id FROM ios_user_favorites WHERE user_id = $1 UNION SELECT source_id FROM ios_user_library_inventory WHERE user_id = $1")
-            .bind(&u.id)
+            .bind(user)
             .fetch_all(&st.db)
             .await?
             .into_iter()
             .collect();
     if top.is_empty() {
-        return Ok(Json(json!([])));
+        return Ok(vec![]);
     }
     let per = (limit as usize / top.len() + 1).max(1);
     let mut out: Vec<Value> = Vec::new();
     let mut seen = HashSet::new();
     'outer: for artist in &top {
         let mut args: Vec<String> = vec![format!("ytsearch{per}:{artist}"), "--dump-json".into(), "--flat-playlist".into(), "--no-playlist".into(), "--cache-dir".into(), st.cfg.ytdlp_cache_dir.clone()];
-        args.extend(st.ytdlp.cookie_args(Some(&u.id), false).await);
+        args.extend(st.ytdlp.cookie_args(Some(user), false).await);
         let entries = match st.ytdlp.run_json(&args, Duration::from_secs(20)).await {
             Ok(e) => e,
             Err(e) => {
@@ -668,7 +673,7 @@ async fn discover_mix(State(st): State<AppState>, u: User, Q(p): Q<P>) -> ApiRes
             }
         }
     }
-    Ok(Json(Value::Array(out)))
+    Ok(out)
 }
 
 async fn trending(State(st): State<AppState>, _k: ApiKey, Q(p): Q<P>) -> ApiResult<Json<Value>> {

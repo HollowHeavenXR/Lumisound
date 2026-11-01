@@ -47,7 +47,7 @@ pub const ARIA2_ARGS: &[&str] = &[
 pub const STREAM_CLIENT_ARGS: &[&str] = &["--extractor-args", "youtube:player_client=web,default"];
 pub const MUXED_ITAGS: &[&str] = &["17", "18", "22", "36", "43", "59"];
 
-fn available_memory_mb() -> Option<f64> {
+pub fn available_memory_mb() -> Option<f64> {
     let s = std::fs::read_to_string("/proc/meminfo").ok()?;
     let line = s.lines().find(|l| l.starts_with("MemAvailable:"))?;
     line.split_whitespace().nth(1)?.parse::<f64>().ok().map(|kb| kb / 1024.0)
@@ -76,6 +76,10 @@ impl AdaptiveLimiter {
     pub fn new(max: usize, safe: usize) -> Self {
         let max = max.max(1);
         Self { sem: Semaphore::new(max), safe: safe.clamp(1, max), in_use: AtomicUsize::new(0) }
+    }
+
+    pub fn available(&self) -> usize {
+        self.sem.available_permits()
     }
 
     pub async fn slot(&self) -> Slot<'_> {
@@ -185,6 +189,10 @@ pub struct Ytdlp {
 }
 
 impl Ytdlp {
+    pub fn network(&self) -> &[String] {
+        &self.network_args
+    }
+
     pub fn new(cfg: &Config, db: PgPool) -> Self {
         let mut network_args: Vec<String> = ["-4", "--socket-timeout", "10"].iter().map(|s| s.to_string()).collect();
         if let Some(pot) = &cfg.ytdlp_pot_provider_url {

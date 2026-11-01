@@ -1,0 +1,32 @@
+[package]
+name = "lumisound-core"
+version.workspace = true
+edition.workspace = true
+description = "Lumisound app core for the Swift apps: API client, sync, lock system, downloads, audio engine, library + analysis, appearance"
+
+[lib]
+name = "lumisound_core"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+uniffi = { version = "=0.28.3" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "fs", "io-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "stream", "http2"] }
+futures-util = "0.3"
+urlencoding = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+sha2 = "0.10"
+hex = "0.4"

@@ -56,6 +56,10 @@ pub struct Inner {
     pub storage_tier_sent: DashMap<String, f64>,
     pub taste_cache: TtlCache<String, Value>,
     pub push: crate::push::Push,
+    pub gemini: crate::gemini::Gemini,
+    pub lyrics_jobs: DashMap<String, crate::routes::ai::LyricsJob>,
+    pub stem_jobs: DashMap<String, crate::routes::stems::StemJob>,
+    pub stem_sem: tokio::sync::Semaphore,
 }
 
 impl std::ops::Deref for AppState {
@@ -126,6 +130,10 @@ impl AppState {
             storage_tier_sent: DashMap::new(),
             taste_cache: TtlCache::new(Duration::from_secs(3600), 5000),
             push: crate::push::Push::new(&cfg),
+            gemini: crate::gemini::Gemini::new(),
+            lyrics_jobs: DashMap::new(),
+            stem_jobs: DashMap::new(),
+            stem_sem: tokio::sync::Semaphore::new(1),
             cdn,
             cfg,
             db,

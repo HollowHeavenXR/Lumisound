@@ -1,7 +1,7 @@
 //! Query extractor that rejects like FastAPI (422 + detail list).
 
 use crate::error::AppError;
-use axum::extract::{FromRequest, FromRequestParts, Query};
+use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -49,7 +49,14 @@ impl<S: Send + Sync, T: DeserializeOwned> axum::extract::FromRequest<S> for J<T>
                 let loc: Vec<serde_json::Value> = std::iter::once(json!("body"))
                     .chain(e.path().to_string().split('.').filter(|s| !s.is_empty() && *s != "?").map(|s| json!(s)))
                     .collect();
-                Err(AppError::with_value(422, json!([{"type": "value_error", "loc": loc, "msg": e.inner().to_string()}])))
+                let msg = e.inner().to_string();
+                // serde: "missing field `x` at line 1 column 17" -> FastAPI's shape.
+                if let Some(f) = msg.strip_prefix("missing field `").and_then(|r| r.split('`').next()) {
+                    let mut loc = loc;
+                    loc.push(json!(f));
+                    return Err(AppError::with_value(422, json!([{"type": "missing", "loc": loc, "msg": "Field required"}])));
+                }
+                Err(AppError::with_value(422, json!([{"type": "value_error", "loc": loc, "msg": msg}])))
             }
         }
     }

@@ -1,0 +1,4 @@
+[bindings.swift]
+module_name = "LumisoundCore"
+ffi_module_name = "LumisoundCoreFFI"
+ffi_module_filename = "LumisoundCoreFFI"

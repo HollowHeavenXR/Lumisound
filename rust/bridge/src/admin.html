@@ -1,0 +1,94 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ios-bridge Admin</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0b0d10; color: #e6e8eb; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: #161a1f; border: 1px solid #262b32; border-radius: 10px; padding: 14px 16px; }
+  .card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #8a929c; margin-bottom: 6px; }
+  .card .value { font-size: 22px; font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 28px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #20242a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+  th { color: #8a929c; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  .status-completed { color: #4ade80; } .status-failed { color: #f87171; } .status-error { color: #f87171; }
+  #login { max-width: 360px; margin: 80px auto; }
+  #login input { width: 100%; padding: 10px; margin: 8px 0; background: #161a1f; border: 1px solid #262b32; border-radius: 8px; color: #e6e8eb; box-sizing: border-box; }
+  #login button { width: 100%; padding: 10px; background: #3b82f6; border: none; border-radius: 8px; color: white; font-weight: 600; cursor: pointer; }
+  #dash { display: none; }
+  h2 { font-size: 14px; color: #b6bcc4; }
+</style></head>
+<body>
+  <div id="login">
+    <h1>ios-bridge Admin</h1>
+    <input id="token" type="password" placeholder="Admin token" autocomplete="off">
+    <button onclick="login()">Sign in</button>
+  </div>
+  <div id="dash">
+    <h1>ios-bridge Admin</h1>
+    <div class="cards" id="cards"></div>
+    <h2>Download jobs (last 50)</h2>
+    <table id="jobs"><thead><tr><th>Created</th><th>Status</th><th>Source</th><th>Title</th><th>Error</th></tr></thead><tbody></tbody></table>
+    <h2>Recent errors (last 50)</h2>
+    <table id="errors"><thead><tr><th>Time</th><th>Category</th><th>Message</th><th>App</th></tr></thead><tbody></tbody></table>
+  </div>
+<script>
+function fmtBytes(b) {
+  if (b == null) return "n/a";
+  const u = ["B","KB","MB","GB","TB"]; let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return b.toFixed(1) + " " + u[i];
+}
+async function api(path) {
+  const token = sessionStorage.getItem("admin_token");
+  const res = await fetch(path, { headers: { Authorization: "Bearer " + token } });
+  if (res.status === 401) { sessionStorage.removeItem("admin_token"); showLogin(); throw new Error("unauthorized"); }
+  return res.json();
+}
+function showLogin() { document.getElementById("login").style.display = "block"; document.getElementById("dash").style.display = "none"; }
+function showDash() { document.getElementById("login").style.display = "none"; document.getElementById("dash").style.display = "block"; }
+function login() {
+  const t = document.getElementById("token").value.trim();
+  if (!t) return;
+  sessionStorage.setItem("admin_token", t);
+  refresh();
+}
+async function refresh() {
+  try {
+    const o = await api("/admin/api/overview");
+    showDash();
+    const jobs24 = o.download_jobs_24h || {};
+    document.getElementById("cards").innerHTML = [
+      ["Users", o.user_count],
+      ["Music files", o.music_file_count],
+      ["Storage used", fmtBytes(o.music_bytes)],
+      ["Disk free", o.disk ? fmtBytes(o.disk.free_bytes) : "n/a"],
+      ["Jobs completed (24h)", jobs24.completed || 0],
+      ["Jobs failed (24h)", jobs24.failed || 0],
+      ["Errors (24h)", o.recent_error_count_24h],
+      ["yt-dlp slots", o.concurrency.ytdlp_available + "/" + o.concurrency.ytdlp_max + " free"],
+    ].map(([label, value]) => `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`).join("");
+
+    const jobs = await api("/admin/api/download-jobs");
+    document.querySelector("#jobs tbody").innerHTML = jobs.map(j => `<tr>
+      <td>${j.created_at || ""}</td>
+      <td class="status-${j.status}">${j.status}</td>
+      <td>${j.source}</td>
+      <td>${(j.title || "").slice(0, 60)}</td>
+      <td>${(j.error_message || "").slice(0, 80)}</td>
+    </tr>`).join("");
+
+    const errors = await api("/admin/api/errors");
+    document.querySelector("#errors tbody").innerHTML = errors.map(e => `<tr>
+      <td>${e.timestamp || ""}</td>
+      <td>${e.category}</td>
+      <td>${(e.message || "").slice(0, 100)}</td>
+      <td>${e.app_version || ""}</td>
+    </tr>`).join("");
+  } catch (e) { /* login screen already shown on 401 */ }
+}
+if (sessionStorage.getItem("admin_token")) { refresh(); } else { showLogin(); }
+setInterval(() => { if (sessionStorage.getItem("admin_token")) refresh(); }, 15000);
+</script>
+</body></html>

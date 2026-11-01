@@ -12,7 +12,7 @@ tower-http = { version = "0.6", features = ["compression-gzip", "cors"] }
 tower = "0.5"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "json", "chrono", "uuid", "macros"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart", "http2"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
@@ -44,5 +44,6 @@ base64 = "0.22"
 rustfft = "6"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 crc32fast = "1"
+libc = "0.2"
 md-5 = "0.10"
 roxmltree = "0.20"
