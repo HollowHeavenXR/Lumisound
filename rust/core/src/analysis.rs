@@ -704,3 +704,52 @@ pub fn fingerprint_similarity(a: Vec<Vec<f32>>, b: Vec<Vec<f32>>) -> f32 {
     }
     best
 }
+
+// ---- live spectrum (visualizer) --------------------------------------------------------------
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct Spectrum {
+    /// Bar heights 0…1 (quadratic bin spacing).
+    pub bars: Vec<f32>,
+    pub bass: f32,
+    pub mid: f32,
+    pub treble: f32,
+    pub overall: f32,
+}
+
+/// FFT of up to `fft_size` samples into `bar_count` log-scaled bars plus
+/// bass (20–250 Hz) / mid (250 Hz–4 kHz) / treble (4–16 kHz) / overall.
+#[uniffi::export]
+pub fn spectrum(samples: Vec<f32>, sample_rate: f32, fft_size: u32, bar_count: u32) -> Spectrum {
+    let n = fft_size.max(64) as usize;
+    let half = n / 2;
+    let mut buf: Vec<rustfft::num_complex::Complex32> = (0..n).map(|i| rustfft::num_complex::Complex32::new(samples.get(i).copied().unwrap_or(0.0), 0.0)).collect();
+    rustfft::FftPlanner::<f32>::new().plan_fft_forward(n).process(&mut buf);
+    let mag: Vec<f32> = buf[..half].iter().map(|c| c.norm_sqr()).collect();
+    let norm = |v: f32| ((v + 1.0).log10() / 4.0).clamp(0.0, 1.0);
+    let bc = bar_count.max(1) as usize;
+    let bars = (0..bc)
+        .map(|b| {
+            let lo = (((b as f64 / bc as f64).powi(2) * half as f64) as usize).max(1);
+            let hi = ((((b + 1) as f64 / bc as f64).powi(2) * half as f64) as usize).min(half).max(lo + 1);
+            if lo >= hi || hi > half {
+                return 0.0;
+            }
+            norm(mag[lo..hi].iter().sum::<f32>() / (hi - lo) as f32)
+        })
+        .collect();
+    let sr = if sample_rate > 0.0 { sample_rate } else { 44_100.0 };
+    let bin_hz = sr / n as f32;
+    let band = |lo_hz: f32, hi_hz: f32| {
+        let lo = ((lo_hz / bin_hz) as usize).max(1);
+        let hi = ((hi_hz / bin_hz) as usize).min(half).max(lo + 1);
+        if lo >= hi || hi > half { 0.0 } else { mag[lo..hi].iter().sum::<f32>() / (hi - lo) as f32 }
+    };
+    Spectrum {
+        bars,
+        bass: norm(band(20.0, 250.0)),
+        mid: norm(band(250.0, 4000.0)),
+        treble: norm(band(4000.0, (sr / 2.0).min(16_000.0))),
+        overall: norm(mag.iter().sum::<f32>() / half.max(1) as f32),
+    }
+}

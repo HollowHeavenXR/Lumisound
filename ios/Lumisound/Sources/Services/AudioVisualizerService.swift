@@ -1,4 +1,3 @@
-import Accelerate
 import AVFoundation
 
 /// Computes a real-time frequency spectrum from the live audio graph, for
@@ -55,16 +54,8 @@ final class AudioVisualizerService: ObservableObject {
     @Published private(set) var overallLevel: Float = 0
 
     private let fftSize = 2048
-    private let log2n: vDSP_Length = 11 // 2^11 == 2048
-    private let fftSetup: FFTSetup?
 
-    private init() {
-        fftSetup = vDSP_create_fftsetup(11, FFTRadix(kFFTRadix2))
-    }
-
-    deinit {
-        if let fftSetup { vDSP_destroy_fftsetup(fftSetup) }
-    }
+    private init() {}
 
     /// Requests analysis for `reason`. Safe to call repeatedly for the same
     /// reason (idempotent), and safe to call from multiple independent
@@ -118,69 +109,13 @@ final class AudioVisualizerService: ObservableObject {
         guard let channelData = buffer.floatChannelData else { return }
         let available = Int(buffer.frameLength)
         guard available > 0 else { return }
-
         let n = min(available, fftSize)
-        var real = [Float](repeating: 0, count: fftSize)
-        var imag = [Float](repeating: 0, count: fftSize)
-        let samples = channelData[0]
-        for i in 0..<n { real[i] = samples[i] }
-
-        guard let fftSetup else { return }
-        var bars = [Float](repeating: 0, count: Self.barCount)
-        var bandLevels: (bass: Float, mid: Float, treble: Float, overall: Float) = (0, 0, 0, 0)
-        let sampleRate = Float(buffer.format.sampleRate > 0 ? buffer.format.sampleRate : 44100)
-
-        real.withUnsafeMutableBufferPointer { realPtr in
-            imag.withUnsafeMutableBufferPointer { imagPtr in
-                guard let realBase = realPtr.baseAddress, let imagBase = imagPtr.baseAddress else { return }
-                var split = DSPSplitComplex(realp: realBase, imagp: imagBase)
-                vDSP_fft_zip(fftSetup, &split, 1, log2n, FFTDirection(FFT_FORWARD))
-
-                let halfSize = fftSize / 2
-                var fftMagnitudes = [Float](repeating: 0, count: halfSize)
-                fftMagnitudes.withUnsafeMutableBufferPointer { magPtr in
-                    guard let magBase = magPtr.baseAddress else { return }
-                    vDSP_zvmags(&split, 1, magBase, 1, vDSP_Length(halfSize))
-                }
-
-                // Logarithmically-spaced bins — otherwise almost all musical
-                // energy (bass/mid) collapses into the first couple of bars
-                // and everything above that reads as flat silence.
-                for bar in 0..<Self.barCount {
-                    let lowFrac = pow(Double(bar) / Double(Self.barCount), 2)
-                    let highFrac = pow(Double(bar + 1) / Double(Self.barCount), 2)
-                    let lowBin = max(1, Int(lowFrac * Double(halfSize)))
-                    let highBin = max(lowBin + 1, min(halfSize, Int(highFrac * Double(halfSize))))
-                    guard lowBin < highBin else { continue }
-                    let slice = fftMagnitudes[lowBin..<highBin]
-                    let avg = slice.reduce(0, +) / Float(slice.count)
-                    bars[bar] = min(1, max(0, log10(avg + 1) / 4))
-                }
-
-                // Coarse bass/mid/treble energy — same magnitude array, summed
-                // over actual frequency ranges (Hz -> bin index) rather than
-                // the log-spaced display bins above, since Auto EQ/Smart
-                // Crossfade care about real frequency bands, not display bars.
-                let binHz = sampleRate / Float(fftSize)
-                func bandAverage(_ lowHz: Float, _ highHz: Float) -> Float {
-                    let lowBin = max(1, Int(lowHz / binHz))
-                    let highBin = max(lowBin + 1, min(halfSize, Int(highHz / binHz)))
-                    guard lowBin < highBin else { return 0 }
-                    let slice = fftMagnitudes[lowBin..<highBin]
-                    return slice.reduce(0, +) / Float(slice.count)
-                }
-                func normalize(_ v: Float) -> Float { min(1, max(0, log10(v + 1) / 4)) }
-
-                let bass = normalize(bandAverage(20, 250))
-                let mid = normalize(bandAverage(250, 4000))
-                let treble = normalize(bandAverage(4000, min(16000, sampleRate / 2)))
-                let overallAvg = fftMagnitudes.reduce(0, +) / Float(max(1, fftMagnitudes.count))
-                bandLevels = (bass, mid, treble, normalize(overallAvg))
-            }
-        }
-
+        let samples = Array(UnsafeBufferPointer(start: channelData[0], count: n))
+        let rate = Float(buffer.format.sampleRate > 0 ? buffer.format.sampleRate : 44100)
+        // FFT + bar/band reduction in the Rust core.
+        let s = spectrum(samples: samples, sampleRate: rate, fftSize: UInt32(fftSize), barCount: UInt32(Self.barCount))
         Task { @MainActor [weak self] in
-            self?.applySmoothed(bars, bands: bandLevels)
+            self?.applySmoothed(s.bars, bands: (s.bass, s.mid, s.treble, s.overall))
         }
     }
 
