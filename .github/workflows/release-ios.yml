@@ -68,6 +68,22 @@ jobs:
           if [ -z "$LUMISOUND_BRIDGE_API_KEY" ]; then
             echo "::warning::LUMISOUND_BRIDGE_API_KEY secret is not set — this build will ship with no bridge API key and every check_auth-gated route (search/stream/download/etc.) will fail against the official bridge."
           fi
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: rust-core-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: rust-core-${{ runner.os }}-
+
+      # Rust app core (rust/core) -> ios/RustCore, needed before XcodeGen.
+      - name: Build Rust core
+        env:
+          PLATFORMS: "ios"
+        run: ios/scripts/build-core.sh
+
 
       - name: Generate Xcode project
         working-directory: ios

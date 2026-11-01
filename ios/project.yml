@@ -72,6 +72,10 @@ targets:
       - path: Shared/LiveActivity/LumisoundPlaybackIntents.swift
       # Shared with every target below that touches the App Group container.
       - path: Shared/AppGroup.swift
+      # Rust app core: UniFFI-generated Swift API + the thin Swift glue.
+      # Built by scripts/build-core.sh into RustCore/ before XcodeGen runs.
+      - path: RustCore/LumisoundCore.swift
+      - path: Shared/Core
     # Resources listed EXPLICITLY so XcodeGen creates proper build phases:
     #  - .xcassets  → "Compile Asset Catalogs" (actool) — produces Assets.car + icon PNGs
     #  - .strings   → "Copy Bundle Resources"
@@ -100,6 +104,10 @@ targets:
         DEVELOPMENT_TEAM: ""
     dependencies:
       - target: LumisoundWidget
+      - framework: RustCore/LumisoundCore.xcframework
+        embed: false
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
       # NOTE: LumisoundWatch is intentionally NOT embedded here — keeping it out
       # of the released IPA keeps the phone-app sideload bulletproof on tools that
       # can't re-sign embedded watch apps. The target still compiles in CI

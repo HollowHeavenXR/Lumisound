@@ -86,52 +86,30 @@ extension AccountService {
     /// a long tail of "request timed out" on that one endpoint.
     func _makeRequest(_ path: String, method: String, bodyData: Data?,
                       timeout: TimeInterval? = nil) async throws -> Data {
-        let base = bridgeURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
-        guard let url = URL(string: base + normalizedPath) else {
-            throw AccountError(statusCode: 0, message: "Invalid bridge URL")
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.timeoutInterval = timeout ?? 20
-
-        if let tok = token {
-            request.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
-        }
-
-        if let data = bodyData {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = data
-        }
-
-        // Only idempotent GETs are retried — a retried POST/PUT/DELETE could
-        // double-apply a mutation if the original request actually reached the
-        // server but the response was lost to a transient network blip.
-        let attempts = method == "GET" ? 3 : 1
-
-        return try await NetworkRetry.withRetry(maxAttempts: attempts) {
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            if let http = response as? HTTPURLResponse {
-                if http.statusCode == 401 {
-                    // Only auto-logout on 401 when the user was already logged in.
-                    // A 401 on /auth/login means wrong password — not an expired token.
-                    if self.isLoggedIn && path != "/auth/login" {
-                        self.handleUnauthorized()
-                    }
-                    throw AccountError(statusCode: 401, message: "Session expired. Please sign in again.")
-                }
-                if !(200..<300).contains(http.statusCode) {
-                    // Try to extract detail from FastAPI error body
-                    if let detail = try? JSONDecoder().decode(APIErrorBody.self, from: data) {
-                        throw AccountError(statusCode: http.statusCode, message: detail.detail)
-                    }
-                    throw AccountError(statusCode: http.statusCode, message: "Server error (HTTP \(http.statusCode))")
-                }
-            }
-
+        // Transport, retries (idempotent GETs only — a retried write could
+        // double-apply), FastAPI error bodies and 401 detection all live in
+        // the Rust core's ApiClient.
+        Core.prepare(baseURL: bridgeURL, token: token)
+        do {
+            let data = try await Core.api.request(path: path, method: method, body: bodyData, timeoutSecs: timeout)
+            // Swift task cancellation doesn't reach the Rust future; honour it
+            // here so superseded debounced calls still read as cancelled.
+            if Task.isCancelled { throw URLError(.cancelled) }
             return data
+        } catch let e as CoreError {
+            if Task.isCancelled { throw URLError(.cancelled) }
+            switch e {
+            case .Unauthorized:
+                // Only auto-logout on 401 when already logged in: a 401 on
+                // /auth/login means a wrong password, not an expired token.
+                if isLoggedIn && path != "/auth/login" { handleUnauthorized() }
+                throw AccountError(statusCode: 401, message: "Session expired. Please sign in again.")
+            case let .Http(status, message):
+                throw AccountError(statusCode: Int(status), message: message)
+            default:
+                if let u = Core.urlError(e) { throw u }
+                throw AccountError(statusCode: 0, message: e.localizedDescription)
+            }
         }
     }
 }
