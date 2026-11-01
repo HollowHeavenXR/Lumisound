@@ -91,10 +91,12 @@ After logging in, open **Search → My Library**. You can:
 
 If you want to run your own server (for a private instance or extra storage):
 
+The server is the Rust bridge in `rust/bridge` (built by `rust/Dockerfile`); `ios-bridge/` holds the deploy files.
+
 ```bash
 cd ios-bridge
 cp .env.example .env          # fill in DB creds and JWT secret
-docker compose up -d
+docker compose up -d --build
 ```
 
 Then in **Lumisound → Settings → Streaming** set the Bridge URL to your server address. Point `SERVER_MUSIC_DIR` and `USER_MUSIC_DIR` environment variables to your music directories.
@@ -106,9 +108,10 @@ See [ios-bridge/README.md](../ios-bridge) for full server configuration.
 ## Build from Source (macOS only)
 
 ```bash
-# Prerequisites: Xcode, XcodeGen
+# Prerequisites: Xcode, XcodeGen, Rust (https://rustup.rs)
 brew install xcodegen
 
+ios/scripts/build-core.sh  # builds rust/core -> ios/RustCore (LumisoundCore.xcframework + Swift API)
 cd ios
 xcodegen generate          # generates Lumisound.xcodeproj
 open Lumisound.xcodeproj   # build from Xcode
@@ -118,7 +121,7 @@ Set your Apple development team in **Xcode → Signing & Capabilities** before a
 
 ### Lua Theme Presets
 
-The Lumisound target depends on [ChrisGVE/LuaSwift](https://github.com/ChrisGVE/LuaSwift) (added under `packages:` in `project.yml`, resolved automatically by `xcodegen generate` + Xcode/`xcodebuild`'s SPM resolution — no extra setup needed) to run the Lua-scripted config/theming/logic layer in `Lumisound/Sources/Theme/LuaThemeEngine.swift`. It bundles Lua's C source directly rather than linking a system/dynamic Lua, so it needs no embedding step and is App-Store-safe.
+Lua scripts (theme presets, effects, visualizers, smart-playlist and vault rules) run on the Rust core's sandboxed Lua 5.4 runtime (`rust/core/src/lua.rs`: math/string/table/utf8 only, a `json` module, a 3-second budget per script). No Swift package is involved.
 
 The 10 bundled presets live in `Lumisound/Resources/LuaPresets/*.lua` and are bundled as a folder reference (declared under the `Lumisound` target's `resources:` in `project.yml`) so `LuaThemeEngine` can look each one up by name at runtime. Each preset script assigns a single global `theme` table covering colors, font/panel/artwork/seeker/card styles, Liquid Glass tuning, feature flags, and a couple of Library tab display-logic hooks — see any of the 10 files for the exact shape, or `LuaThemeConfig` in `LuaThemeEngine.swift` for the Swift-side schema they decode into. Users pick a preset from **Settings → Appearance → Lua Theme Presets**.
 
