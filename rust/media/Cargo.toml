@@ -1,0 +1,7 @@
+[package]
+name = "lumisound-media"
+version.workspace = true
+edition.workspace = true
+description = "Lumisound media primitives shared by the bridge and the app core (lock format, audio types)"
+
+[dependencies]

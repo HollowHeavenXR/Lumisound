@@ -17,6 +17,7 @@ required-features = ["bindgen"]
 bindgen = ["uniffi/cli"]
 
 [dependencies]
+lumisound-media = { path = "../media" }
 uniffi = { version = "=0.28.3" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
@@ -30,3 +31,6 @@ uuid = { version = "1", features = ["v4"] }
 url = "2"
 sha2 = "0.10"
 hex = "0.4"
+aes-gcm = "0.10"
+base64 = "0.22"
+libc = "0.2"

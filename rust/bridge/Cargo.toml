@@ -5,6 +5,7 @@ edition.workspace = true
 description = "Lumisound server (replaces the Python ios-bridge)"
 
 [dependencies]
+lumisound-media = { path = "../media" }
 axum = { version = "0.8", features = ["ws", "macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }

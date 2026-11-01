@@ -6,6 +6,7 @@
 uniffi::setup_scaffolding!();
 
 pub mod client;
+pub mod lock;
 pub mod error;
 pub mod retry;
 

@@ -57,13 +57,11 @@ enum LumisoundExclusiveExtensionService {
     /// underneath it; returns the plain extension unchanged for anything not
     /// yet converted.
     static func effectiveExtension(for url: URL) -> String {
-        let outer = url.pathExtension.lowercased()
-        guard outer == marker else { return outer }
-        return url.deletingPathExtension().pathExtension.lowercased()
+        lmsEffectiveExtension(path: url.path)
     }
 
     static func isConverted(_ url: URL) -> Bool {
-        url.pathExtension.lowercased() == marker
+        lmsIsConverted(path: url.path)
     }
 
     /// A URL safe to hand directly to `AVAudioFile(forReading:)` /
@@ -80,103 +78,31 @@ enum LumisoundExclusiveExtensionService {
     /// as the cached copy is at least as new as the locked source, so a
     /// re-lock (re-conversion, or the legacy-file migration in
     /// `relockLegacyFile`) correctly invalidates it.
-    /// Serializes unlocks per source path — `playableURL` is a plain sync
-    /// function called from many concurrent contexts for the SAME track
-    /// (the periodic `CorruptFileFinderService` integrity scan, artwork/
-    /// metadata reads, and the actual playback scheduling call can all
-    /// legitimately race each other for one file). Without this, two
-    /// threads could both see no cached copy yet and both call
-    /// `LumisoundLockFormat.unlock` concurrently, writing the SAME
-    /// destination path at once — Foundation's atomic write is safe against
-    /// torn writes, but not against the two writers' own temp files
-    /// stepping on each other, which showed up in the field as sporadic
-    /// "unlock failed" warnings (worse odds the bigger the file — e.g. a
-    /// lossless FLAC track — since that widens the race window).
-    private static let unlockLocks = NSMapTable<NSString, NSLock>.strongToStrongObjects()
-    private static let unlockLocksTableLock = NSLock()
-
-    private static func lock(for key: String) -> NSLock {
-        unlockLocksTableLock.lock()
-        defer { unlockLocksTableLock.unlock() }
-        if let existing = unlockLocks.object(forKey: key as NSString) {
-            return existing
-        }
-        let new = NSLock()
-        unlockLocks.setObject(new, forKey: key as NSString)
-        return new
+    /// Unlocked copies of `.lms` files live here (tmp; the OS may purge it).
+    static var playableCacheDir: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("lumisound_lms_playable", isDirectory: true)
     }
 
+    /// Directly playable URL: the file itself, or a fresh unlocked copy from
+    /// the cache (Rust core: one unlock per file at a time, reused while
+    /// newer than the locked file, retried once, original URL on failure).
     static func playableURL(for url: URL) -> URL {
         guard isConverted(url) else { return url }
-        let startedAt = Date()
-        let fileLock = lock(for: url.path)
-        fileLock.lock()
-        defer { fileLock.unlock() }
-
-        let fm = FileManager.default
-        let dir = fm.temporaryDirectory.appendingPathComponent("lumisound_lms_playable", isDirectory: true)
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        // Stripping just the outer ".lms" leaves the real extension intact
-        // in the filename (e.g. "Track.m4a.lms" -> "Track.m4a").
-        let outURL = dir.appendingPathComponent(url.deletingPathExtension().lastPathComponent)
-
-        if fm.fileExists(atPath: outURL.path),
-           let sourceModDate = (try? fm.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
-           let cacheModDate = (try? fm.attributesOfItem(atPath: outURL.path))?[.modificationDate] as? Date,
-           cacheModDate >= sourceModDate {
-            return outURL
-        }
-        let sourceBytes = (try? fm.attributesOfItem(atPath: url.path))?[.size] as? Int64 ?? -1
-        appLog("LumisoundExclusiveExtensionService: cold unlock started \(url.lastPathComponent) (\(sourceBytes) bytes)", category: "audio")
-        // A leftover partial file from an earlier failed attempt (e.g. disk
-        // pressure mid-write) would otherwise satisfy the `fileExists` check
-        // above on the NEXT call despite being garbage — clear it before
-        // retrying rather than trusting its mere presence.
-        try? fm.removeItem(at: outURL)
-        if LumisoundLockFormat.unlock(lockedURL: url, to: outURL) {
-            appLog("LumisoundExclusiveExtensionService: cold unlock completed \(url.lastPathComponent) in \(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s", category: "audio")
-            return outURL
-        }
-        // One retry — covers a transient failure (the old leftover-file case
-        // above, or a momentary disk-pressure write error) without silently
-        // handing back the still-locked, unplayable original on the first hiccup.
-        try? fm.removeItem(at: outURL)
-        guard LumisoundLockFormat.unlock(lockedURL: url, to: outURL) else {
+        let started = Date()
+        let warm = hasWarmPlayableCache(for: url)
+        let out = lmsPlayablePath(path: url.path, cacheDir: playableCacheDir.path)
+        if out == url.path {
             appWarn("LumisoundExclusiveExtensionService.playableURL: unlock failed for \(url.lastPathComponent)", category: "audio")
-            return url
+        } else if !warm {
+            appLog("LumisoundExclusiveExtensionService: cold unlock \(url.lastPathComponent) in \(String(format: "%.2f", Date().timeIntervalSince(started)))s", category: "audio")
         }
-        appLog("LumisoundExclusiveExtensionService: cold unlock completed on retry \(url.lastPathComponent) in \(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s", category: "audio")
-        return outURL
+        return URL(fileURLWithPath: out)
     }
 
-    /// Cheap, synchronous check for whether `playableURL(for:)` can already
-    /// return a warm cached copy without doing any unlock work — mirrors
-    /// exactly the cache-hit condition inside `playableURL` itself (a
-    /// `stat` on the source and the cache entry, no file content read).
-    /// Lets a timing-sensitive caller (playback scheduling) decide to warm
-    /// the cache asynchronously FIRST instead of paying for the unlock
-    /// synchronously inline on its own thread — see `prewarmPlayableURL`.
     static func hasWarmPlayableCache(for url: URL) -> Bool {
-        guard isConverted(url) else { return true }
-        let fm = FileManager.default
-        let dir = fm.temporaryDirectory.appendingPathComponent("lumisound_lms_playable", isDirectory: true)
-        let outURL = dir.appendingPathComponent(url.deletingPathExtension().lastPathComponent)
-        guard fm.fileExists(atPath: outURL.path),
-              let sourceModDate = (try? fm.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
-              let cacheModDate = (try? fm.attributesOfItem(atPath: outURL.path))?[.modificationDate] as? Date
-        else { return false }
-        return cacheModDate >= sourceModDate
+        lmsHasWarmCache(path: url.path, cacheDir: playableCacheDir.path)
     }
 
-    /// Async, off-main-thread version of the unlock `playableURL(for:)`
-    /// does inline — a no-op (fast, cheap check only) if the cache is
-    /// already warm. Callers that can afford to `await` before they
-    /// actually need the file (gapless/crossfade pre-scheduling the NEXT
-    /// track, `scheduleCurrent` detecting a cold cache before its own
-    /// synchronous fast path) should call this first so the eventual
-    /// synchronous `playableURL(for:)` call is guaranteed to hit the warm
-    /// path instead of doing the full unlock on whatever thread — often the
-    /// main thread — happens to call it.
     static func prewarmPlayableURL(for url: URL) async {
         guard isConverted(url), !hasWarmPlayableCache(for: url) else { return }
         _ = await Task.detached(priority: .utility) {
@@ -184,12 +110,6 @@ enum LumisoundExclusiveExtensionService {
         }.value
     }
 
-    /// The `<original-ext>.lms` path `convert(fileURL:)` would (or did)
-    /// write `url`'s locked copy to — pure path math, no I/O. Exposed so
-    /// callers (the local documents scan) can recognize "this file already
-    /// has a converted counterpart" without duplicating the naming scheme.
-    /// `nil` for a URL that's already converted (nothing further to convert
-    /// it to).
     static func expectedConvertedURL(for url: URL) -> URL? {
         guard !isConverted(url) else { return nil }
         return url.appendingPathExtension(marker)

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["bridge", "core"]
+members = ["bridge", "core", "media"]
 
 [workspace.package]
 edition = "2024"

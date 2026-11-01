@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
-pub const AUDIO_EXTS: &[&str] = &["mp3", "m4a", "aac", "wav", "aif", "aiff", "flac", "opus", "ogg", "caf", "mp4", "m4v", "webm", "mov"];
+pub use lumisound_media::AUDIO_EXTS;
 pub const DEFAULT_QUOTA_BYTES: i64 = 10 * 1024 * 1024 * 1024;
 
 pub struct Readable {
