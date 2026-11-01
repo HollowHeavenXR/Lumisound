@@ -40,10 +40,13 @@ lipo_sim() { # out targets...
 
 LIBS=()
 if [[ " $PLATFORMS " == *" ios "* ]]; then
-  rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+  rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
   staticlib stable aarch64-apple-ios
   staticlib stable aarch64-apple-ios-sim
-  LIBS+=("$RUST/target/aarch64-apple-ios/release/liblumisound_core.a" "$RUST/target/aarch64-apple-ios-sim/release/liblumisound_core.a")
+  # Intel simulator slice too: "generic/platform=iOS Simulator" builds both archs.
+  staticlib stable x86_64-apple-ios
+  lipo_sim "$RUST/target/ios-sim-universal/liblumisound_core.a" aarch64-apple-ios-sim x86_64-apple-ios
+  LIBS+=("$RUST/target/aarch64-apple-ios/release/liblumisound_core.a" "$RUST/target/ios-sim-universal/liblumisound_core.a")
 fi
 if [[ " $PLATFORMS " == *" tvos "* || " $PLATFORMS " == *" watchos "* ]]; then
   # tvOS / watchOS are tier-3 Rust targets: std is built from source on nightly.
