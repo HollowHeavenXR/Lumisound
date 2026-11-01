@@ -124,39 +124,6 @@ extension AccountService {
         )
     }
 
-    /// Asks Aria Lumi for one short spoken DJ transition line into
-    /// `nextTitle`/`nextArtist`, for `AIDJService` to speak aloud. `nil`
-    /// whenever logged out, the call fails, or she has nothing to say —
-    /// the caller just plays on with no spoken intro in that case.
-    func fetchDJTransitionBlurb(
-        nextTitle: String, nextArtist: String?,
-        previousTitle: String?, previousArtist: String?
-    ) async -> String? {
-        guard isLoggedIn else { return nil }
-        struct Body: Encodable {
-            let next_title: String
-            let next_artist: String?
-            let previous_title: String?
-            let previous_artist: String?
-        }
-        struct Response: Decodable {
-            let blurb: String?
-        }
-        do {
-            let data = try await makeRequest(
-                "/user/ai-dj/transition",
-                method: "POST",
-                body: Body(
-                    next_title: nextTitle, next_artist: nextArtist,
-                    previous_title: previousTitle, previous_artist: previousArtist
-                )
-            )
-            return try JSONDecoder().decode(Response.self, from: data).blurb
-        } catch {
-            return nil
-        }
-    }
-
     /// Fetches today's Aria's Daily Pick — cached server-side per user per
     /// UTC calendar day (see `/user/aria/daily-pick` in main.py), so calling
     /// this more than once in the same day is free and never costs an

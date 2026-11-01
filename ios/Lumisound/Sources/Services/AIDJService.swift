@@ -56,22 +56,26 @@ final class AIDJService: NSObject, ObservableObject {
     @Published private(set) var lastBlurb: String?
 
     /// Rolling log of this session's tracks and spoken transitions, in
-    /// order — what `AIDJSessionExportService` turns into a downloadable
-    /// set. Capped (`maxSessionEntries`) rather than unbounded: this is a
-    /// recent-session export, not a permanent history (that's
-    /// `ios_play_history`/Rewind's job), and bounding it keeps export time
-    /// and file size predictable.
+    /// order — what `AIDJSessionExportService` turns into a downloadable set.
+    /// The log (and its 16-entry cap) lives in the Rust core's `DjSession`;
+    /// this mirror maps its song ids back to `Song`s for the views.
     @Published private(set) var sessionLog: [AIDJSessionEntry] = []
-    private static let maxSessionEntries = 16  // roughly the last 8 tracks + their transitions
+    private let session = DjSession()
+    private var loggedSongs: [String: Song] = [:]
 
-    private func appendToSessionLog(_ entry: AIDJSessionEntry) {
-        sessionLog.append(entry)
-        if sessionLog.count > Self.maxSessionEntries {
-            sessionLog.removeFirst(sessionLog.count - Self.maxSessionEntries)
+    private func refreshSessionLog() {
+        let entries = session.log()
+        let ids = Set(entries.compactMap(\.songId))
+        loggedSongs = loggedSongs.filter { ids.contains($0.key) }
+        sessionLog = entries.compactMap { e in
+            if let id = e.songId { return loggedSongs[id].map(AIDJSessionEntry.track) }
+            return e.text.map(AIDJSessionEntry.transition)
         }
     }
 
     func clearSessionLog() {
+        session.clearLog()
+        loggedSongs.removeAll()
         sessionLog.removeAll()
     }
 
@@ -86,10 +90,6 @@ final class AIDJService: NSObject, ObservableObject {
 
     private let synthesizer = AVSpeechSynthesizer()
     private var cancellable: AnyCancellable?
-    private var previousTitle: String?
-    private var previousArtist: String?
-    private var lastAnnouncedSongID: Song.ID?
-    private var volumeBeforeDuck: Float = 1.0
     private var duckFadeTimer: Timer?
 
     /// Mirrors `AccountService.shared`/`LibraryManager.shared` — gives
@@ -122,25 +122,16 @@ final class AIDJService: NSObject, ObservableObject {
     }
 
     private func handleTrackChange(to song: Song?) {
-        defer {
-            previousTitle = song?.title
-            previousArtist = song?.artist
-        }
-        guard isEnabled, let song, let player, player.isPlaying else { return }
-        guard song.id != lastAnnouncedSongID else { return }
-        lastAnnouncedSongID = song.id
-        appendToSessionLog(.track(song))
-
-        let prevTitle = previousTitle
-        let prevArtist = previousArtist
+        guard let song else { return }
+        let songID = song.id
+        guard let cue = session.trackChanged(songId: songID, title: song.title, artist: song.artist,
+                                             enabled: isEnabled, playing: player?.isPlaying ?? false) else { return }
+        loggedSongs[songID] = song
+        refreshSessionLog()
         Task { [weak self] in
             guard let self, let account = self.account, account.isLoggedIn else { return }
-            guard let blurb = await account.fetchDJTransitionBlurb(
-                nextTitle: song.title,
-                nextArtist: song.artist,
-                previousTitle: prevTitle,
-                previousArtist: prevArtist
-            ), !blurb.isEmpty else { return }
+            guard let blurb = await djTransitionBlurb(client: Core.api, nextTitle: song.title,
+                                                      nextArtist: song.artist, cue: cue) else { return }
             // The track may have changed again (skip) while the request was
             // in flight — a stale blurb about the wrong song is worse than
             // silence, so bail if `currentSong` has since moved on.
@@ -151,35 +142,20 @@ final class AIDJService: NSObject, ObservableObject {
 
     private func speak(_ text: String) {
         guard let getVolume, setVolume != nil else { return }
-        // BUGFIX (reported: playback volume drifts down over a listening
-        // session and doesn't fully come back — "it should never be
-        // under-setting itself like that"): `handleTrackChange` fetches
-        // each transition line over the network, so a second track change
-        // can land and resolve while the FIRST blurb is still speaking
-        // (`AVSpeechSynthesizer.speak` queues rather than replacing). Without
-        // this guard, that second call re-ran `volumeBeforeDuck = getVolume()`
-        // while the first duck was still active — capturing the ALREADY-
-        // ducked (25%) level as the new "before" — then ducked again on top
-        // of it (to 6.25%), and each `didFinish` restored to whichever
-        // `volumeBeforeDuck` happened to be in the shared variable at that
-        // moment, not the true pre-duck level. Repeat across a few quick
-        // skips and the real volume/boost setting ratchets down with no way
-        // back except the user noticing and re-raising it themselves.
-        // Dropping (not queuing) an overlapping announcement keeps exactly
-        // one duck/restore pair in flight at a time, so `volumeBeforeDuck`
-        // can only ever be the genuine baseline.
-        guard !isSpeaking else { return }
+        // One duck/restore pair in flight at a time (the core drops an
+        // overlapping announcement), so the restore baseline is always the
+        // real pre-duck volume and never ratchets down across quick skips.
+        let baseline = getVolume()
+        guard let ducked = session.beginSpeaking(text: text, currentVolume: baseline) else { return }
         isSpeaking = true
         lastBlurb = text
-        appendToSessionLog(.transition(text))
+        refreshSessionLog()
 
-        let baseline = getVolume()
-        volumeBeforeDuck = baseline
         // Fade rather than snap — matches how every other transient volume
         // change in this app (crossfade, seek-click prevention, output-gain
         // correction) avoids an instant jump, and reads as a deliberate
         // "ducking for the DJ" rather than the audio abruptly cutting out.
-        fadeVolume(from: baseline, to: baseline * 0.25) { [weak self] in
+        fadeVolume(from: baseline, to: ducked) { [weak self] in
             guard let self else { return }
             let utterance = AVSpeechUtterance(string: text)
             // Falls back to the device's default language voice if the user
@@ -205,16 +181,15 @@ final class AIDJService: NSObject, ObservableObject {
     private func fadeVolume(from: Float, to: Float, duration: TimeInterval = 0.2, completion: (() -> Void)? = nil) {
         duckFadeTimer?.invalidate()
         guard let setVolume else { completion?(); return }
-        let steps = 8
-        let interval = duration / Double(steps)
+        let ramp = djVolumeRamp(from: from, to: to, steps: 8)
+        let interval = duration / Double(ramp.count)
         var step = 0
         duckFadeTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] t in
             Task { @MainActor [weak self] in
                 guard let self else { t.invalidate(); return }
+                setVolume(ramp[min(step, ramp.count - 1)])
                 step += 1
-                let progress = Float(step) / Float(steps)
-                setVolume(from + (to - from) * progress)
-                if step >= steps {
+                if step >= ramp.count {
                     t.invalidate()
                     self.duckFadeTimer = nil
                     completion?()
@@ -227,8 +202,9 @@ final class AIDJService: NSObject, ObservableObject {
     /// shared by both the normal "finished speaking" and the "cancelled
     /// mid-speech" delegate callbacks below.
     private func restoreVolumeAfterSpeaking() {
-        let target = volumeBeforeDuck
+        let target = session.restoreVolume()
         fadeVolume(from: getVolume?() ?? target, to: target) { [weak self] in
+            self?.session.finishedSpeaking()
             self?.isSpeaking = false
         }
     }
