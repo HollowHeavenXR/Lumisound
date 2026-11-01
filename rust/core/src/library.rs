@@ -322,3 +322,67 @@ pub fn scan_read_track(path: String, cache_dir: String) -> Option<ScannedTrack> 
         bitrate_kbps: info.bitrate_kbps as i64,
     })
 }
+
+// ---- M3U / M3U8 playlist import ----------------------------------------------------------------
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct M3uCandidate {
+    pub id: String,
+    /// Library file name (last path component).
+    pub filename: Option<String>,
+    pub display_name: String,
+    pub artist_name: String,
+}
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct M3uResult {
+    pub matched_song_ids: Vec<String>,
+    pub total_entries: u32,
+}
+
+/// Match an M3U playlist (UTF-8 or Latin-1) against the library: by file
+/// name first, then by the #EXTINF "Artist - Title" (case-insensitive).
+#[uniffi::export]
+pub fn m3u_match(data: Vec<u8>, library: Vec<M3uCandidate>) -> M3uResult {
+    let text = String::from_utf8(data.clone()).unwrap_or_else(|_| data.iter().map(|b| *b as char).collect());
+    let mut by_name: HashMap<String, &M3uCandidate> = HashMap::new();
+    for c in &library {
+        if let Some(f) = &c.filename {
+            by_name.entry(f.to_lowercase()).or_insert(c);
+        }
+    }
+    let (mut ids, mut seen, mut total) = (Vec::new(), std::collections::HashSet::new(), 0u32);
+    let mut pending: Option<(String, String)> = None;
+    for raw in text.split('\n') {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("#EXTINF:") {
+            if let Some((_, info)) = rest.split_once(',') {
+                let parts: Vec<&str> = info.split(" - ").collect();
+                pending = Some(if parts.len() >= 2 { (parts[1..].join(" - "), parts[0].to_string()) } else { (info.to_string(), String::new()) });
+            }
+            continue;
+        }
+        if line.starts_with('#') {
+            continue;
+        }
+        total += 1;
+        let ext = pending.take();
+        let fname = line.rsplit(['/', '\\']).next().unwrap_or(line).to_lowercase();
+        let mut m = by_name.get(&fname).copied();
+        if m.is_none() {
+            if let Some((t, a)) = ext.filter(|(t, _)| !t.is_empty()) {
+                let (t, a) = (t.to_lowercase(), a.to_lowercase());
+                m = library.iter().find(|c| c.display_name.to_lowercase() == t && (a.is_empty() || c.artist_name.to_lowercase() == a));
+            }
+        }
+        if let Some(c) = m {
+            if seen.insert(c.id.clone()) {
+                ids.push(c.id.clone());
+            }
+        }
+    }
+    M3uResult { matched_song_ids: ids, total_entries: total }
+}
