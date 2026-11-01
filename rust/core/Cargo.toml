@@ -37,6 +37,8 @@ aes-gcm = "0.10"
 base64 = "0.22"
 libc = "0.2"
 rtrb = "0.3"
+unicode-normalization = "0.1"
+regex-lite = "0.1"
 rustfft = "6"
 rubato = "0.15"
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "aac", "isomp4", "flac", "wav", "pcm", "ogg", "vorbis", "alac", "adpcm", "aiff", "caf"] }

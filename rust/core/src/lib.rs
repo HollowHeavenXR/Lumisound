@@ -9,6 +9,7 @@ pub mod analysis;
 pub mod appearance;
 pub mod client;
 pub mod downloads;
+pub mod duplicates;
 pub mod engine;
 pub mod library;
 pub mod live;
