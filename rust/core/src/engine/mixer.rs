@@ -15,6 +15,8 @@ pub enum Cmd {
     TrackGain(f32),
     Eq { gains: [f32; 10], enabled: bool },
     Effects { reverb_wet: f32, reverb_preset: String, mono: bool, night: bool },
+    /// 8D auto-pan (Hz, 0 = off) and tremolo (Hz, depth 0…1; 0 = off).
+    Modulation { pan_hz: f32, tremolo_hz: f32, tremolo_depth: f32 },
     /// Replace the playing deck immediately (load / seek).
     Replace(Box<Deck>),
     /// Gapless successor: starts the frame the current deck drains.
@@ -97,6 +99,11 @@ pub struct Mixer {
     reverb: Reverb,
     comp: Compressor,
     mono: bool,
+    pan_hz: f32,
+    pan_phase: f32,
+    trem_hz: f32,
+    trem_depth: f32,
+    trem_phase: f32,
     cmds: rtrb::Consumer<Cmd>,
     events: rtrb::Producer<Event>,
     pub tele: Arc<Telemetry>,
@@ -104,7 +111,7 @@ pub struct Mixer {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), mono: false, cmds, events, tele }
+        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), mono: false, pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, cmds, events, tele }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -146,6 +153,11 @@ impl Mixer {
                 self.reverb.set_preset(&reverb_preset);
                 self.mono = mono;
                 self.comp.enabled = night;
+            }
+            Cmd::Modulation { pan_hz, tremolo_hz, tremolo_depth } => {
+                self.pan_hz = pan_hz.clamp(0.0, 4.0);
+                self.trem_hz = tremolo_hz.clamp(0.0, 20.0);
+                self.trem_depth = tremolo_depth.clamp(0.0, 1.0);
             }
             Cmd::Replace(d) => {
                 if let Some(old) = self.cur.replace(d) {
@@ -262,6 +274,19 @@ impl Mixer {
             if self.mono {
                 let m = (l + r) * 0.5;
                 (l, r) = (m, m);
+            }
+            let tau = std::f32::consts::TAU;
+            if self.pan_hz > 0.0 {
+                // Balance swing like AVAudioMixerNode.pan = sin(phase) * 0.5.
+                self.pan_phase = (self.pan_phase + tau * self.pan_hz / self.rate as f32) % tau;
+                let p = self.pan_phase.sin() * 0.5;
+                if p > 0.0 { l *= 1.0 - p } else { r *= 1.0 + p }
+            }
+            if self.trem_hz > 0.0 && self.trem_depth > 0.0 {
+                self.trem_phase = (self.trem_phase + tau * self.trem_hz / self.rate as f32) % tau;
+                let lfo = 1.0 - self.trem_depth / 2.0 + self.trem_depth / 2.0 * self.trem_phase.sin();
+                l *= lfo;
+                r *= lfo;
             }
             l *= g;
             r *= g;

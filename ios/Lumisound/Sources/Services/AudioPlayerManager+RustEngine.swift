@@ -38,7 +38,10 @@ extension AudioPlayerManager {
         guard Self.rustEngineEnabled, !rustBypassOnce else { return false }
         let s = audioSettings
         if s.speed != 1 || s.pitchSemitones != 0 { return false }
-        if s.spatialAudioEnabled == true || s.eightDAudioEnabled == true || s.activeEffectID != "none" { return false }
+        if s.spatialAudioEnabled == true { return false }
+        // Effects map onto settings + an optional modulation; the engine does
+        // 8D rotation and tremolo, vibrato (pitch LFO) stays on AVAudioEngine.
+        if activeEffectNeedsPitchModulation() { return false }
         return CoreAudio.canDecode(path: LumisoundExclusiveExtensionService.playableURL(for: url).path)
     }
 
@@ -117,12 +120,33 @@ extension AudioPlayerManager {
         let wet = s.reverbEnabled ? min(max(s.reverbWetDryMix, 0), 100) / 100 : 0
         Self.rust.setEffects(reverbWet: wet, reverbPreset: s.reverbPreset.rawValue,
                              mono: s.monoAudioEnabled == true, nightMode: s.nightModeEnabled == true)
+        applyRustModulation()
     }
 
     /// ReplayGain (tags or measured) applied inside the engine; volume is separate.
     func applyRustTrackGain() {
         let linear: Float = audioSettings.replayGainEnabled ? replayGainLinearGain : 1.0
         Self.rust.setTrackGain(gainDb: 20 * log10(max(linear, 0.0001)))
+    }
+
+    func activeEffectNeedsPitchModulation() -> Bool {
+        let id = audioSettings.activeEffectID
+        guard !id.isEmpty, id != "none" else { return false }
+        let effect: AudioEffect?
+        if let ref = LuaEffectEngine.scriptRef(forEffectID: id) {
+            effect = try? LuaEffectEngine.resolve(ref, track: currentSong)
+        } else {
+            effect = AudioEffectsService.allEffects.first(where: { $0.id == id })
+        }
+        return effect?.specialMode.type == .vibrato
+    }
+
+    /// 8D rotation / tremolo state -> engine modulation.
+    func applyRustModulation() {
+        guard isUsingRustEngine else { return }
+        let pan = (is8DActive || audioSettings.eightDAudioEnabled == true) ? Float(rotationHz) : 0
+        let trem = isTremoloActive ? Float(tremoloFrequency) : 0
+        Self.rust.setModulation(panHz: pan, tremoloHz: trem, tremoloDepth: isTremoloActive ? tremoloDepth : 0)
     }
 
     func rustPlay() {

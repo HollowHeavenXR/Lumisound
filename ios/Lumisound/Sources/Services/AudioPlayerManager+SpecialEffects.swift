@@ -9,6 +9,7 @@ extension AudioPlayerManager {
     // MARK: - 8D Rotation
 
     func start8DRotation(hz: Double = 0.18) {
+        defer { applyRustModulation() }
         stop8DRotation()
         rotationHz = hz
         rotationAngle = 0
@@ -25,6 +26,7 @@ extension AudioPlayerManager {
     }
 
     func stop8DRotation() {
+        defer { applyRustModulation() }
         rotationLink?.invalidate()
         rotationLink = nil
         is8DActive = false
@@ -60,6 +62,7 @@ extension AudioPlayerManager {
     // MARK: - Tremolo
 
     func startTremolo(frequency: Double = 4.0, depth: Float = 0.45) {
+        defer { applyRustModulation() }
         stopTremolo()
         tremoloFrequency = frequency
         tremoloDepth = depth
@@ -75,6 +78,7 @@ extension AudioPlayerManager {
     }
 
     func stopTremolo() {
+        defer { applyRustModulation() }
         tremoloLink?.invalidate()
         tremoloLink = nil
         isTremoloActive = false
