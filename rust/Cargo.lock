@@ -2510,6 +2510,7 @@ dependencies = [
 name = "opus-decoder"
 version = "0.1.1"
 dependencies = [
+ "rustfft",
  "thiserror 2.0.21",
 ]
 

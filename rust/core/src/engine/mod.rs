@@ -611,4 +611,31 @@ mod tests {
         assert!((18_000..=23_500).contains(&loud), "loud {loud}");
         let _ = std::fs::remove_dir_all(d);
     }
+
+    #[test]
+    fn pitch_shift_raises_pitch_and_keeps_length() {
+        let d = std::env::temp_dir().join(format!("engine-pitch-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&d).unwrap();
+        let a = d.join("a.wav");
+        wav(&a, 2.0, 440.0, 48_000);
+        for (st, speed) in [(4.0, 1.0), (-5.0, 1.0), (3.0, 1.5), (1.0, 1.0), (-1.0, 0.8), (7.0, 1.25), (12.0, 1.0), (-12.0, 1.0)] {
+            let l = Arc::new(L(Mutex::new(vec![])));
+            let e = AudioEngine::new(l.clone());
+            e.set_speed_pitch(speed, st).unwrap();
+            e.load(a.to_string_lossy().into(), 0.0, 0.0).unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+            e.play();
+            let out = pump(&e, 1.0);
+            let left: Vec<f32> = out.iter().step_by(2).copied().collect();
+            let mid = &left[4_800..40_000];
+            let zc = mid.windows(2).filter(|p| (p[0] >= 0.0) != (p[1] >= 0.0)).count();
+            let hz = zc as f64 / (mid.len() as f64 / 48_000.0) / 2.0;
+            let expect = 440.0 * 2f64.powf(st / 12.0);
+            assert!((hz / expect - 1.0).abs() < 0.01, "{st:+} st: {hz:.1} Hz, expected {expect:.1}");
+            // Track time advances at `speed` regardless of pitch.
+            let played = out.len() as f64 / 2.0 / 48_000.0;
+            assert!((e.position() / (played * speed) - 1.0).abs() < 0.08, "{st:+} st position {}", e.position());
+        }
+        let _ = std::fs::remove_dir_all(d);
+    }
 }

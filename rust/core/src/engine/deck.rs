@@ -111,8 +111,14 @@ impl Drop for Deck {
 pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f64, pitch_semitones: f64, nudge: Option<Nudge>) -> Result<Deck, String> {
     let speed = speed.clamp(0.25, 4.0);
     let pitch = 2f64.powf(pitch_semitones.clamp(-24.0, 24.0) / 12.0);
-    // Pitch: resample to out_rate·p and play at out_rate. Tempo: WSOLA by s/p.
-    let target_rate = ((out_rate as f64) * pitch).round() as u32;
+    // Pitch: resample to out_rate/p and play at out_rate (p times faster and
+    // higher), then WSOLA by s/p so the tempo comes out at s. The resample
+    // target is rounded to 50 Hz: the FFT resampler garbles rates that share
+    // only a tiny common factor with the source (48000 -> 38097 for +4 st),
+    // and 50 Hz steps are at most ~1 cent off. The tempo uses the rounded
+    // ratio so speed stays exact.
+    let target_rate = if (pitch - 1.0).abs() < 1e-9 { out_rate } else { ((out_rate as f64 / pitch / 50.0).round() * 50.0).max(4000.0) as u32 };
+    let pitch = out_rate as f64 / target_rate as f64;
     let stretch_ratio = speed / pitch;
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());

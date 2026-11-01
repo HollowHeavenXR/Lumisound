@@ -6,7 +6,6 @@
 //! needed by the decoder. It follows the libopus scaling convention where the
 //! inverse FFT is unscaled and the forward path applies `1/N`.
 
-use core::f32::consts::PI;
 
 /// Complex number used by CELT FFT/MDCT primitives.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,107 +26,78 @@ impl Complex32 {
     }
 }
 
-/// Inverse-only FFT plan for CELT decoder usage.
-#[derive(Debug, Clone)]
+/// FFT plan for the CELT decoder (unscaled inverse/forward, libopus
+/// convention). Lumisound patch: the upstream crate computed these as naive
+/// O(N^2) DFTs, which made Opus decoding barely faster than real time; this
+/// uses rustfft's O(N log N) plans with identical results.
+#[derive(Clone)]
 pub(crate) struct KissFft {
     nfft: usize,
-    inv_twiddles: Vec<Complex32>,
+    inv: std::sync::Arc<dyn rustfft::Fft<f32>>,
+    fwd: std::sync::Arc<dyn rustfft::Fft<f32>>,
+}
+
+impl core::fmt::Debug for KissFft {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("KissFft").field("nfft", &self.nfft).finish()
+    }
+}
+
+fn planner() -> std::sync::MutexGuard<'static, rustfft::FftPlanner<f32>> {
+    static P: std::sync::OnceLock<std::sync::Mutex<rustfft::FftPlanner<f32>>> = std::sync::OnceLock::new();
+    P.get_or_init(|| std::sync::Mutex::new(rustfft::FftPlanner::new())).lock().unwrap()
+}
+
+fn run(plan: &dyn rustfft::Fft<f32>, input: &[Complex32], output: &mut [Complex32]) {
+    let mut buf: Vec<rustfft::num_complex::Complex32> = input.iter().map(|c| rustfft::num_complex::Complex32::new(c.re, c.im)).collect();
+    plan.process(&mut buf);
+    for (o, b) in output.iter_mut().zip(&buf) {
+        *o = Complex32::new(b.re, b.im);
+    }
 }
 
 impl KissFft {
-    /// Build an inverse FFT plan with runtime twiddle generation.
-    ///
-    /// Params: `nfft` is the FFT size.
-    /// Returns: a plan containing precomputed inverse twiddles.
+    /// Build a plan for `nfft` points.
     pub fn new(nfft: usize) -> Self {
-        let mut inv_twiddles = Vec::with_capacity(nfft);
-        for k in 0..nfft {
-            let phase = 2.0 * PI * (k as f32) / (nfft as f32);
-            inv_twiddles.push(Complex32::new(phase.cos(), phase.sin()));
-        }
-        Self { nfft, inv_twiddles }
+        let mut p = planner();
+        let inv = p.plan_fft_inverse(nfft);
+        let fwd = p.plan_fft_forward(nfft);
+        Self { nfft, inv, fwd }
     }
 
     /// Return FFT size configured in this plan.
-    ///
-    /// Params: none.
-    /// Returns: number of points in the transform.
     pub fn len(&self) -> usize {
         self.nfft
     }
 
-    /// Compute unscaled inverse FFT.
-    ///
-    /// Params: `input` is frequency-domain complex spectrum, `output` is
-    /// destination time-domain buffer and must have length `self.len()`.
-    /// Returns: `Ok(())` on success, otherwise a static validation error.
+    /// Unscaled inverse FFT: out[n] = sum_k in[k] e^{+2 pi i k n / N}.
     pub fn ifft(&self, input: &[Complex32], output: &mut [Complex32]) -> Result<(), &'static str> {
         if input.len() != self.nfft || output.len() != self.nfft {
             return Err("kiss_fft length mismatch");
         }
-        for out in output.iter_mut() {
-            *out = Complex32::new(0.0, 0.0);
-        }
-        for (n, out) in output.iter_mut().enumerate() {
-            let mut acc_re = 0.0f32;
-            let mut acc_im = 0.0f32;
-            for (k, xk) in input.iter().enumerate() {
-                let tw = self.inv_twiddles[(k * n) % self.nfft];
-                acc_re += xk.re * tw.re - xk.im * tw.im;
-                acc_im += xk.re * tw.im + xk.im * tw.re;
-            }
-            *out = Complex32::new(acc_re, acc_im);
-        }
+        run(&*self.inv, input, output);
         Ok(())
     }
 
-    /// Compute unscaled forward FFT.
-    ///
-    /// Params: `input` is time-domain complex vector, `output` is destination
-    /// frequency-domain buffer and must have length `self.len()`.
-    /// Returns: `Ok(())` on success, otherwise a static validation error.
+    /// Unscaled forward FFT: out[k] = sum_n in[n] e^{-2 pi i k n / N}.
     pub fn fft(&self, input: &[Complex32], output: &mut [Complex32]) -> Result<(), &'static str> {
         if input.len() != self.nfft || output.len() != self.nfft {
             return Err("kiss_fft length mismatch");
         }
-        for out in output.iter_mut() {
-            *out = Complex32::new(0.0, 0.0);
-        }
-        for (n, out) in output.iter_mut().enumerate() {
-            let mut acc_re = 0.0f32;
-            let mut acc_im = 0.0f32;
-            for (k, xk) in input.iter().enumerate() {
-                let tw = self.inv_twiddles[(k * n) % self.nfft];
-                // Conjugate inverse twiddle gives forward phase.
-                acc_re += xk.re * tw.re + xk.im * tw.im;
-                acc_im += -xk.re * tw.im + xk.im * tw.re;
-            }
-            *out = Complex32::new(acc_re, acc_im);
-        }
+        run(&*self.fwd, input, output);
         Ok(())
     }
 }
 
-/// Compute forward DFT on flat interleaved complex buffers.
-///
-/// Params: `input`/`output` are `[re0, im0, re1, im1, ...]` and `n` is the
-/// number of complex samples.
-/// Returns: nothing; writes the forward transform to `output`.
+/// Forward DFT on flat interleaved complex buffers (`[re0, im0, re1, ...]`).
 pub(crate) fn flat_fft_forward(input: &[f32], output: &mut [f32], n: usize) {
     assert!(input.len() >= 2 * n && output.len() >= 2 * n);
-    for k in 0..n {
-        let mut sum_re = 0.0f64;
-        let mut sum_im = 0.0f64;
-        for j in 0..n {
-            let angle = -2.0 * PI as f64 * (k as f64) * (j as f64) / (n as f64);
-            let (sin_a, cos_a) = angle.sin_cos();
-            let re = input[2 * j] as f64;
-            let im = input[2 * j + 1] as f64;
-            sum_re += re * cos_a - im * sin_a;
-            sum_im += re * sin_a + im * cos_a;
-        }
-        output[2 * k] = sum_re as f32;
-        output[2 * k + 1] = sum_im as f32;
+    let plan = planner().plan_fft_forward(n);
+    let mut buf: Vec<rustfft::num_complex::Complex32> = (0..n).map(|j| rustfft::num_complex::Complex32::new(input[2 * j], input[2 * j + 1])).collect();
+    plan.process(&mut buf);
+    for (k, b) in buf.iter().enumerate() {
+        output[2 * k] = b.re;
+        output[2 * k + 1] = b.im;
     }
 }
 
