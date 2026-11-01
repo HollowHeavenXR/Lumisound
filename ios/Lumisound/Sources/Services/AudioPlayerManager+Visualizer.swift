@@ -21,11 +21,29 @@ extension AudioPlayerManager {
         engine.mainMixerNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
             handler(buffer)
         }
+        // Rust engine: poll its output tap ~23x/s (4096 frames at 48 kHz per
+        // AVAudioEngine tap callback is ~11.7/s; this keeps bars smooth).
+        let rate = Double(Self.rust.outputRate())
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: rate > 0 ? rate : 48_000, channels: 1) else { return }
+        rustTapTimer?.invalidate()
+        rustTapTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 23.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isUsingRustEngine, self.isPlaying else { return }
+                let samples = Self.rust.tapSamples(count: 4096)
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
+                      let ch = buffer.floatChannelData?[0] else { return }
+                buffer.frameLength = AVAudioFrameCount(samples.count)
+                samples.withUnsafeBufferPointer { src in ch.update(from: src.baseAddress!, count: samples.count) }
+                handler(buffer)
+            }
+        }
     }
 
     func stopVisualizerTap() {
         guard visualizerTapInstalled else { return }
         visualizerTapInstalled = false
         engine.mainMixerNode.removeTap(onBus: 0)
+        rustTapTimer?.invalidate()
+        rustTapTimer = nil
     }
 }

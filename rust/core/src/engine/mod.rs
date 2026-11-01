@@ -209,6 +209,12 @@ impl AudioEngine {
         self.tele.deck_id.load(Ordering::Relaxed)
     }
 
+    /// The most recent `count` output samples (mono, oldest first) for the
+    /// visualizer / music haptics.
+    pub fn tap_samples(&self, count: u32) -> Vec<f32> {
+        self.tele.tap.latest(count as usize)
+    }
+
     /// Peak levels of the most recent output buffer (visualizer / meters).
     pub fn levels(&self) -> Vec<f32> {
         let b = self.tele.levels_bits.load(Ordering::Relaxed);

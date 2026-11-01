@@ -36,9 +36,38 @@ pub enum Event {
     Retire(Box<Deck>),
 }
 
+/// Wait-free ring of the most recent output (mono) for visualizers.
+pub struct Tap {
+    buf: Box<[std::sync::atomic::AtomicU32]>,
+    pos: std::sync::atomic::AtomicUsize,
+}
+
+impl Default for Tap {
+    fn default() -> Self {
+        Self { buf: (0..16_384).map(|_| std::sync::atomic::AtomicU32::new(0)).collect(), pos: Default::default() }
+    }
+}
+
+impl Tap {
+    #[inline]
+    fn push(&self, v: f32) {
+        let p = self.pos.load(Ordering::Relaxed);
+        self.buf[p % self.buf.len()].store(v.to_bits(), Ordering::Relaxed);
+        self.pos.store(p.wrapping_add(1), Ordering::Release);
+    }
+
+    /// The latest `n` samples, oldest first.
+    pub fn latest(&self, n: usize) -> Vec<f32> {
+        let n = n.min(self.buf.len());
+        let end = self.pos.load(Ordering::Acquire);
+        (0..n).map(|i| f32::from_bits(self.buf[(end.wrapping_sub(n).wrapping_add(i)) % self.buf.len()].load(Ordering::Relaxed))).collect()
+    }
+}
+
 /// Published by the callback for the control side.
 #[derive(Default)]
 pub struct Telemetry {
+    pub tap: Tap,
     pub position_bits: AtomicU64,
     pub duration_bits: AtomicU64,
     pub playing: AtomicBool,
@@ -239,6 +268,7 @@ impl Mixer {
             // Soft safety clip (EQ boosts + crossfade overlap can exceed 0 dBFS).
             frame[0] = l.clamp(-1.0, 1.0);
             frame[1] = r.clamp(-1.0, 1.0);
+            self.tele.tap.push((frame[0] + frame[1]) * 0.5);
             pk_l = pk_l.max(frame[0].abs());
             pk_r = pk_r.max(frame[1].abs());
         }

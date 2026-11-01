@@ -545,6 +545,8 @@ final class AudioPlayerManager: ObservableObject {
     var rustOutputStarted = false
     /// Forces the AVAudioEngine path for one schedule (decode-failure fallback).
     var rustBypassOnce = false
+    /// Feeds the visualizer from the Rust engine's output tap.
+    var rustTapTimer: Timer?
     var opusTimeObserver: Any?
     var opusStatusObserver: NSKeyValueObservation?
     var opusEndObserver: NSObjectProtocol?
