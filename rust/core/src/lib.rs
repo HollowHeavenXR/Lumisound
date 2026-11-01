@@ -18,6 +18,7 @@ pub mod lua;
 pub mod metadata;
 pub mod error;
 pub mod retry;
+pub mod smart;
 pub mod store;
 pub mod stores;
 

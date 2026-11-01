@@ -145,94 +145,34 @@ struct SmartPlaylist: Codable, Identifiable, Equatable {
     /// Returns the songs from `songs` that satisfy this playlist's rules
     /// (and, if set, its Lua predicate), sorted and limited. `favorites` is
     /// `LibraryManager.favoriteSongIDs`.
+    /// Rules, sort and limit are evaluated by the Rust core
+    /// (rust/core/src/smart.rs); an optional Lua filter runs between them.
     @MainActor
     func evaluate(over songs: [Song], favorites: Set<String>) -> [Song] {
-        var filtered = songs.filter { matches($0, favorites: favorites) }
+        guard let json = try? JSONEncoder().encode(self) else { return songs }
+        let byID = Dictionary(songs.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let keep = Set(smartFilter(playlistJson: json, songs: songs.map(Self.facts), favorites: Array(favorites)))
+        var filtered = songs.filter { keep.contains($0.id) }
         if let luaScript, !luaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // A script that fails to run (bad syntax, threw, …) leaves the
-            // native-rules-only result alone rather than silently emptying
-            // the playlist — `nil` specifically means "couldn't evaluate",
-            // as opposed to a real empty match set (`[]`).
             if let allowedIDs = LuaSmartPlaylistEngine.filterSongIDs(script: luaScript, songs: filtered, favorites: favorites) {
                 filtered = filtered.filter { allowedIDs.contains($0.id) }
             }
         }
-        let sorted = sortSongs(filtered)
-        if limit > 0 { return Array(sorted.prefix(limit)) }
-        return sorted
+        return smartOrder(playlistJson: json, songs: filtered.map(Self.facts)).compactMap { byID[$0] }
     }
 
     @MainActor
     func matches(_ song: Song, favorites: Set<String>) -> Bool {
-        guard !rules.isEmpty else { return true }
-        let results = rules.map { evaluate(rule: $0, song: song, favorites: favorites) }
-        return match == .all ? results.allSatisfy { $0 } : results.contains(true)
+        guard !rules.isEmpty, let json = try? JSONEncoder().encode(self) else { return true }
+        return !smartFilter(playlistJson: json, songs: [Self.facts(song)], favorites: Array(favorites)).isEmpty
     }
 
-    @MainActor
-    private func evaluate(rule: SmartRule, song: Song, favorites: Set<String>) -> Bool {
-        switch rule.field.kind {
-        case .text:
-            let value = textValue(of: rule.field, in: song)
-            switch rule.op {
-            case .contains:    return value.localizedCaseInsensitiveContains(rule.text)
-            case .notContains: return !value.localizedCaseInsensitiveContains(rule.text)
-            case .equals:      return value.compare(rule.text, options: .caseInsensitive) == .orderedSame
-            default:           return false
-            }
-        case .number:
-            guard let value = numberValue(of: rule.field, in: song) else { return false }
-            switch rule.op {
-            case .equals:      return abs(value - rule.number) < 0.5
-            case .greaterThan: return value > rule.number
-            case .lessThan:    return value < rule.number
-            case .between:
-                let lo = min(rule.number, rule.number2)
-                let hi = max(rule.number, rule.number2)
-                return value >= lo && value <= hi
-            default:           return false
-            }
-        case .boolean:
-            let isFav = favorites.contains(song.id)
-            return rule.op == .isTrue ? isFav : !isFav
-        case .source:
-            return Self.sourceValue(of: song) == rule.source
-        }
+    private static func facts(_ s: Song) -> SmartSong {
+        SmartSong(id: s.id, displayName: s.displayName, title: s.title, artist: s.artist, album: s.album, genre: s.genre,
+                  year: s.year, duration: s.duration, bpm: s.bpm, sourceTrackId: s.sourceTrackID,
+                  dateAdded: s.dateAdded?.timeIntervalSince1970)
     }
 
-    private func textValue(of field: SmartField, in song: Song) -> String {
-        switch field {
-        case .title:  return song.title
-        case .artist: return song.artist
-        case .album:  return song.album
-        case .genre:  return song.genre
-        default:      return ""
-        }
-    }
-
-    @MainActor
-    private func numberValue(of field: SmartField, in song: Song) -> Double? {
-        switch field {
-        case .year:     return Double(song.year.trimmingCharacters(in: .whitespaces))
-        case .duration: return song.duration > 0 ? song.duration : nil
-        case .bpm:      return song.bpm
-        case .playCount:
-            return Double(PlayHistoryStore.shared.playCount(for: song.id))
-        case .daysSincePlayed:
-            guard let lastPlayed = PlayHistoryStore.shared.lastPlayedAt(for: song.id) else {
-                return .greatestFiniteMagnitude // never played — treat as "longest ago"
-            }
-            return Date().timeIntervalSince(lastPlayed) / 86400
-        case .daysSinceAdded:
-            guard let dateAdded = song.dateAdded else { return nil }
-            return Date().timeIntervalSince(dateAdded) / 86400
-        default:        return nil
-        }
-    }
-
-    /// Also used by `LuaSmartPlaylistEngine` to fill in a song's `source`
-    /// fact for scripts — `static` since it depends only on `song`, not any
-    /// playlist state.
     static func sourceValue(of song: Song) -> SmartSource {
         guard let s = song.sourceTrackID?.lowercased() else { return .local }
         if s.hasPrefix("youtube") { return .youtube }
@@ -240,26 +180,6 @@ struct SmartPlaylist: Codable, Identifiable, Equatable {
         return .local
     }
 
-    @MainActor
-    private func sortSongs(_ songs: [Song]) -> [Song] {
-        switch sort {
-        case .titleAsc:    return songs.sortedByDisplayName()
-        case .artistAsc:   return songs.sorted { $0.artist.localizedCaseInsensitiveCompare($1.artist) == .orderedAscending }
-        case .yearDesc:    return songs.sorted { (Int($0.year) ?? 0) > (Int($1.year) ?? 0) }
-        case .bpmAsc:      return songs.sorted { ($0.bpm ?? 0) < ($1.bpm ?? 0) }
-        case .durationAsc: return songs.sorted { $0.duration < $1.duration }
-        case .random:      return songs.shuffled()
-        case .playCountDesc:
-            return songs.sorted { PlayHistoryStore.shared.playCount(for: $0.id) > PlayHistoryStore.shared.playCount(for: $1.id) }
-        case .recentlyPlayedDesc:
-            return songs.sorted {
-                (PlayHistoryStore.shared.lastPlayedAt(for: $0.id) ?? .distantPast)
-                    > (PlayHistoryStore.shared.lastPlayedAt(for: $1.id) ?? .distantPast)
-            }
-        case .recentlyAddedDesc:
-            return songs.sorted { ($0.dateAdded ?? .distantPast) > ($1.dateAdded ?? .distantPast) }
-        }
-    }
 }
 
 // MARK: - SmartPlaylistStore

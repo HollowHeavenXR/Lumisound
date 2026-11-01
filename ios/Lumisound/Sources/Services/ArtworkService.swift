@@ -665,6 +665,13 @@ final class ArtworkService {
     }
 
     private func resizedImage(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        // Letterbox trim, square crop, downscale + JPEG in the Rust core
+        // (same rules as below, which remain the fallback).
+        if let data = image.jpegData(compressionQuality: 0.95) ?? image.pngData(),
+           let out = artworkProcess(imageData: data, maxDim: UInt32(max(16, maxDimension))),
+           let processed = UIImage(data: out) {
+            return processed
+        }
         // 1) Trim solid letterbox/pillarbox bars (e.g. a 16:9 video frame padded
         //    into a 4:3 `hqdefault` YouTube thumbnail, which a plain square crop
         //    would otherwise keep — the "artwork still shows 16:9 with black
@@ -832,6 +839,12 @@ final class ArtworkService {
     /// Reads embedded artwork from the file's metadata — checks both commonMetadata
     /// and all format-specific metadata items to maximise coverage across m4a, mp3, flac, etc.
     private func fetchAssetArtwork(url: URL) async -> UIImage? {
+        // Embedded pictures via the Rust core (lofty, every container).
+        if url.isFileURL,
+           let data = await Task.detached(priority: .utility, operation: { artworkEmbedded(path: url.path, cacheDir: CoreAudio.unlockDir) }).value,
+           let image = UIImage(data: data) {
+            return image
+        }
         return await Task.detached(priority: .utility) {
             let asset = AVURLAsset(url: url)
 
