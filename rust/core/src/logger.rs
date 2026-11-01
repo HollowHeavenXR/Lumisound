@@ -262,7 +262,7 @@ pub fn logger_event(category: String, event: String, level: String, message: Str
         (format!("{base}/api/log-event"), s.ctx.clone().unwrap_or_default())
     };
     let mut detail: Map<String, Value> = detail_json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
-    detail.insert("platform".into(), Value::String(ctx.platform));
+    detail.insert("platform".into(), Value::String(ctx.platform.clone()));
     detail.insert("appVersion".into(), Value::String(ctx.app_version));
     detail.insert("build".into(), Value::String(ctx.build));
     detail.insert("deviceModel".into(), Value::String(ctx.device_model));
