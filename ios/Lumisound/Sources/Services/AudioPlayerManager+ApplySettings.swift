@@ -228,6 +228,7 @@ extension AudioPlayerManager {
     /// clamped to unity. The brick-wall `limiter` further down the chain (see
     /// `configureLimiter`) catches any peaks this boost would otherwise clip.
     func applyOutputGain() {
+        if isUsingRustEngine { applyRustTrackGain(); return }
         let rgGain: Float = audioSettings.replayGainEnabled ? replayGainLinearGain : 1.0
         let userVol = audioSettings.volume
 
@@ -278,6 +279,7 @@ extension AudioPlayerManager {
     /// this instead of `applyOutputGain()` for any call site whose target
     /// isn't the direct, immediate result of the user's own gesture.
     func applyOutputGainRamped(duration: TimeInterval = 0.15) {
+        if isUsingRustEngine { applyRustTrackGain(); return }
         let rgGain: Float = audioSettings.replayGainEnabled ? replayGainLinearGain : 1.0
         let userVol = audioSettings.volume
         let totalLinear = max(0, rgGain * userVol)

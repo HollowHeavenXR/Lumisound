@@ -173,6 +173,11 @@ impl AudioEngine {
         self.send(Cmd::Volume(volume));
     }
 
+    /// ReplayGain / normalization for the playing track, in dB.
+    pub fn set_track_gain(&self, gain_db: f32) {
+        self.send(Cmd::TrackGain(db_to_lin(gain_db)));
+    }
+
     /// Ten gains in dB for 32 Hz…16 kHz.
     pub fn set_eq(&self, gains_db: Vec<f32>, enabled: bool) {
         let mut g = [0f32; 10];

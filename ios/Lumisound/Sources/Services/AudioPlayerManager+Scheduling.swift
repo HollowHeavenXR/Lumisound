@@ -522,6 +522,16 @@ extension AudioPlayerManager {
             return
         }
 
+        // The transcoded copy is a plain AAC file: play it on the Rust engine.
+        if rustEligible(for: transcodedURL), scheduleWithRustEngine(url: transcodedURL, startTime: startTime) {
+            if isPlaying {
+                rustPlay()
+                startTimer()
+            }
+            updateNowPlaying()
+            return
+        }
+
         do {
             let node = activeNode
             let gen  = scheduleGeneration &+ 1
@@ -791,6 +801,20 @@ extension AudioPlayerManager {
                 }
                 try? FileManager.default.removeItem(at: tempURL)
                 try FileManager.default.moveItem(at: downloaded, to: tempURL)
+            }
+
+            // Downloaded: the Rust engine plays the cached file like a local track.
+            if rustEligible(for: tempURL), scheduleWithRustEngine(url: tempURL, startTime: startTime) {
+                if isPlaying {
+                    pendingSeekRampTarget = nil
+                    activeNode.volume = audioSettings.volume
+                    rustPlay()
+                    startTimer()
+                    startSmartCrossfadeAnalysisIfNeeded()
+                }
+                updateNowPlaying()
+                appLog("downloadAndSchedule: Rust engine playback in \(String(format: "%.2f", Date().timeIntervalSince(playbackStartedAt)))s", category: "audio")
+                return
             }
 
             // From here on this is identical to the local-file path in scheduleCurrent.

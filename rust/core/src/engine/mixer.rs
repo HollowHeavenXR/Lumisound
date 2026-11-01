@@ -11,6 +11,8 @@ pub enum Cmd {
     Play,
     Pause { fade_frames: u64 },
     Volume(f32),
+    /// Per-track gain (ReplayGain / normalization) for the playing deck, linear.
+    TrackGain(f32),
     Eq { gains: [f32; 10], enabled: bool },
     Effects { reverb_wet: f32, reverb_preset: String, mono: bool, night: bool },
     /// Replace the playing deck immediately (load / seek).
@@ -99,6 +101,11 @@ impl Mixer {
                 self.volume = v.clamp(0.0, 2.0);
                 if self.playing && !self.pausing {
                     self.master.to(self.volume, self.short_fade() * 3);
+                }
+            }
+            Cmd::TrackGain(g) => {
+                if let Some(d) = self.cur.as_mut() {
+                    d.gain = g.clamp(0.0, 4.0);
                 }
             }
             Cmd::Eq { gains, enabled } => {

@@ -74,6 +74,8 @@ extension AudioPlayerManager {
             return false
         }
         audioFile = nil
+        resetReplayGainForNewTrack()
+        analyzeReplayGain(for: url)
         let probed = probeDuration(path: playable.path, cacheDir: CoreAudio.unlockDir)
         duration = probed > 0 ? probed : (currentSong?.duration ?? 0)
         position = startTime
@@ -115,6 +117,12 @@ extension AudioPlayerManager {
         let wet = s.reverbEnabled ? min(max(s.reverbWetDryMix, 0), 100) / 100 : 0
         Self.rust.setEffects(reverbWet: wet, reverbPreset: s.reverbPreset.rawValue,
                              mono: s.monoAudioEnabled == true, nightMode: s.nightModeEnabled == true)
+    }
+
+    /// ReplayGain (tags or measured) applied inside the engine; volume is separate.
+    func applyRustTrackGain() {
+        let linear: Float = audioSettings.replayGainEnabled ? replayGainLinearGain : 1.0
+        Self.rust.setTrackGain(gainDb: 20 * log10(max(linear, 0.0001)))
     }
 
     func rustPlay() {
@@ -185,6 +193,8 @@ extension AudioPlayerManager {
         isCrossfading = true
         advanceIndex()
         currentSong = nextSong
+        resetReplayGainForNewTrack(ramped: true)
+        analyzeReplayGain(for: nextURL)
         let probed = probeDuration(path: path, cacheDir: CoreAudio.unlockDir)
         duration = probed > 0 ? probed : nextSong.duration
         position = 0
@@ -212,6 +222,8 @@ extension AudioPlayerManager {
         rustNextDeckID = nil
         rustNextPath = nil
         Self.rust.adoptCurrent(path: path, gainDb: 0)
+        resetReplayGainForNewTrack(ramped: true)
+        if let url = currentSong?.url { analyzeReplayGain(for: url) }
         let probed = probeDuration(path: path, cacheDir: CoreAudio.unlockDir)
         duration = probed > 0 ? probed : (currentSong?.duration ?? 0)
         position = 0
