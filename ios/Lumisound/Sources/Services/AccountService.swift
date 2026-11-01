@@ -121,6 +121,7 @@ final class AccountService: ObservableObject {
 
     func startAutoPushTimer(library: LibraryManager) {
         stopAutoPushTimer()
+        startAppearanceSync()
 
         // Pull the account's favorites once at start-up. This is the half that
         // actually restores them after a reinstall or on a new device — writes

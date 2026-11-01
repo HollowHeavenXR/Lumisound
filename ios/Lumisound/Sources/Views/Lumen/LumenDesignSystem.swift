@@ -21,25 +21,25 @@ enum LumenPalette {
     static let azure         = Color(red: 0.310, green: 0.765, blue: 1.000)
     static let ember         = Color(red: 1.000, green: 0.478, blue: 0.396)
 
-    static let ink           = Color(red: 0.039, green: 0.035, blue: 0.063)
-    static let surface       = Color(red: 0.090, green: 0.082, blue: 0.122)
-    static let elevated      = Color(red: 0.133, green: 0.122, blue: 0.176)
+    static var ink           : Color { Appearance.current.background.color }
+    static var surface       : Color { Appearance.current.surface.color }
+    static var elevated      : Color { Appearance.current.elevated.color }
 
-    static let textPrimary   = Color(red: 0.961, green: 0.953, blue: 0.984)
-    static let textSecondary = Color(red: 0.663, green: 0.647, blue: 0.741)
-    static let textTertiary  = Color(red: 0.463, green: 0.447, blue: 0.541)
+    static var textPrimary   : Color { Appearance.current.textPrimary.color }
+    static var textSecondary : Color { Appearance.current.textSecondary.color }
+    static var textTertiary  : Color { Appearance.current.textTertiary.color }
 
-    static let hairline      = Color.white.opacity(0.07)
-    static let fill          = Color.white.opacity(0.06)
-    static let fillStrong    = Color.white.opacity(0.11)
+    static var hairline      : Color { Appearance.current.hairline.color }
+    static var fill          : Color { Appearance.current.fill.color }
+    static var fillStrong    : Color { Appearance.current.fillStrong.color }
 
     static let warning       = Color(red: 1.000, green: 0.706, blue: 0.329)
     static let success       = Color(red: 0.290, green: 0.871, blue: 0.608)
     static let error         = Color(red: 1.000, green: 0.420, blue: 0.506)
 
     /// The user's accent (defaults to iris) — what "selected" looks like.
-    static var accent: Color { AppTheme.dynamicAccent }
-    static var accentSecondary: Color { AppTheme.dynamicAccentSecondary }
+    static var accent: Color { Appearance.current.accentOverride?.color ?? AppTheme.dynamicAccent }
+    static var accentSecondary: Color { Appearance.current.accentOverride?.color.opacity(0.7) ?? AppTheme.dynamicAccentSecondary }
 
     static var glow: LinearGradient {
         LinearGradient(colors: [accent, accentSecondary], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -145,6 +145,7 @@ extension Color {
 struct LumenBackdrop: View {
     var intensity: Double = 1
     @ObservedObject private var ambience = LumenAmbience.shared
+    @ObservedObject private var appearance = Appearance.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @AppStorage("app_reduce_motion") private var appReduceMotion = false
     @State private var drift = false
@@ -152,6 +153,7 @@ struct LumenBackdrop: View {
     private var reduceMotion: Bool { systemReduceMotion || appReduceMotion }
 
     var body: some View {
+        let intensity = intensity * appearance.tokens.ambientIntensity
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
@@ -187,29 +189,30 @@ struct LumenBackdrop: View {
 struct LumenCardModifier: ViewModifier {
     var radius: CGFloat = LumenMetrics.cardRadius
     var padding: CGFloat = 16
-    var fill: Color = LumenPalette.surface.opacity(0.78)
+    /// nil = the selected appearance style's own surface.
+    var fill: Color? = nil
 
     func body(content: Content) -> some View {
-        content
-            .padding(padding)
-            .background {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(fill)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .strokeBorder(
-                                LinearGradient(colors: [Color.white.opacity(0.11), Color.white.opacity(0.02)],
-                                               startPoint: .top, endPoint: .bottom),
-                                lineWidth: 1
-                            )
-                    )
-            }
+        let t = Appearance.current
+        let shape = RoundedRectangle(cornerRadius: radius * CGFloat(t.cornerScale), style: .continuous)
+        if let fill {
+            content
+                .padding(padding * CGFloat(t.spacingScale))
+                .background {
+                    shape.fill(fill)
+                        .overlay(shape.strokeBorder(LumenPalette.hairline, lineWidth: max(t.borderWidth, 0.5)))
+                }
+        } else {
+            content
+                .padding(padding * CGFloat(t.spacingScale))
+                .styledSurface(in: shape, tint: nil)
+        }
     }
 }
 
 extension View {
     func lumenCard(radius: CGFloat = LumenMetrics.cardRadius, padding: CGFloat = 16,
-                   fill: Color = LumenPalette.surface.opacity(0.78)) -> some View {
+                   fill: Color? = nil) -> some View {
         modifier(LumenCardModifier(radius: radius, padding: padding, fill: fill))
     }
 

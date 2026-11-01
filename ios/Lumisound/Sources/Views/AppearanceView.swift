@@ -69,6 +69,15 @@ struct AppearanceView: View {
     var body: some View {
         List {
 
+            // MARK: — Interface Style
+            Section {
+                AppearanceStylePicker()
+            } header: {
+                sectionHeader("Interface Style")
+            } footer: {
+                Text("How cards, panels and the player chrome are drawn. Synced to your account.")
+            }
+
             // MARK: — Preview
             Section {
                 accentPreviewRow

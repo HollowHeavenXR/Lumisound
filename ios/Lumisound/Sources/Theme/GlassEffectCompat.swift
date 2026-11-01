@@ -132,24 +132,16 @@ extension View {
     // real glass, uses `lumenGlass` instead.
 
     fileprivate func lumenSurfaceBackground<S: Shape>(in shape: S, tint: Color?) -> some View {
-        self.background {
-            ZStack {
-                shape.fill(LumenPalette.surface.opacity(0.82))
-                if let tint { shape.fill(tint) }
-                shape.stroke(
-                    LinearGradient(colors: [Color.white.opacity(0.11), Color.white.opacity(0.02)],
-                                   startPoint: .top, endPoint: .bottom),
-                    lineWidth: 1
-                )
-            }
-        }
+        self.styledSurface(in: shape, tint: tint)
     }
 
     /// Liquid Glass for Lumen's own floating chrome (dock, mini player,
     /// selection bar), independent of the edition switch above.
     @ViewBuilder
     func lumenGlass<S: Shape, F: ShapeStyle>(in shape: S, fallback: F) -> some View {
-        if #available(iOS 26.0, *) {
+        if !Appearance.isLiquidGlass {
+            self.styledSurface(in: shape, tint: nil)
+        } else if #available(iOS 26.0, *) {
             self.background(glassTintLayer(in: shape)).glassEffect(.regular, in: shape)
         } else {
             self.background(fallback, in: shape)

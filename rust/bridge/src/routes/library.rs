@@ -29,6 +29,7 @@ pub fn routes() -> Router<AppState> {
         .route("/user/favorites/{song_id}", delete(remove_favorite))
         .route("/user/settings", get(get_settings).put(update_settings))
         .route("/user/settings/expanded", get(get_expanded).put(put_expanded))
+        .route("/user/appearance", get(get_appearance).put(put_appearance))
         .route("/user/library/inventory", post(upload_inventory))
         .route("/user/library/duplicates", get(library_duplicates))
         .route("/user/sync", get(sync_pull).post(sync_push))
@@ -956,4 +957,38 @@ async fn put_playback(State(st): State<AppState>, u: User, J(b): J<PlaybackBody>
     .execute(&st.db)
     .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---- appearance (interface style synced across devices) -------------------------------------
+
+#[derive(Deserialize)]
+struct AppearanceBody {
+    style: String,
+    #[serde(default = "regular_density")]
+    density: String,
+}
+
+fn regular_density() -> String {
+    "regular".into()
+}
+
+async fn get_appearance(State(st): State<AppState>, u: User) -> ApiResult<Json<Value>> {
+    let raw: Option<Option<String>> = sqlx::query_scalar("SELECT appearance_json FROM ios_user_settings WHERE user_id = $1").bind(&u.id).fetch_optional(&st.db).await?;
+    let v = raw.flatten().and_then(|r| serde_json::from_str::<Value>(&r).ok()).filter(Value::is_object);
+    Ok(Json(v.unwrap_or_else(|| json!({"style": null, "density": null}))))
+}
+
+async fn put_appearance(State(st): State<AppState>, u: User, J(b): J<AppearanceBody>) -> ApiResult<Json<Value>> {
+    let ok = |s: &str, max: usize| !s.is_empty() && s.len() <= max && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !ok(&b.style, 40) || !matches!(b.density.as_str(), "compact" | "regular" | "roomy") {
+        return Err(AppError::bad_request("Invalid appearance"));
+    }
+    let v = json!({"style": b.style, "density": b.density});
+    sqlx::query("INSERT INTO ios_user_settings (user_id, appearance_json) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET appearance_json = EXCLUDED.appearance_json")
+        .bind(&u.id)
+        .bind(v.to_string())
+        .execute(&st.db)
+        .await?;
+    st.push_live(&u.id, json!({"type": "appearance_changed", "style": b.style, "density": b.density}));
+    Ok(Json(v))
 }

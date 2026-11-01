@@ -1799,3 +1799,6 @@ CREATE TABLE IF NOT EXISTS ios_username_change_log (
     FOREIGN KEY (user_id) REFERENCES ios_users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS ios_username_change_log_idx_user_time ON ios_username_change_log (user_id, changed_at);
+
+-- Interface style chosen in the app (Settings > Appearance): {"style": "...", "density": "..."}.
+ALTER TABLE ios_user_settings ADD COLUMN IF NOT EXISTS appearance_json TEXT NULL;
