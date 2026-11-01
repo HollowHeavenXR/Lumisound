@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import LuaSwift
 
 // MARK: - LuaThemeEngine
 //
@@ -199,8 +198,6 @@ final class LuaThemeEngine: ObservableObject {
             throw LuaThemeEngineError.scriptNotFound(preset.filename)
         }
 
-        let engine = try LuaEngine()
-        try ModuleRegistry.install(in: engine)
 
         // Every preset script (Resources/LuaPresets/*.lua) is expected to
         // finish by assigning a global table named `theme` — see any of the
@@ -209,10 +206,7 @@ final class LuaThemeEngine: ObservableObject {
         // keeps preset scripts focused purely on values.
         let wrapped = source + "\nreturn json.encode(theme)\n"
 
-        let result = try engine.evaluate(wrapped, chunkName: preset.filename)
-        guard let jsonString = result.stringValue else {
-            throw LuaThemeEngineError.unexpectedResult
-        }
+        let jsonString = try luaEvalString(source: wrapped, chunkName: preset.filename)
 
         guard let data = jsonString.data(using: .utf8) else {
             throw LuaThemeEngineError.unexpectedResult

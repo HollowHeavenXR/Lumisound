@@ -26,14 +26,6 @@ packages:
   DSWaveformImage:
     url: https://github.com/dmrschmidt/DSWaveformImage
     from: "14.5.0"
-  # Lua VM for the Lua-scripted config/theming/logic layer (Theme/LuaThemeEngine.swift).
-  # Lightweight Swift wrapper around Lua 5.1-5.5 (default 5.4); bundles the Lua C
-  # source directly (no dynamic library), so it's App-Store-safe and needs no extra
-  # embed/signing step — same reason DSWaveformImage above is consumed as plain SPM.
-  LuaSwift:
-    url: https://github.com/ChrisGVE/LuaSwift
-    from: "1.4.0"
-
 settings:
   base:
     SWIFT_VERSION: "5.10"
@@ -115,8 +107,6 @@ targets:
       # once a signing path that supports embedded watch apps is in use.
       - package: DSWaveformImage
         product: DSWaveformImageViews
-      - package: LuaSwift
-        product: LuaSwift
     scheme:
       buildAction:
         targets:

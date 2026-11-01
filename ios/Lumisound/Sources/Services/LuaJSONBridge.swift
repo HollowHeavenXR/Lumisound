@@ -1,5 +1,4 @@
 import Foundation
-import LuaSwift
 
 // MARK: - LuaJSONBridge
 //
@@ -46,24 +45,7 @@ enum LuaJSONBridge {
     /// occurring terminator — every byte that could end the string early
     /// (`"`, `\`) or that Lua would otherwise mis-tokenize is escaped.
     static func quotedLuaString(_ s: String) -> String {
-        var out = "\""
-        out.reserveCapacity(s.utf8.count + 2)
-        for scalar in s.unicodeScalars {
-            switch scalar {
-            case "\"": out += "\\\""
-            case "\\": out += "\\\\"
-            case "\n": out += "\\n"
-            case "\r": out += "\\r"
-            default:
-                if scalar.value < 0x20 || scalar.value == 0x7F {
-                    out += "\\\(scalar.value)"
-                } else {
-                    out.unicodeScalars.append(scalar)
-                }
-            }
-        }
-        out += "\""
-        return out
+        luaQuote(s: s)
     }
 
     static func run<T: Decodable>(
@@ -72,10 +54,9 @@ enum LuaJSONBridge {
         as type: T.Type,
         convertFromSnakeCase: Bool = true
     ) throws -> T {
-        let engine = try LuaEngine()
-        try ModuleRegistry.install(in: engine)
-        let result = try engine.evaluate(source, chunkName: chunkName)
-        guard let jsonString = result.stringValue, let data = jsonString.data(using: .utf8) else {
+        // Sandboxed Lua 5.4 + json module in the Rust core (rust/core/src/lua.rs).
+        let jsonString = try luaEvalString(source: source, chunkName: chunkName)
+        guard let data = jsonString.data(using: .utf8) else {
             throw BridgeError.unexpectedResult
         }
         let decoder = JSONDecoder()

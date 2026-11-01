@@ -13,6 +13,7 @@ pub mod engine;
 pub mod library;
 pub mod live;
 pub mod lock;
+pub mod lua;
 pub mod error;
 pub mod retry;
 pub mod store;
