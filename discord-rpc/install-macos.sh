@@ -10,16 +10,30 @@
 #
 # Signing in is the default because the Rich Presence token is 248 characters
 # and pasting it reliably is awkward. Your password is exchanged for a 365-day
-# token and is never written to disk -- see rpc_login.py.
+# token and is never written to disk -- see `lumisound-discord-rpc login`.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST="$LAUNCH_AGENTS_DIR/com.lumisound.discord-rpc.plist"
+# Same place the daemon reads config.json from (LUMISOUND_RPC_CONFIG overrides it).
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/lumisound-discord-rpc"
+mkdir -p "$CONFIG_DIR"
 
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "Error: python3 is required (the daemon itself runs on it)." >&2
+# The daemon is a single Rust binary (rust/rpc): a downloaded release binary
+# next to this script, one on PATH, or built from this checkout with cargo.
+if [ -x "$SCRIPT_DIR/lumisound-discord-rpc" ]; then
+    BIN="$SCRIPT_DIR/lumisound-discord-rpc"
+elif command -v lumisound-discord-rpc >/dev/null 2>&1; then
+    BIN="$(command -v lumisound-discord-rpc)"
+elif command -v cargo >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/../rust/rpc/Cargo.toml" ]; then
+    echo "Building lumisound-discord-rpc with cargo (one time)..."
+    (cd "$SCRIPT_DIR/../rust" && cargo build --release -p lumisound-rpc)
+    cp "$SCRIPT_DIR/../rust/target/release/lumisound-discord-rpc" "$SCRIPT_DIR/"
+    BIN="$SCRIPT_DIR/lumisound-discord-rpc"
+else
+    echo "Error: lumisound-discord-rpc not found. Download it from the Lumisound GitHub releases into $SCRIPT_DIR, or install Rust (https://rustup.rs)." >&2
     exit 1
 fi
 
@@ -60,8 +74,7 @@ cat > "$PLIST" <<PLIST_EOF
     <string>com.lumisound.discord-rpc</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$PYTHON3</string>
-        <string>$SCRIPT_DIR/lumisound_discord_rpc.py</string>
+        <string>$BIN</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

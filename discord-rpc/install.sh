@@ -15,7 +15,7 @@
 #
 # Signing in is the default because the Rich Presence token is 248 characters
 # and pasting it reliably is awkward. Your password is exchanged for a 365-day
-# token and is never written to disk -- see rpc_login.py.
+# token and is never written to disk -- see `lumisound-discord-rpc login` (rust/rpc/src/login.rs).
 
 set -euo pipefail
 
@@ -57,20 +57,28 @@ done
 [ "$(id -u)" -ne 0 ] || die "Do not run this as root. It installs a *user* service; \
 as root it would configure root's account, not yours."
 
-command -v python3 >/dev/null 2>&1 \
-    || die "python3 is required (the daemon itself runs on it)."
-
-[ -f "$SCRIPT_DIR/rpc_login.py" ] \
-    || die "rpc_login.py is missing from $SCRIPT_DIR -- this checkout is incomplete."
-[ -f "$SCRIPT_DIR/lumisound_discord_rpc.py" ] \
-    || die "lumisound_discord_rpc.py is missing from $SCRIPT_DIR."
+# The daemon is a single Rust binary (rust/rpc). Use a downloaded release
+# binary next to this script, one on PATH, or build it from this checkout.
+find_bin() {
+    if [ -x "$SCRIPT_DIR/lumisound-discord-rpc" ]; then echo "$SCRIPT_DIR/lumisound-discord-rpc"; return; fi
+    if command -v lumisound-discord-rpc >/dev/null 2>&1; then command -v lumisound-discord-rpc; return; fi
+    if command -v cargo >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/../rust/rpc/Cargo.toml" ]; then
+        echo "Building lumisound-discord-rpc with cargo (one time)..." >&2
+        (cd "$SCRIPT_DIR/../rust" && cargo build --release -p lumisound-rpc >&2) \
+            && cp "$SCRIPT_DIR/../rust/target/release/lumisound-discord-rpc" "$SCRIPT_DIR/" \
+            && echo "$SCRIPT_DIR/lumisound-discord-rpc" && return
+    fi
+    return 1
+}
+BIN="$(find_bin)" || die "lumisound-discord-rpc not found. Download it from the Lumisound \
+GitHub releases into $SCRIPT_DIR, or install Rust (https://rustup.rs) so it can be built."
 [ -f "$SCRIPT_DIR/$UNIT_NAME" ] \
     || die "$UNIT_NAME template is missing from $SCRIPT_DIR."
 
 if [ "$CONFIG_ONLY" -eq 0 ]; then
     command -v systemctl >/dev/null 2>&1 \
         || die "systemctl not found. This installer targets systemd. Use \
---config-only and start lumisound_discord_rpc.py however your system does \
+--config-only and start lumisound-discord-rpc however your system does \
 services (see install-macos.sh for a LaunchAgent example)."
 
     # A user service needs a running user manager. Absent under plain `su`, in
@@ -116,7 +124,7 @@ fi
 # --- sign in / write config ------------------------------------------------
 
 # Writes the config (mode 0600) at the daemon's own default_config_path().
-python3 "$SCRIPT_DIR/rpc_login.py" "${LOGIN_ARGS[@]+"${LOGIN_ARGS[@]}"}"
+"$BIN" login "${LOGIN_ARGS[@]+"${LOGIN_ARGS[@]}"}"
 
 if [ "$CONFIG_ONLY" -eq 1 ]; then
     echo
@@ -131,7 +139,7 @@ fi
 mkdir -p "$SYSTEMD_USER_DIR"
 
 # Point the service at this checkout (works wherever it was cloned to).
-sed "s#__SCRIPT_PATH__#$SCRIPT_DIR/lumisound_discord_rpc.py#" \
+sed "s#__BIN_PATH__#$BIN#" \
     "$SCRIPT_DIR/$UNIT_NAME" > "$UNIT_DEST"
 echo "Installed $UNIT_DEST"
 

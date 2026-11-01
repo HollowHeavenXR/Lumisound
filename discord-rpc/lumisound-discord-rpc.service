@@ -4,7 +4,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/env python3 __SCRIPT_PATH__
+ExecStart=__BIN_PATH__
 Restart=on-failure
 RestartSec=10
 

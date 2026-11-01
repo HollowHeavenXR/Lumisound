@@ -1,0 +1,53 @@
+name: Discord RPC daemon
+
+# Builds the Rust Rich Presence daemon (rust/rpc) for Linux, macOS and
+# Windows. Pushes upload the binaries as artifacts; an `rpc/v*` tag also
+# attaches them to a GitHub release.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'rust/rpc/**'
+      - '.github/workflows/release-rpc.yml'
+    tags: [ 'rpc/v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin: lumisound-discord-rpc
+            asset: lumisound-discord-rpc-linux-x86_64
+          - os: macos-latest
+            bin: lumisound-discord-rpc
+            asset: lumisound-discord-rpc-macos-arm64
+          - os: windows-latest
+            bin: lumisound-discord-rpc.exe
+            asset: lumisound-discord-rpc-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        working-directory: rust
+        run: cargo build --release -p lumisound-rpc
+      - name: Stage
+        shell: bash
+        run: cp "rust/target/release/${{ matrix.bin }}" "${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/rpc/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" --title "Discord RPC ${GITHUB_REF_NAME#rpc/}" --notes "Lumisound Discord Rich Presence daemon (Rust)."
+          gh release upload "${GITHUB_REF_NAME}" "${{ matrix.asset }}" --clobber

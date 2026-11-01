@@ -1,7 +1,11 @@
 # Lumisound Discord Rich Presence
 
 A small daemon that mirrors your Lumisound "now playing" state to your
-Discord profile via Rich Presence.
+Discord profile via Rich Presence. It is one self-contained Rust binary,
+`lumisound-discord-rpc` (source: [`rust/rpc`](../rust/rpc)) — no Python or
+other runtime needed. The installers below use a release binary placed next
+to them, one on your `PATH`, or build it once with `cargo` if Rust is
+installed.
 
 ## Why this can't be fully server-side
 
@@ -58,11 +62,8 @@ systemctl --user status lumisound-discord-rpc.service
 journalctl --user -u lumisound-discord-rpc.service -f
 ```
 
-**After updating `lumisound_discord_rpc.py`** (a `git pull`, editing it
-directly, whatever), the running process keeps executing whatever code it
-already loaded — this is a long-running Python process, not something that
-re-reads its own source file. The new code does nothing until you restart
-it:
+**After updating the binary** (a new release or a rebuild), the running
+process keeps executing the old one until you restart it:
 
 ```sh
 systemctl --user restart lumisound-discord-rpc.service
@@ -96,8 +97,8 @@ tail -f ~/.config/lumisound-discord-rpc/daemon.log
 
 ### Windows (Scheduled Task, starts at login)
 
-Requires Python 3 from https://www.python.org/downloads/ (check "Add
-python.exe to PATH"). In PowerShell:
+Put `lumisound-discord-rpc.exe` next to the script (or install Rust so it can
+be built). In PowerShell:
 
 ```powershell
 .\install-windows.ps1
@@ -114,8 +115,8 @@ Get-ScheduledTask -TaskName LumisoundDiscordRPC
 Sign in without installing a service, then run the daemon in the foreground:
 
 ```sh
-python3 rpc_login.py          # writes config.json (mode 0600) for you
-python3 lumisound_discord_rpc.py
+lumisound-discord-rpc login   # writes config.json (mode 0600) for you
+lumisound-discord-rpc
 ```
 
 ### Still prefer a token?
