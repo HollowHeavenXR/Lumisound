@@ -9,17 +9,25 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RUST="$ROOT/rust"
 OUT="$ROOT/ios/RustCore"
 PLATFORMS="${PLATFORMS:-ios tvos watchos}"
-export IPHONEOS_DEPLOYMENT_TARGET=26.0
-export TVOS_DEPLOYMENT_TARGET=26.0
-export WATCHOS_DEPLOYMENT_TARGET=9.0
+# Only the target's own deployment variable may be set: clang (coreaudio-sys
+# bindgen) rejects an environment carrying several.
+IOS_MIN=26.0
+TVOS_MIN=26.0
+WATCHOS_MIN=9.0
 
 cd "$RUST"
 staticlib() { # toolchain target
   echo "==> $2"
+  local envvar
+  case "$2" in
+    *-ios|*-ios-sim) envvar="IPHONEOS_DEPLOYMENT_TARGET=$IOS_MIN" ;;
+    *-tvos|*-tvos-sim) envvar="TVOS_DEPLOYMENT_TARGET=$TVOS_MIN" ;;
+    *-watchos|*-watchos-sim) envvar="WATCHOS_DEPLOYMENT_TARGET=$WATCHOS_MIN" ;;
+  esac
   if [ "$1" = "nightly" ]; then
-    cargo +nightly rustc -Z build-std=std,panic_abort --release -p lumisound-core --lib --crate-type staticlib --target "$2"
+    env $envvar cargo +nightly rustc -Z build-std=std,panic_abort --release -p lumisound-core --lib --crate-type staticlib --target "$2"
   else
-    cargo rustc --release -p lumisound-core --lib --crate-type staticlib --target "$2"
+    env $envvar cargo rustc --release -p lumisound-core --lib --crate-type staticlib --target "$2"
   fi
 }
 # Simulator slices for one platform go in one fat lib (xcframework allows one

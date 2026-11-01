@@ -182,6 +182,12 @@ impl AudioEngine {
         self.send(Cmd::Eq { gains: g, enabled });
     }
 
+    /// Reverb wet amount 0…1 with a room preset name, mono fold-down and
+    /// night-mode compression.
+    pub fn set_effects(&self, reverb_wet: f32, reverb_preset: String, mono: bool, night_mode: bool) {
+        self.send(Cmd::Effects { reverb_wet, reverb_preset, mono, night: night_mode });
+    }
+
     pub fn position(&self) -> f64 {
         f64::from_bits(self.tele.position_bits.load(Ordering::Relaxed))
     }
@@ -203,6 +209,22 @@ impl AudioEngine {
         let b = self.tele.levels_bits.load(Ordering::Relaxed);
         vec![f32::from_bits((b >> 32) as u32), f32::from_bits(b as u32)]
     }
+}
+
+/// Effective EQ gains: the user's bands (when enabled) plus bass boost on
+/// the 32/64 Hz bands, clamped to the engine's range.
+#[uniffi::export]
+pub fn effective_eq_gains(bands: Vec<f32>, eq_enabled: bool, bass_boost_enabled: bool, bass_boost_gain: f32) -> Vec<f32> {
+    let boost = bass_boost_gain.clamp(0.0, 15.0);
+    (0..10)
+        .map(|i| {
+            let mut g = if eq_enabled { bands.get(i).copied().unwrap_or(0.0) } else { 0.0 };
+            if bass_boost_enabled && i < 2 {
+                g += boost;
+            }
+            g.clamp(-24.0, 24.0)
+        })
+        .collect()
 }
 
 impl AudioEngine {

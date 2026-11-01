@@ -61,7 +61,7 @@ extension AudioPlayerManager {
     }
 
     func handleEngineConfigurationChange() {
-        guard !isUsingOpusPlayer, isPlaying else { return }
+        guard !isUsingOpusPlayer, !isUsingRustEngine, isPlaying else { return }
         appWarn("Audio engine configuration changed — restarting engine to resume playback", category: "audio")
         guard !engine.isRunning else { return }
         // A track that is still being downloaded/transcoded schedules itself

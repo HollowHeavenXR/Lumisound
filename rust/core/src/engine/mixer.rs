@@ -3,7 +3,7 @@
 //! atomics, so the callback never blocks.
 
 use super::deck::Deck;
-use super::dsp::{Eq10, Ramp};
+use super::dsp::{Compressor, Eq10, Ramp, Reverb};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -12,6 +12,7 @@ pub enum Cmd {
     Pause { fade_frames: u64 },
     Volume(f32),
     Eq { gains: [f32; 10], enabled: bool },
+    Effects { reverb_wet: f32, reverb_preset: String, mono: bool, night: bool },
     /// Replace the playing deck immediately (load / seek).
     Replace(Box<Deck>),
     /// Gapless successor: starts the frame the current deck drains.
@@ -55,6 +56,9 @@ pub struct Mixer {
     playing: bool,
     pausing: bool,
     eq: Eq10,
+    reverb: Reverb,
+    comp: Compressor,
+    mono: bool,
     cmds: rtrb::Consumer<Cmd>,
     events: rtrb::Producer<Event>,
     pub tele: Arc<Telemetry>,
@@ -62,7 +66,7 @@ pub struct Mixer {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), cmds, events, tele }
+        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), mono: false, cmds, events, tele }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -93,6 +97,12 @@ impl Mixer {
             Cmd::Eq { gains, enabled } => {
                 self.eq.enabled = enabled;
                 self.eq.set_gains(&gains);
+            }
+            Cmd::Effects { reverb_wet, reverb_preset, mono, night } => {
+                self.reverb.wet = reverb_wet.clamp(0.0, 1.0);
+                self.reverb.set_preset(&reverb_preset);
+                self.mono = mono;
+                self.comp.enabled = night;
             }
             Cmd::Replace(d) => {
                 if let Some(old) = self.cur.replace(d) {
@@ -201,8 +211,16 @@ impl Mixer {
                 let (d, _) = self.fading.take().unwrap();
                 self.retire(d);
             }
-            l = self.eq.process(0, l) * g;
-            r = self.eq.process(1, r) * g;
+            l = self.eq.process(0, l);
+            r = self.eq.process(1, r);
+            (l, r) = self.reverb.process(l, r);
+            (l, r) = self.comp.process(l, r);
+            if self.mono {
+                let m = (l + r) * 0.5;
+                (l, r) = (m, m);
+            }
+            l *= g;
+            r *= g;
             // Soft safety clip (EQ boosts + crossfade overlap can exceed 0 dBFS).
             frame[0] = l.clamp(-1.0, 1.0);
             frame[1] = r.clamp(-1.0, 1.0);

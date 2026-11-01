@@ -538,6 +538,13 @@ final class AudioPlayerManager: ObservableObject {
     // AVPlayer fallback for containers (e.g. .opus) that AVAssetReader cannot decode.
     // When active, this player owns audio output instead of the AVAudioEngine nodes.
     var opusPlayer: AVPlayer?
+    /// Rust engine deck playing the current track (nil = AVAudioEngine/AVPlayer path).
+    var rustDeckID: UInt64?
+    var rustNextDeckID: UInt64?
+    var rustNextPath: String?
+    var rustOutputStarted = false
+    /// Forces the AVAudioEngine path for one schedule (decode-failure fallback).
+    var rustBypassOnce = false
     var opusTimeObserver: Any?
     var opusStatusObserver: NSKeyValueObservation?
     var opusEndObserver: NSObjectProtocol?

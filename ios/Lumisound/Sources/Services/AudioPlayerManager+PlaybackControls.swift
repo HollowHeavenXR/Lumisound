@@ -71,6 +71,17 @@ extension AudioPlayerManager {
             return
         }
         // A second pause while the first one's fade is still running changes nothing.
+        if isUsingRustEngine {
+            updatePositionFromPlayer()
+            rustPause()
+            isPlaying = false
+            stopTimer()
+            updateNowPlaying()
+            savePlaybackState()
+            armIdleTeardown()
+            appLog("Paused at \(String(format: "%.1f", position))s — \(currentSong?.displayName ?? "?")", category: "audio")
+            return
+        }
         if softPauseTask != nil { return }
         updatePositionFromPlayer()
         isPlaying = false
@@ -155,6 +166,7 @@ extension AudioPlayerManager {
         idleTeardownTimer?.invalidate()
         idleTeardownTimer = nil
         guard !isPlaying else { return }
+        releaseRustOutputIfIdle()
         if isUsingOpusPlayer {
             // AVPlayer has no persistent engine/session ownership the way
             // AVAudioEngine does; only the shared session needs releasing.
@@ -174,6 +186,14 @@ extension AudioPlayerManager {
             opusPlayer?.rate = Float(audioSettings.speed)
             isPlaying = true
             updateNowPlaying()
+            return
+        }
+        if isUsingRustEngine {
+            rustPlay()
+            isPlaying = true
+            startTimer()
+            updateNowPlaying()
+            appLog("Resumed — \(currentSong?.displayName ?? "?")", category: "audio")
             return
         }
         if cancelSoftPause() {
@@ -230,6 +250,7 @@ extension AudioPlayerManager {
 
     func stop() {
         tearDownOpusPlayer()
+        tearDownRustEngine()
         appLog("Stopped — \(currentSong?.displayName ?? "nothing playing")", category: "audio")
         softPauseTask?.cancel()
         softPauseTask = nil
@@ -272,6 +293,12 @@ extension AudioPlayerManager {
         position = target
         if isUsingOpusPlayer {
             opusPlayer?.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+            updateNowPlaying()
+            WidgetDataService.shared.updatePlayState(isPlaying: isPlaying, position: target, duration: duration)
+            return
+        }
+        if isUsingRustEngine {
+            rustSeek(to: target)
             updateNowPlaying()
             WidgetDataService.shared.updatePlayState(isPlaying: isPlaying, position: target, duration: duration)
             return

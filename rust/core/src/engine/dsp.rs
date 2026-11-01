@@ -205,3 +205,145 @@ mod tests {
         assert!(r.done());
     }
 }
+
+// ---- Freeverb (Jezar's public-domain design) --------------------------------------------------
+
+const COMB_TUNING: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+const ALLPASS_TUNING: [usize; 4] = [556, 441, 341, 225];
+const STEREO_SPREAD: usize = 23;
+
+struct Comb {
+    buf: Vec<f32>,
+    idx: usize,
+    store: f32,
+}
+
+impl Comb {
+    fn new(n: usize) -> Self {
+        Self { buf: vec![0.0; n.max(1)], idx: 0, store: 0.0 }
+    }
+    #[inline]
+    fn process(&mut self, x: f32, feedback: f32, damp: f32) -> f32 {
+        let out = self.buf[self.idx];
+        self.store = out * (1.0 - damp) + self.store * damp;
+        self.buf[self.idx] = x + self.store * feedback;
+        self.idx = (self.idx + 1) % self.buf.len();
+        out
+    }
+}
+
+struct Allpass {
+    buf: Vec<f32>,
+    idx: usize,
+}
+
+impl Allpass {
+    fn new(n: usize) -> Self {
+        Self { buf: vec![0.0; n.max(1)], idx: 0 }
+    }
+    #[inline]
+    fn process(&mut self, x: f32) -> f32 {
+        let b = self.buf[self.idx];
+        let out = b - x;
+        self.buf[self.idx] = x + b * 0.5;
+        self.idx = (self.idx + 1) % self.buf.len();
+        out
+    }
+}
+
+pub struct Reverb {
+    combs: [Vec<Comb>; 2],
+    allpasses: [Vec<Allpass>; 2],
+    pub wet: f32,
+    pub room: f32,
+    pub damp: f32,
+    pub width: f32,
+}
+
+impl Reverb {
+    pub fn new(rate: f32) -> Self {
+        let scale = rate / 44_100.0;
+        let mk = |spread: usize| -> (Vec<Comb>, Vec<Allpass>) {
+            (
+                COMB_TUNING.iter().map(|t| Comb::new(((t + spread) as f32 * scale) as usize)).collect(),
+                ALLPASS_TUNING.iter().map(|t| Allpass::new(((t + spread) as f32 * scale) as usize)).collect(),
+            )
+        };
+        let (cl, al) = mk(0);
+        let (cr, ar) = mk(STEREO_SPREAD);
+        Self { combs: [cl, cr], allpasses: [al, ar], wet: 0.0, room: 0.5, damp: 0.5, width: 1.0 }
+    }
+
+    /// Room presets matching the app's ReverbRoomPreset names.
+    pub fn set_preset(&mut self, name: &str) {
+        let (room, damp) = match name {
+            "smallRoom" => (0.35, 0.6),
+            "mediumRoom" => (0.55, 0.5),
+            "largeRoom" | "largeRoom2" => (0.75, 0.4),
+            "mediumHall" | "mediumHall2" | "mediumHall3" => (0.8, 0.35),
+            "largeHall" | "largeHall2" => (0.88, 0.3),
+            "plate" => (0.7, 0.15),
+            "cathedral" => (0.95, 0.25),
+            "mediumChamber" | "largeChamber" => (0.65, 0.45),
+            _ => (0.55, 0.5),
+        };
+        self.room = room;
+        self.damp = damp;
+    }
+
+    #[inline]
+    pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+        if self.wet <= 0.0001 {
+            return (l, r);
+        }
+        let input = (l + r) * 0.015;
+        let fb = self.room * 0.28 + 0.7;
+        let damp = self.damp * 0.4;
+        let mut out = [0f32; 2];
+        for ch in 0..2 {
+            let mut acc = 0.0;
+            for c in self.combs[ch].iter_mut() {
+                acc += c.process(input, fb, damp);
+            }
+            for a in self.allpasses[ch].iter_mut() {
+                acc = a.process(acc);
+            }
+            out[ch] = acc;
+        }
+        let w1 = self.wet * (self.width / 2.0 + 0.5) * 3.0;
+        let w2 = self.wet * ((1.0 - self.width) / 2.0) * 3.0;
+        let dry = 1.0 - self.wet * 0.5;
+        (l * dry + out[0] * w1 + out[1] * w2, r * dry + out[1] * w1 + out[0] * w2)
+    }
+}
+
+/// Gentle feed-forward compressor for night mode (evens out loud/quiet).
+pub struct Compressor {
+    env: f32,
+    attack: f32,
+    release: f32,
+    pub enabled: bool,
+}
+
+impl Compressor {
+    pub fn new(rate: f32) -> Self {
+        let coef = |ms: f32| (-1.0 / (ms * 0.001 * rate)).exp();
+        Self { env: 0.0, attack: coef(10.0), release: coef(200.0), enabled: false }
+    }
+
+    #[inline]
+    pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+        if !self.enabled {
+            return (l, r);
+        }
+        let x = l.abs().max(r.abs());
+        let c = if x > self.env { self.attack } else { self.release };
+        self.env = c * self.env + (1.0 - c) * x;
+        let db = 20.0 * self.env.max(1e-6).log10();
+        // Threshold -24 dBFS, ratio 3:1, +6 dB make-up.
+        let over = (db + 24.0).max(0.0);
+        let gain_db = -over * (1.0 - 1.0 / 3.0) + 6.0;
+        let g = 10f32.powf(gain_db / 20.0);
+        (l * g, r * g)
+    }
+}

@@ -60,6 +60,17 @@ extension AudioPlayerManager {
         // the AVAudioEngine graph below, which this path bypasses entirely).
         // Re-apply `.rate` directly so dragging the Speed slider mid-playback
         // takes effect immediately instead of silently doing nothing.
+        if isUsingRustEngine {
+            applyRustSettings()
+            // Settings the engine doesn't cover move playback back to AVAudioEngine.
+            if let url = currentSong?.url, !rustEligible(for: url) {
+                let at = position
+                let wasPlaying = isPlaying
+                tearDownRustEngine()
+                if wasPlaying { playCurrent(from: at) }
+            }
+            return
+        }
         if isUsingOpusPlayer {
             // AVPlayer.volume is hard-clamped to 0...1 by AVFoundation and this
             // path bypasses the AVAudioEngine graph entirely (no `equalizer`/

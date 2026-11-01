@@ -92,6 +92,14 @@ extension AudioPlayerManager {
             node.volume = resumeVolume
             return
         }
+        if isUsingRustEngine {
+            node.volume = resumeVolume
+            rustPlay()
+            isPlaying = true
+            startTimer()
+            updateNowPlaying()
+            return
+        }
         startEngineIfNeeded()
         activeNode.play()
         isPlaying = true
@@ -279,6 +287,9 @@ extension AudioPlayerManager {
     /// `downloadAndSchedule` completes the setup and starts the node once the file is cached.
     func scheduleCurrent(from startTime: TimeInterval) {
         guard let song = currentSong else { return }
+        // A new schedule always stops the Rust engine's decks first; the local
+        // file branch below re-loads into it when the track is eligible.
+        tearDownRustEngine()
         guard let url = song.url else {
             // URL was cleared (e.g. stale ipod-library:// after app restore) — skip silently.
             // Do not set errorMessage; the user sees the track title with no playback.
@@ -347,6 +358,11 @@ extension AudioPlayerManager {
 
         // Local file — schedule directly (native format, no transcoding needed).
         tearDownOpusPlayer()
+        if rustEligible(for: url) {
+            let gen = scheduleGeneration &+ 1
+            scheduleGeneration = gen
+            if scheduleWithRustEngine(url: url, startTime: startTime) { return }
+        }
         do {
             let node = activeNode
             // Increment generation before stopping so the old completion is invalidated.

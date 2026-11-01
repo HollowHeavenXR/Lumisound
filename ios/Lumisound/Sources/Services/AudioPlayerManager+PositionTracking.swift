@@ -43,7 +43,7 @@ extension AudioPlayerManager {
         // fired to tell us), restart it here. Without this, `isPlaying` stays true
         // forever with no audio and no track advance — the "music randomly stops"
         // bug — until the user manually pauses/resumes.
-        if isPlaying, !isUsingOpusPlayer, !engine.isRunning {
+        if isPlaying, !isUsingOpusPlayer, !isUsingRustEngine, !engine.isRunning {
             handleEngineConfigurationChange()
         }
 
@@ -402,6 +402,10 @@ extension AudioPlayerManager {
 
     func updatePositionFromPlayer() {
         guard !isUsingOpusPlayer else { return }
+        if isUsingRustEngine {
+            updatePositionFromRustEngine()
+            return
+        }
         // Do not overwrite `position` while an async download is in progress.
         // The position was already set to the seek target in seek()/downloadAndSchedule();
         // letting the timer fire here would clobber it with a stale node time.
