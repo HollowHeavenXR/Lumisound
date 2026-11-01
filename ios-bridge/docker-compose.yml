@@ -18,7 +18,7 @@ services:
   ios-bridge:
     restart: always
     network_mode: "host"
-    build: .
+    build: ../rust
     container_name: ios_bridge
     depends_on:
       - bgutil-provider

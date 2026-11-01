@@ -18,7 +18,7 @@
 | Path | What it is |
 |---|---|
 | [`ios/`](ios) | The Xcode project — one `xcodegen` project, five targets: the iPhone/iPad app, a Home/Lock Screen + StandBy widget, an Apple Watch app + its own complication widget, and a full Apple TV app. Install instructions, build steps, full feature docs |
-| [`ios-bridge/`](ios-bridge) | FastAPI server powering search/streaming, account sync, Aria Lumi (AI features), and all server-side features below |
+| [`rust/bridge/`](rust/bridge) | Rust (axum + sqlx) server powering search/streaming, account sync, Aria Lumi (AI features), and all server-side features below; host deploy files in [`ios-bridge/`](ios-bridge) |
 | [`discord-rpc/`](discord-rpc) | Optional local daemon that mirrors your "now playing" to Discord Rich Presence |
 
 See [`ios/README.md`](ios/README.md) for installation (AltStore / Sideloadly), self-hosting the

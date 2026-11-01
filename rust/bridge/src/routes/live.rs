@@ -1,20 +1,17 @@
-//! `/ws/live` (per-user event socket) and the internal endpoint the legacy
-//! Python bridge uses to publish into it while both servers run.
+//! `/ws/live`: the per-user event socket (notifications, presence, sync
+//! nudges, rooms) every app keeps open while foregrounded.
 
-use crate::error::AppError;
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::response::Response;
+use axum::routing::get;
+use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use serde_json::Value;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/ws/live", get(live)).route("/internal/live-push", post(internal_push))
+    Router::new().route("/ws/live", get(live))
 }
 
 #[derive(Deserialize)]
@@ -54,19 +51,3 @@ async fn serve(st: AppState, user: String, socket: WebSocket) {
     st.live.unregister(&user, id);
 }
 
-#[derive(Deserialize)]
-struct PushBody {
-    user_ids: Vec<String>,
-    event: Value,
-}
-
-async fn internal_push(State(st): State<AppState>, headers: HeaderMap, Json(b): Json<PushBody>) -> Result<impl IntoResponse, AppError> {
-    let ok = headers.get("x-internal-token").and_then(|v| v.to_str().ok()) == Some(st.internal_token.as_str());
-    if !ok {
-        return Err(AppError::forbidden("Forbidden"));
-    }
-    for u in &b.user_ids {
-        st.live.push(u, &b.event);
-    }
-    Ok(axum::http::StatusCode::NO_CONTENT)
-}

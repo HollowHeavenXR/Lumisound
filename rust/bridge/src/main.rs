@@ -1,8 +1,8 @@
 //! Lumisound bridge: the server behind the iOS/tvOS/watchOS apps.
 //!
-//! Routes that are not ported yet fall through to the legacy Python bridge
-//! (`LEGACY_URL`) via `proxy`, so the Rust server can take over port 8002 while
-//! the port is still in progress. See RUST-PORT.md at the repo root.
+//! Every route, background loop and engine the Python bridge had now lives
+//! here; external tools (yt-dlp, ffmpeg, fpcalc, Demucs) run as child
+//! processes. See RUST-PORT.md at the repo root.
 
 #![allow(dead_code)] // helpers land ahead of the routes that use them during the port
 
@@ -24,7 +24,6 @@ mod lock;
 mod notify;
 mod perf;
 mod probe;
-mod proxy;
 mod push;
 mod routes;
 mod state;
@@ -52,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     let app = routes::router(state.clone());
     let addr: SocketAddr = format!("{}:{}", state.cfg.host, state.cfg.port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("lumisound-bridge listening on {addr} (legacy: {:?})", state.cfg.legacy_url);
+    tracing::info!("lumisound-bridge listening on {addr}");
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await?;

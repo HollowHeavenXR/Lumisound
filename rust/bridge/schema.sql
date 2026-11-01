@@ -265,7 +265,7 @@ CREATE INDEX IF NOT EXISTS ios_bug_reports_idx_created ON ios_bug_reports (creat
 -- contents or URLs) are visible to other signed-in users via GET /social/*.
 ALTER TABLE ios_users ADD COLUMN IF NOT EXISTS share_listening_activity BOOLEAN DEFAULT FALSE;
 
--- Opt-in flag for AI-assisted suggestions (see ios-bridge/intelligence.py).
+-- Opt-in flag for AI-assisted suggestions (see rust/bridge/src/gemini.rs).
 -- When TRUE, this user's track titles/artists/genres may be sent to
 -- Anthropic's API to improve metadata/EQ/duplicate/mix decisions that
 -- otherwise fall back to the existing rule-based heuristics. Off by default —
@@ -812,7 +812,7 @@ CREATE TABLE IF NOT EXISTS ios_artist_bio_cache (
     cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Cache of Claude "intelligence" task results (see ios-bridge/intelligence.py),
+-- Cache of Claude "intelligence" task results (see rust/bridge/src/gemini.rs),
 -- keyed by task + a hash of the normalized input. Results here are stable
 -- decisions (e.g. "which metadata candidate is correct for this filename"),
 -- so they're cached indefinitely rather than on a TTL.
@@ -824,7 +824,7 @@ CREATE TABLE IF NOT EXISTS ios_intelligence_cache (
     PRIMARY KEY (task, cache_key)
 );
 
--- Aria Lumi's memory (see ios-bridge/intelligence.py): one row per suggestion
+-- Aria Lumi's memory (see rust/bridge/src/gemini.rs): one row per suggestion
 -- she makes, updated with correction_json whenever the user's actual choice
 -- differs from her pick. Recent corrections (correction_json IS NOT NULL) are
 -- fed back into her next prompt for that task as few-shot examples, so her

@@ -27,7 +27,6 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     /// Python bridge that serves every route not ported yet.
-    pub legacy_url: Option<String>,
 
     pub db_host: String,
     pub db_port: u16,
@@ -93,7 +92,6 @@ impl Config {
         Self {
             host: s("HOST", "0.0.0.0"),
             port: num("PORT", 8002),
-            legacy_url: opt("LEGACY_URL"),
             db_host: s("DB_HOST", "127.0.0.1"),
             db_port: num("DB_PORT", 5432),
             db_user: s("DB_USER", "botuser"),

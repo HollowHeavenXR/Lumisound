@@ -8,7 +8,6 @@ use crate::youtube::YouTube;
 use crate::ytdlp::Ytdlp;
 use dashmap::DashMap;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -26,8 +25,6 @@ pub struct Inner {
     pub session_cache: DashMap<String, Instant>,
     /// Shared outbound HTTP client (APIs, webhooks).
     pub http: reqwest::Client,
-    /// Client for the legacy Python bridge: no redirects, no decompression.
-    pub legacy: reqwest::Client,
     pub ytdlp_version: String,
     /// IPv4-only client for googlevideo (IPv6 egress gets 403s).
     pub cdn: reqwest::Client,
@@ -35,8 +32,6 @@ pub struct Inner {
     pub yt: YouTube,
     pub tags: TagCache,
     pub live: LiveHub,
-    /// Shared secret for /internal/* calls from the legacy bridge.
-    pub internal_token: String,
     pub search_cache: TtlCache<String, Value>,
     pub stream_urls: TtlCache<String, String>,
     pub stream_tickets: TtlCache<String, String>,
@@ -81,11 +76,6 @@ impl AppState {
             .timeout(std::time::Duration::from_secs(30))
             .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()?;
-        let legacy = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .pool_max_idle_per_host(64)
-            .tcp_nodelay(true)
-            .build()?;
         let ytdlp_version = tokio::process::Command::new("yt-dlp")
             .arg("--version")
             .output()
@@ -104,14 +94,12 @@ impl AppState {
             Some(d) => format!("{d}/.lumisound_ffprobe_cache.json"),
             None => std::env::temp_dir().join("lumisound_ffprobe_cache.json").to_string_lossy().into_owned(),
         };
-        let internal_token = hex::encode(Sha256::digest(format!("{}|live-push", cfg.jwt_secret).as_bytes()));
         Ok(AppState(Arc::new(Inner {
             keys: Keys::new(&cfg.jwt_secret),
             ytdlp: Ytdlp::new(&cfg, db.clone()),
             yt: YouTube::new(http.clone()),
             tags: TagCache::load(tags_path),
             live: LiveHub::default(),
-            internal_token,
             search_cache: TtlCache::new(Duration::from_secs(3600), 500),
             stream_urls: TtlCache::new(Duration::from_secs(5 * 3600), 20_000),
             stream_tickets: TtlCache::new(Duration::from_secs(6 * 3600), 5000),
@@ -139,13 +127,11 @@ impl AppState {
             db,
             session_cache: DashMap::new(),
             http,
-            legacy,
             ytdlp_version,
         })))
     }
 
-    /// Background loops that are already ported. The legacy bridge still
-    /// runs the rest until their route groups move over.
+    /// Background loops and periodic cache/rate-limit sweeps.
     pub fn spawn_background(&self) {
         crate::background::spawn_all(self);
         let st = self.clone();

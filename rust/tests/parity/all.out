@@ -1,0 +1,429 @@
+ok   GET /admin (200)
+ok   GET /admin (200)
+ok   GET /admin/api/announcements (200)
+ok   GET /admin/api/announcements (401)
+ok   GET /admin/api/download-jobs (200)
+ok   GET /admin/api/download-jobs (401)
+ok   GET /admin/api/errors (200)
+ok   GET /admin/api/errors (401)
+ok   GET /admin/api/events (200)
+ok   GET /admin/api/events (401)
+ok   GET /admin/api/logs (200)
+ok   GET /admin/api/logs (401)
+DIFF GET /admin/api/overview:
+    .concurrency.transcode_max: '2' vs '3'
+ok   GET /admin/api/overview (401)
+ok   GET /admin/api/storage-integrity (200)
+ok   GET /admin/api/storage-integrity (401)
+ok   GET /admin/api/users (200)
+ok   GET /admin/api/users (401)
+ok   GET /api/app/latest-release (200)
+ok   GET /api/app/latest-release (200)
+DIFF GET /api/artist/bio:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/artist/bio:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/artist/image:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/artist/image:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /api/discord/oauth/callback (307)
+ok   GET /api/discord/oauth/callback (307)
+DIFF GET /api/discord/oauth/start:
+    .authorize_url: 'https://discord.com/api/oauth2/authorize?client_id=1538245006421131294&redirect_' vs 'https://discord.com/api/oauth2/authorize?client_id=1538245006421131294&redirect_'
+DIFF GET /api/discord/oauth/start:
+    .authorize_url: 'https://discord.com/api/oauth2/authorize?client_id=1538245006421131294&redirect_' vs 'https://discord.com/api/oauth2/authorize?client_id=1538245006421131294&redirect_'
+ok   GET /api/discord/verification (200)
+ok   GET /api/discord/verification (200)
+DIFF GET /api/download:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'id'], 'msg': 'Field required', 'input': N vs str=Invalid API key
+DIFF GET /api/download:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'id'], 'msg': 'Field required', 'input': N vs str=Invalid API key
+DIFF GET /api/download/batch/status:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/download/batch/status:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /api/download/pending (403)
+ok   GET /api/download/pending (403)
+DIFF GET /api/download/relay:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'id'], 'msg': 'Field required', 'input': N vs str=Invalid API key
+DIFF GET /api/download/relay:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'id'], 'msg': 'Field required', 'input': N vs str=Invalid API key
+DIFF GET /api/download/status:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'job_id'], 'msg': 'Field required', 'input vs str=Invalid API key
+DIFF GET /api/download/status:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'job_id'], 'msg': 'Field required', 'input vs str=Invalid API key
+DIFF GET /api/gif-search:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/gif-search:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /api/gif-search/trending (200)
+ok   GET /api/gif-search/trending (200)
+ok   GET /api/library/server (200)
+ok   GET /api/library/server (200)
+DIFF GET /api/library/server/artwork:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/library/server/artwork:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/lyrics:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'title'], 'msg': 'Field required', 'input' vs str=Invalid API key
+DIFF GET /api/lyrics:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'title'], 'msg': 'Field required', 'input' vs str=Invalid API key
+DIFF GET /api/lyrics/search:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'q'], 'msg': 'Field required', 'input': No vs str=Invalid API key
+DIFF GET /api/lyrics/search:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'q'], 'msg': 'Field required', 'input': No vs str=Invalid API key
+DIFF GET /api/playlist/expand:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'url'], 'msg': 'Field required', 'input':  vs str=Invalid API key
+DIFF GET /api/playlist/expand:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'url'], 'msg': 'Field required', 'input':  vs str=Invalid API key
+DIFF GET /api/playlist/links:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'url'], 'msg': 'Field required', 'input':  vs str=Invalid API key
+DIFF GET /api/playlist/links:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'url'], 'msg': 'Field required', 'input':  vs str=Invalid API key
+DIFF GET /api/radio:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'id'], 'msg': 'Field required', 'input': N vs str=Invalid API key
+DIFF GET /api/radio:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'id'], 'msg': 'Field required', 'input': N vs str=Invalid API key
+DIFF GET /api/resolve:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'url'], 'msg': 'Field required', 'input':  vs str=Invalid API key
+DIFF GET /api/resolve:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'url'], 'msg': 'Field required', 'input':  vs str=Invalid API key
+DIFF GET /api/search:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'q'], 'msg': 'Field required', 'input': No vs str=Invalid API key
+DIFF GET /api/search:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'q'], 'msg': 'Field required', 'input': No vs str=Invalid API key
+DIFF GET /api/search/suggestions:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'q'], 'msg': 'Field required', 'input': No vs str=Invalid API key
+DIFF GET /api/search/suggestions:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'q'], 'msg': 'Field required', 'input': No vs str=Invalid API key
+ok   GET /api/search/trending (403)
+ok   GET /api/search/trending (403)
+ok   GET /api/social/activity/friends (200)
+ok   GET /api/social/activity/friends (200)
+ok   GET /api/social/block (200)
+ok   GET /api/social/block (200)
+ok   GET /api/social/friends (200)
+ok   GET /api/social/friends (200)
+ok   GET /api/social/friends/leaderboard (200)
+ok   GET /api/social/friends/leaderboard (200)
+ok   GET /api/social/friends/requests (200)
+ok   GET /api/social/friends/requests (200)
+ok   GET /api/social/friends/suggestions (200)
+ok   GET /api/social/friends/suggestions (200)
+ok   GET /api/social/friends/tags (200)
+ok   GET /api/social/friends/tags (200)
+ok   GET /api/social/presence/friends (200)
+ok   GET /api/social/presence/friends (200)
+DIFF GET /api/social/presence/listening-together:
+    .artist: only rust (None)
+    .is_playing: only py (False)
+    .last_seen_at: only py (None)
+    .listening_together: only rust ([])
+    .now_playing_artist: only py (None)
+    .now_playing_artwork_url: only py (None)
+    .now_playing_title: only py (None)
+    .online: only py (False)
+    .title: only rust (None)
+    .user_id: only py (listening-together)
+DIFF GET /api/social/presence/listening-together:
+    .artist: only rust (None)
+    .is_playing: only py (False)
+    .last_seen_at: only py (None)
+    .listening_together: only rust ([])
+    .now_playing_artist: only py (None)
+    .now_playing_artwork_url: only py (None)
+    .now_playing_title: only py (None)
+    .online: only py (False)
+    .title: only rust (None)
+    .user_id: only py (listening-together)
+ok   GET /api/social/profile/me (200)
+ok   GET /api/social/profile/me (200)
+ok   GET /api/social/recommended-people (200)
+ok   GET /api/social/recommended-people (200)
+DIFF GET /api/social/users/search:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/social/users/search:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/spotify/resolve:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'url'], 'msg': 'Field required', 'input':  vs str=Invalid API key
+DIFF GET /api/spotify/resolve:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'url'], 'msg': 'Field required', 'input':  vs str=Invalid API key
+DIFF GET /api/stem-separation/result:
+    .detail: len 2 vs 1
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/stem-separation/result:
+    .detail: len 2 vs 1
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/stem-separation/status:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/stem-separation/status:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /api/track:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'url'], 'msg': 'Field required', 'input':  vs str=Invalid API key
+DIFF GET /api/track:
+    status 422 vs 403
+    .detail: type list=[{'type': 'missing', 'loc': ['query', 'url'], 'msg': 'Field required', 'input':  vs str=Invalid API key
+ok   GET /auth/2fa/status (200)
+ok   GET /auth/2fa/status (200)
+DIFF GET /auth/discord/start:
+    .authorize_url: 'https://discord.com/api/oauth2/authorize?client_id=1538245006421131294&redirect_' vs 'https://discord.com/api/oauth2/authorize?client_id=1538245006421131294&redirect_'
+DIFF GET /auth/discord/start:
+    .authorize_url: 'https://discord.com/api/oauth2/authorize?client_id=1538245006421131294&redirect_' vs 'https://discord.com/api/oauth2/authorize?client_id=1538245006421131294&redirect_'
+ok   GET /auth/me (200)
+ok   GET /auth/me (200)
+ok   GET /auth/sessions (200)
+ok   GET /auth/sessions (200)
+ok   GET /health (200)
+ok   GET /health (200)
+DIFF GET /music/liner-notes:
+    .detail: len 2 vs 1
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /music/liner-notes:
+    .detail: len 2 vs 1
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /podcasts/search:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /podcasts/search:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /podcasts/trending (200)
+ok   GET /podcasts/trending (200)
+ok   GET /social/activity (200)
+ok   GET /social/activity (200)
+ok   GET /social/discover (200)
+ok   GET /social/discover (200)
+ok   GET /social/similar-listeners (200)
+ok   GET /social/similar-listeners (200)
+ok   GET /social/trending-by-energy (200)
+ok   GET /social/trending-by-energy (200)
+ok   GET /user/achievements (200)
+ok   GET /user/achievements (200)
+ok   GET /user/acoustid-api-key (200)
+ok   GET /user/acoustid-api-key (200)
+ok   GET /user/announcements (200)
+ok   GET /user/announcements (200)
+ok   GET /user/aria/daily-pick (200)
+ok   GET /user/aria/daily-pick (200)
+ok   GET /user/backups (200)
+ok   GET /user/backups (200)
+ok   GET /user/bio (200)
+ok   GET /user/bio (200)
+ok   GET /user/devices (200)
+ok   GET /user/devices (200)
+ok   GET /user/device-sync/active (200)
+ok   GET /user/device-sync/active (200)
+ok   GET /user/discord-rpc-config (200)
+ok   GET /user/discord-rpc-config (200)
+ok   GET /user/discord-webhook (200)
+ok   GET /user/discord-webhook (200)
+DIFF GET /user/discover-mix:
+    [0].thumbnail_url: 'https://i.ytimg.com/vi/lBzC1NZ_ol4/hq720.jpg?sqp=-oaymwEgCNAFEJQDSFXyq4qpAxIIARU' vs 'https://i.ytimg.com/vi/lBzC1NZ_ol4/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARU'
+    [1].thumbnail_url: 'https://i.ytimg.com/vi/qmbMa2Kx5qQ/hq720.jpg?sqp=-oaymwE6CNAFEJQDSFXyq4qpAywIARU' vs 'https://i.ytimg.com/vi/qmbMa2Kx5qQ/hq720.jpg?sqp=-oaymwE2CNAFEJQDSFXyq4qpAygIARU'
+    [2].thumbnail_url: 'https://i.ytimg.com/vi/XD-O_z6Csa4/hq720.jpg?sqp=-oaymwEgCNAFEJQDSFXyq4qpAxIIARU' vs 'https://i.ytimg.com/vi/XD-O_z6Csa4/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARU'
+    [3].thumbnail_url: 'https://i.ytimg.com/vi/KrQyjY1-96k/hq720.jpg?sqp=-oaymwEgCNAFEJQDSFXyq4qpAxIIARU' vs 'https://i.ytimg.com/vi/KrQyjY1-96k/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARU'
+    [5].thumbnail_url: 'https://i.ytimg.com/vi/IUSawYNVB4k/hq720.jpg?sqp=-oaymwEgCNAFEJQDSFXyq4qpAxIIARU' vs 'https://i.ytimg.com/vi/IUSawYNVB4k/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARU'
+    [6].thumbnail_url: 'https://i.ytimg.com/vi/cZmE5fJYumE/hqdefault.jpg?sqp=-oaymwE6COADEI4CSFXyq4qpAyw' vs 'https://i.ytimg.com/vi/cZmE5fJYumE/hqdefault.jpg?sqp=-oaymwE2COADEI4CSFXyq4qpAyg'
+    [7].thumbnail_url: 'https://i.ytimg.com/vi/EB0x4ui5ANw/hqdefault.jpg?sqp=-oaymwE6COADEI4CSFXyq4qpAyw' vs 'https://i.ytimg.com/vi/EB0x4ui5ANw/hqdefault.jpg?sqp=-oaymwE2COADEI4CSFXyq4qpAyg'
+    [8].artist: 'The Chipettes' vs 'ss eed'
+    [8].duration_seconds: '183' vs '141'
+    [8].id: '-RP19fnff_c' vs 'k_7650tq-hY'
+    [8].thumbnail_url: 'https://i.ytimg.com/vi/-RP19fnff_c/hq720.jpg?sqp=-oaymwEgCNAFEJQDSFXyq4qpAxIIARU' vs 'https://i.ytimg.com/vi/k_7650tq-hY/hq720.jpg?sqp=-oaymwE2CNAFEJQDSFXyq4qpAygIARU'
+    [8].title: 'The Chipettes - Single Ladies (Official Music Video)' vs 'The\xa0Chipmunks\xa0have a competition about dancing\xa0with\xa0the girl,\xa0and\xa0the\xa0mouse\xa0fina'
+    [8].youtube_url: 'https://www.youtube.com/watch?v=-RP19fnff_c' vs 'https://www.youtube.com/watch?v=k_7650tq-hY'
+    [9].thumbnail_url: 'https://i.ytimg.com/vi/CiJOqF9skIQ/hq720.jpg?sqp=-oaymwEgCNAFEJQDSFXyq4qpAxIIARU' vs 'https://i.ytimg.com/vi/CiJOqF9skIQ/hq720.jpg?sqp=-oaymwEcCNAFEJQDSFXyq4qpAw4IARU'
+    [10].artist: 'ss eed' vs 'The Chipettes'
+ok   GET /user/discover-mix (200)
+ok   GET /user/download-history (200)
+ok   GET /user/download-history (200)
+DIFF GET /user/export:
+    : '<105130 bytes>' vs '<103680 bytes>'
+DIFF GET /user/export:
+    : '<719 bytes>' vs '<729 bytes>'
+ok   GET /user/favorites (200)
+ok   GET /user/favorites (200)
+ok   GET /user/folder-backups (200)
+ok   GET /user/folder-backups (200)
+ok   GET /user/gallery/images (200)
+ok   GET /user/gallery/images (200)
+ok   GET /user/history (200)
+ok   GET /user/history (200)
+DIFF GET /user/intelligence/lyrics-transcribe/status:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /user/intelligence/lyrics-transcribe/status:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /user/library/acoustic-duplicates (200)
+DIFF GET /user/library/acoustic-duplicates:
+    .cached: 'False' vs 'True'
+    .scanned_at: type NoneType=None vs str=2026-11-01T07:01:24.761083
+ok   GET /user/library/duplicates (200)
+ok   GET /user/library/duplicates (200)
+DIFF GET /user/lyrics:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /user/lyrics:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /user/music (200)
+ok   GET /user/music (200)
+DIFF GET /user/music/artwork:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /user/music/artwork:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /user/music/metadata (200)
+ok   GET /user/music/metadata (200)
+DIFF GET /user/music/recommendations:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /user/music/recommendations:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /user/music/search:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /user/music/search:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /user/music/smart-playlists (200)
+ok   GET /user/music/smart-playlists (200)
+DIFF GET /user/music/waveform:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /user/music/waveform:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /user/music/weekly-mix (200)
+ok   GET /user/music/weekly-mix (200)
+ok   GET /user/notifications (200)
+ok   GET /user/notifications (200)
+ok   GET /user/on-this-day (200)
+ok   GET /user/on-this-day (200)
+ok   GET /user/playback-state (200)
+ok   GET /user/playback-state (200)
+ok   GET /user/playlists (200)
+ok   GET /user/playlists (200)
+DIFF GET /user/playlists/folders:
+    status 404 vs 200
+    : type dict={'detail': 'Playlist not found'} vs list=[{'folder': None, 'count': 1}]
+DIFF GET /user/playlists/folders:
+    status 404 vs 200
+    : type dict={'detail': 'Playlist not found'} vs list=[]
+DIFF GET /user/playlists/shared-with-me:
+    status 404 vs 200
+    : type dict={'detail': 'Playlist not found'} vs list=[]
+DIFF GET /user/playlists/shared-with-me:
+    status 404 vs 200
+    : type dict={'detail': 'Playlist not found'} vs list=[]
+DIFF GET /user/podcasts/chapters:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /user/podcasts/chapters:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /user/podcasts/episode-progress (200)
+ok   GET /user/podcasts/episode-progress (200)
+DIFF GET /user/podcasts/episodes:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /user/podcasts/episodes:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /user/podcasts/export-opml (200)
+ok   GET /user/podcasts/export-opml (200)
+ok   GET /user/podcasts/subscriptions (200)
+ok   GET /user/podcasts/subscriptions (200)
+ok   GET /user/queue (200)
+ok   GET /user/queue (200)
+ok   GET /user/scrobble (200)
+ok   GET /user/scrobble (200)
+ok   GET /user/settings (200)
+ok   GET /user/settings (200)
+ok   GET /user/settings/expanded (200)
+ok   GET /user/settings/expanded (200)
+ok   GET /user/social/twin (200)
+ok   GET /user/social/twin (200)
+ok   GET /user/social/twin/mix (200)
+ok   GET /user/social/twin/mix (200)
+ok   GET /user/stats (200)
+ok   GET /user/stats (200)
+ok   GET /user/stats/heatmap (200)
+ok   GET /user/stats/heatmap (200)
+ok   GET /user/stats/month-in-review (200)
+ok   GET /user/stats/month-in-review (200)
+ok   GET /user/stats/weekly (200)
+ok   GET /user/stats/weekly (200)
+ok   GET /user/stats/year-in-review (200)
+ok   GET /user/stats/year-in-review (200)
+ok   GET /user/storage/usage (200)
+ok   GET /user/storage/usage (200)
+ok   GET /user/subscriptions (200)
+ok   GET /user/subscriptions (200)
+ok   GET /user/subscriptions/feed (200)
+ok   GET /user/subscriptions/feed (200)
+ok   GET /user/sync (200)
+ok   GET /user/sync (200)
+ok   GET /user/webhooks (200)
+ok   GET /user/webhooks (200)
+ok   GET /user/youtube-api-key (200)
+ok   GET /user/youtube-api-key (200)
+ok   GET /user/ytdlp-cookies (200)
+ok   GET /user/ytdlp-cookies (200)
+ok   GET /user/ytdlp-cookies/preference (200)
+ok   GET /user/ytdlp-cookies/preference (200)
+DIFF GET /youtube/channel-uploads:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+DIFF GET /youtube/channel-uploads:
+    .detail[0].input: only py (None)
+    .detail[0].type: 'missing' vs 'value_error'
+ok   GET /youtube/key-exposure-check (200)
+ok   GET /youtube/key-exposure-check (200)
+244 cases, 79 differ

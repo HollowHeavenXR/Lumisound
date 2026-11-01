@@ -85,7 +85,9 @@ async fn overview(State(st): State<AppState>, _a: Admin) -> ApiResult<Json<Value
         "version": "1.0.0", "yt_dlp_version": st.ytdlp_version, "user_count": users, "music_file_count": files, "music_bytes": bytes,
         "disk": disk, "download_jobs_24h": jobs, "recent_error_count_24h": errs,
         "concurrency": {
-            "ytdlp_max": c.ytdlp_max, "ytdlp_safe": c.ytdlp_safe, "transcode_max": c.transcode_max,
+            "ytdlp_max": c.ytdlp_max, "ytdlp_safe": c.ytdlp_safe,
+            // Python's dict repeated this key; the later value (env, default 2) won.
+            "transcode_max": std::env::var("YTDLP_MAX_TRANSCODE_CONCURRENT").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(2),
             "available_mb": crate::ytdlp::available_memory_mb().unwrap_or(0.0).round() as i64,
             "ytdlp_available": st.ytdlp.limiter.available(), "transcode_available": st.ytdlp.transcode.available(),
         },

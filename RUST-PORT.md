@@ -16,7 +16,15 @@ rust/                      cargo workspace
   rpc/     lumisound-rpc     Discord Rich Presence daemon (replaces discord-rpc/*.py)
 ```
 
-## Migration method (bridge)
+## Migration method (bridge) — DONE 2026-11-01
+
+Python is deleted from the repo. Production still runs the last Python image
+until go-live (see notes). Staged compose: ~/Projects/web-stack/docker-compose.yml
+(single Rust `ios-bridge` service, 1536M for Demucs; previous file kept as
+docker-compose.yml.bak-before-rust-only). Go-live command, once the app is
+released: `cd ~/Projects/web-stack && docker compose up -d --build ios-bridge`.
+
+Historical method:
 
 The Rust bridge listens on :8002. Any route not ported yet is reverse-proxied to the Python
 bridge (moved to 127.0.0.1:8012, `LEGACY_URL`). Port one route group at a time, compare
@@ -45,7 +53,7 @@ responses against Python, then flip. When the list below is all checked, delete 
 - [x] 8. AI (Gemini over HTTP): intelligence/*, lyrics (+ transcribe), ai-dj, aria apis
 - [x] 9. Admin + logs: /admin*, /bug-report, /internal/logs, /api/log-event, janitors
 - [x] 10. Stem separation (spawn demucs CLI, same wrapper pattern as yt-dlp), fingerprint (fpcalc)
-- [ ] 11. Delete Python; Dockerfile without Python app (keep yt-dlp + demucs CLIs)
+- [x] 11. Delete Python; Dockerfile without Python app (keep yt-dlp + demucs CLIs)
 
 ## App core (Swift Services → rust/core)
 
@@ -127,5 +135,8 @@ responses against Python, then flip. When the list below is all checked, delete 
   now 256 MB globally. serde_json float_roundtrip on (exact decimals in jsonb passthrough).
 - Remaining 422 diffs are only pydantic's extra `input`/`ctx`/`type` fields in
   validation errors; the apps read `detail` text only on 4xx.
+- Final regression (rust/tests/parity/c_all_get.json, every Python GET route x 2 users):
+  only validation-ordering (Python validates query before API key; both are errors),
+  random OAuth state, newer yt-dlp thumbnails and the documented shadowing fixes differ.
 - Known schema quirk (unchanged): ios_user_music_metadata.id is the content hash alone, so
   two users uploading the same file share one row (second upload rewrites the first's).

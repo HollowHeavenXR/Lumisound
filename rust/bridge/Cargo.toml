@@ -14,7 +14,6 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart", "http2"] }
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 bytes = "1"
 jsonwebtoken = "9"
