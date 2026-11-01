@@ -112,11 +112,13 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [x] Lua engines on a Rust Lua 5.4 runtime (mlua, sandboxed, json module); LuaSwift removed
       [ ] sync payload/merge, tracked-playlist auto-download orchestration
 - [ ] H. Swift rewired, old Swift services deleted, tvOS/watchOS on the core, release tag
+      [x] tvOS app links the core (all HTTP via Core.data); universal iOS simulator slice
+      [ ] watchOS (linked, CI pending) ; release tag
 - [x] I. Appearance system: 7 styles (Liquid Glass, Frosted, Solid, Midnight OLED, Neon,
       Aurora, Minimal Mono) + density, tokens in rust/core/src/appearance.rs, picker in
       Settings > Appearance, synced via /user/appearance. (No light style yet: ~180 views
       hard-code white; needs a view sweep first.)
-- [ ] J. Audit: every remaining Swift file is view/app-shell/UniFFI glue only (list exceptions
+- [ ] J. Audit (ios/SWIFT-AUDIT.md written: wrappers / Apple-required / still-Swift lists): every remaining Swift file is view/app-shell/UniFFI glue only (list exceptions
         that iOS strictly requires: AVAudioSession, MPNowPlaying/RemoteCommand, BGTask,
         URLSession background transfers, Keychain, WidgetKit/ActivityKit/AppIntents/CarPlay
         entry points, WatchConnectivity, LocalAuthentication)
@@ -125,7 +127,7 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
 
 - [x] discord-rpc daemon → rust/rpc (binary lumisound-discord-rpc + `login`; installers updated;
       release-rpc.yml builds Linux/macOS/Windows on rpc/v* tags — runs once merged to main)
-- [ ] README / docs updated
+- [x] README / docs updated (root README, ios/README, ios-bridge/README, discord-rpc/README)
 
 ## Notes / decisions log
 
