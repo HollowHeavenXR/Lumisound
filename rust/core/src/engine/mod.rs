@@ -7,6 +7,7 @@
 pub mod deck;
 pub mod dsp;
 pub mod mixer;
+pub mod stretch;
 
 use mixer::{Cmd, Event, Mixer, Telemetry};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -42,6 +43,8 @@ pub struct AudioEngine {
     rate: AtomicU64,
     next_id: AtomicU64,
     current: Mutex<Option<(String, f32)>>,
+    /// (speed, pitch semitones) applied to every deck opened.
+    tempo: Mutex<(f64, f64)>,
     shutdown: Arc<AtomicBool>,
     output: Mutex<Option<output::Output>>,
 }
@@ -84,6 +87,7 @@ impl AudioEngine {
             rate: AtomicU64::new(rate as u64),
             next_id: AtomicU64::new(1),
             current: Mutex::new(None),
+            tempo: Mutex::new((1.0, 0.0)),
             shutdown,
             output: Mutex::new(None),
         })
@@ -143,6 +147,23 @@ impl AudioEngine {
     /// the new path so seeks reopen the right file).
     pub fn adopt_current(&self, path: String, gain_db: f32) {
         *self.current.lock().unwrap() = Some((path, gain_db));
+    }
+
+    /// Pitch-preserving speed (0.25–4×) and pitch shift (±24 semitones).
+    /// Applies to the playing track at its current position.
+    pub fn set_speed_pitch(&self, speed: f64, pitch_semitones: f64) -> Result<Option<u64>, EngineError> {
+        {
+            let mut t = self.tempo.lock().unwrap();
+            if (t.0 - speed).abs() < 1e-6 && (t.1 - pitch_semitones).abs() < 1e-6 {
+                return Ok(None);
+            }
+            *t = (speed, pitch_semitones);
+        }
+        if self.current.lock().unwrap().is_none() {
+            return Ok(None);
+        }
+        self.clear_next();
+        self.seek(self.position()).map(Some)
     }
 
     pub fn seek(&self, secs: f64) -> Result<u64, EngineError> {
@@ -246,7 +267,8 @@ pub fn effective_eq_gains(bands: Vec<f32>, eq_enabled: bool, bass_boost_enabled:
 impl AudioEngine {
     fn open(&self, path: &str, start: f64, gain_db: f32) -> Result<deck::Deck, EngineError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        deck::open(id, path, start, self.output_rate(), db_to_lin(gain_db)).map_err(|m| EngineError::Open { message: m })
+        let (speed, pitch) = *self.tempo.lock().unwrap();
+        deck::open(id, path, start, self.output_rate(), db_to_lin(gain_db), speed, pitch).map_err(|m| EngineError::Open { message: m })
     }
 
     fn send(&self, c: Cmd) {
@@ -486,6 +508,27 @@ mod tests {
         }
         assert!(worst < 8, "silent run of {worst} frames");
         assert_eq!(e.current_id(), ib);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn double_speed_halves_duration() {
+        let d = std::env::temp_dir().join(format!("engine-sp-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&d).unwrap();
+        let a = d.join("a.wav");
+        wav(&a, 1.0, 440.0, 48_000);
+        let l = Arc::new(L(Mutex::new(vec![])));
+        let e = AudioEngine::new(l.clone());
+        e.set_speed_pitch(2.0, 0.0).unwrap();
+        let id = e.load(a.to_string_lossy().into(), 0.0, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        e.play();
+        let out = pump(&e, 0.9);
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(l.0.lock().unwrap().contains(&format!("end{id}")), "{:?}", l.0.lock().unwrap());
+        let loud = out.iter().filter(|s| s.abs() > 0.1).count() / 2;
+        // 1 s of audio at 2x ≈ 0.5 s ≈ 24k frames, ~87% above the threshold.
+        assert!((18_000..=23_500).contains(&loud), "loud {loud}");
         let _ = std::fs::remove_dir_all(d);
     }
 }

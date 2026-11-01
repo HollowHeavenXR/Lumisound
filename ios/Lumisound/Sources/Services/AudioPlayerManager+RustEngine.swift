@@ -37,7 +37,6 @@ extension AudioPlayerManager {
     func rustEligible(for url: URL) -> Bool {
         guard Self.rustEngineEnabled, !rustBypassOnce else { return false }
         let s = audioSettings
-        if s.speed != 1 || s.pitchSemitones != 0 { return false }
         if s.spatialAudioEnabled == true { return false }
         // Effects map onto settings + an optional modulation; the engine does
         // 8D rotation and tremolo, vibrato (pitch LFO) stays on AVAudioEngine.
@@ -67,6 +66,8 @@ extension AudioPlayerManager {
         if engine.isRunning { engine.stop() }
         guard ensureRustOutput() else { return false }
         Self.rustRelay.player = self
+        // Speed/pitch apply to every deck the engine opens.
+        _ = try? Self.rust.setSpeedPitch(speed: Double(audioSettings.speed), pitchSemitones: Double(audioSettings.pitchSemitones))
         do {
             let id = try Self.rust.load(path: playable.path, startSecs: max(0, startTime), gainDb: 0)
             rustDeckID = id
@@ -114,6 +115,14 @@ extension AudioPlayerManager {
     func applyRustSettings() {
         let s = audioSettings
         Self.rust.setVolume(volume: s.volume)
+        // Pitch-preserving speed + pitch shift (WSOLA) — re-opens the deck at
+        // the current position when they change.
+        if let newID = try? Self.rust.setSpeedPitch(speed: Double(s.speed), pitchSemitones: Double(s.pitchSemitones)) {
+            rustDeckID = newID
+            rustNextDeckID = nil
+            rustNextPath = nil
+            queueRustGaplessNext()
+        }
         Self.rust.setEq(gainsDb: effectiveEqGains(bands: s.eqBands, eqEnabled: s.equalizerEnabled,
                                                    bassBoostEnabled: s.bassBoostEnabled, bassBoostGain: s.bassBoostGain),
                         enabled: s.equalizerEnabled || s.bassBoostEnabled)

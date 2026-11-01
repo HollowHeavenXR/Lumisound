@@ -38,11 +38,13 @@ pub struct Deck {
     pub shared: Arc<DeckShared>,
     /// Per-track gain (ReplayGain / normalization), linear.
     pub gain: f32,
+    /// Playback speed (track seconds per output second).
+    pub speed: f64,
 }
 
 impl Deck {
     pub fn position(&self) -> f64 {
-        self.start_offset + self.frames_played as f64 / self.out_rate as f64
+        self.start_offset + self.frames_played as f64 / self.out_rate as f64 * self.speed
     }
 
     pub fn duration(&self) -> f64 {
@@ -67,7 +69,12 @@ impl Drop for Deck {
 
 /// Open `path` and start decoding from `start` seconds. Returns once the
 /// container is probed (fails fast on unreadable files).
-pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32) -> Result<Deck, String> {
+pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f64, pitch_semitones: f64) -> Result<Deck, String> {
+    let speed = speed.clamp(0.25, 4.0);
+    let pitch = 2f64.powf(pitch_semitones.clamp(-24.0, 24.0) / 12.0);
+    // Pitch: resample to out_rate·p and play at out_rate. Tempo: WSOLA by s/p.
+    let target_rate = ((out_rate as f64) * pitch).round() as u32;
+    let stretch_ratio = speed / pitch;
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
@@ -107,14 +114,14 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32) -> Result
     std::thread::Builder::new()
         .name("lumisound-deck".into())
         .spawn(move || {
-            let r = decode_loop(&mut *fmt, &mut *dec, tid, src_rate, out_rate, prod, &sh);
+            let r = decode_loop(&mut *fmt, &mut *dec, tid, src_rate, target_rate, stretch_ratio, prod, &sh);
             if r.is_err() {
                 sh.failed.store(true, Ordering::Release);
             }
             sh.eof.store(true, Ordering::Release);
         })
         .map_err(|e| e.to_string())?;
-    Ok(Deck { id, path: path.to_string(), start_offset: actual_start.max(0.0), frames_played: 0, out_rate, ring: cons, shared, gain })
+    Ok(Deck { id, path: path.to_string(), start_offset: actual_start.max(0.0), frames_played: 0, out_rate, ring: cons, shared, gain, speed })
 }
 
 fn push_all(prod: &mut rtrb::Producer<f32>, data: &[f32], sh: &DeckShared) -> bool {
@@ -146,14 +153,25 @@ fn decode_loop(
     track_id: u32,
     src_rate: u32,
     out_rate: u32,
+    stretch_ratio: f64,
     mut prod: rtrb::Producer<f32>,
     sh: &DeckShared,
 ) -> Result<(), String> {
+    let mut wsola = super::stretch::Wsola::new(stretch_ratio);
+    let mut stretched: Vec<f32> = Vec::with_capacity(CHUNK * 8);
     let mut resampler = if src_rate != out_rate { Some(FftFixedIn::<f32>::new(src_rate as usize, out_rate as usize, CHUNK, 2, 2).map_err(|e| e.to_string())?) } else { None };
     let mut pending: [Vec<f32>; 2] = [Vec::with_capacity(CHUNK * 2), Vec::with_capacity(CHUNK * 2)];
     let mut sbuf: Option<SampleBuffer<f32>> = None;
     let mut inter = Vec::with_capacity(CHUNK * 4);
-    let flush = |pending: &mut [Vec<f32>; 2], rs: &mut Option<FftFixedIn<f32>>, prod: &mut rtrb::Producer<f32>, inter: &mut Vec<f32>, last: bool| -> bool {
+    let mut emit = |data: &[f32], prod: &mut rtrb::Producer<f32>| -> bool {
+        if wsola.is_identity() {
+            return push_all(prod, data, sh);
+        }
+        stretched.clear();
+        wsola.process(data, &mut stretched);
+        push_all(prod, &stretched, sh)
+    };
+    let mut flush = |pending: &mut [Vec<f32>; 2], rs: &mut Option<FftFixedIn<f32>>, prod: &mut rtrb::Producer<f32>, inter: &mut Vec<f32>, last: bool| -> bool {
         match rs {
             None => {
                 let n = pending[0].len();
@@ -164,7 +182,7 @@ fn decode_loop(
                 }
                 pending[0].clear();
                 pending[1].clear();
-                push_all(prod, inter, sh)
+                emit(inter, prod)
             }
             Some(r) => {
                 while pending[0].len() >= CHUNK || (last && !pending[0].is_empty()) {
@@ -181,7 +199,7 @@ fn decode_loop(
                     }
                     pending[0].drain(..CHUNK);
                     pending[1].drain(..CHUNK);
-                    if !push_all(prod, inter, sh) {
+                    if !emit(inter, prod) {
                         return false;
                     }
                 }
