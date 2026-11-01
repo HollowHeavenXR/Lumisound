@@ -51,7 +51,7 @@ struct WatchBridgeClient {
             urlRequest.httpBody = bodyData
         }
 
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        let (data, response) = try await Core.data(for: urlRequest)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             if let detail = try? JSONDecoder().decode(WatchAPIErrorBody.self, from: data) {
                 throw WatchBridgeError(statusCode: http.statusCode, message: detail.detail)
@@ -99,7 +99,7 @@ struct WatchBridgeClient {
         var urlRequest = URLRequest(url: url)
         urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         urlRequest.timeoutInterval = 60
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        let (data, response) = try await Core.data(for: urlRequest)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw WatchBridgeError(statusCode: http.statusCode, message: "Download failed (HTTP \(http.statusCode))")
         }

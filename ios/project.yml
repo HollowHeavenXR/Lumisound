@@ -152,6 +152,9 @@ targets:
     sources:
       - path: LumisoundWatch/Sources
       - path: Shared/AppGroup.swift
+      # Rust app core (see the Lumisound target).
+      - path: RustCore/LumisoundCore.swift
+      - path: Shared/Core
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lumisound.ios.watchkitapp
@@ -163,6 +166,9 @@ targets:
         SKIP_INSTALL: "NO"
     dependencies:
       - target: LumisoundWatchWidget
+      - framework: RustCore/LumisoundCore.xcframework
+        embed: false
+      - sdk: Security.framework
     scheme:
       buildAction:
         targets:

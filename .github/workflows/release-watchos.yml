@@ -56,7 +56,7 @@ jobs:
       # Rust app core (rust/core) -> ios/RustCore, needed before XcodeGen.
       - name: Build Rust core
         env:
-          PLATFORMS: "ios"
+          PLATFORMS: "ios watchos"
         run: ios/scripts/build-core.sh
 
 
