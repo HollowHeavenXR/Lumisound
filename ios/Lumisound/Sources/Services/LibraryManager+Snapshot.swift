@@ -57,37 +57,28 @@ extension LibraryManager {
     /// `Task`, not await it inline where a blocked launch screen would
     /// matter.
     func loadPersistedSnapshot() async {
-        let url = Self.snapshotURL
-        // The lookup indexes are rebuilt from the snapshot too, not just
-        // `allSongs`. Without them, anything that resolves songs by id in the
-        // window before the first scan finishes gets nothing back — Home's
-        // Quick Access built every playlist tile as "0 songs" with no
-        // artwork, and because the scan then lands with the same song count,
-        // Home's `.task(id: allSongs.count)` never re-ran to correct it. Same
-        // construction as `rebuildAllSongs()`.
+        let path = Self.snapshotURL.path
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.standardizedFileURL.path ?? ""
+        // Read, re-anchor to the current container and group in the Rust
+        // core; only the Song view models are decoded here.
         let restored: (snapshot: LibrarySnapshot,
                        byID: [String: Song],
                        byArtist: [String: [Song]],
                        byAlbum: [String: [Song]],
                        byGenre: [String: [Song]])? = await Task.detached(priority: .userInitiated) {
-            guard let data = try? Data(contentsOf: url),
-                  let decoded = try? JSONDecoder().decode(LibrarySnapshot.self, from: data),
-                  !decoded.songs.isEmpty
+            guard let load = librarySnapshotLoad(path: path, documentsDir: docs),
+                  let snapshot = try? JSONDecoder().decode(LibrarySnapshot.self, from: load.snapshotJson),
+                  !snapshot.songs.isEmpty
             else { return nil }
-            let snapshot = Self.reanchoredToCurrentContainer(decoded)
-            let songs = snapshot.songs
-            return (
-                snapshot: snapshot,
-                byID: Dictionary(songs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
-                byArtist: Dictionary(grouping: songs, by: \.artistName),
-                byAlbum: Dictionary(grouping: songs, by: \.groupableAlbumName),
-                byGenre: Dictionary(grouping: songs.filter { !$0.genre.isEmpty }, by: \.genre)
-            )
+            let byID = Dictionary(snapshot.songs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            func dict(_ groups: [SongGroup]) -> [String: [Song]] {
+                Dictionary(groups.map { ($0.key, $0.songIds.compactMap { byID[$0] }) }, uniquingKeysWith: { a, b in a + b })
+            }
+            return (snapshot: snapshot, byID: byID,
+                    byArtist: dict(load.byArtist), byAlbum: dict(load.byAlbum), byGenre: dict(load.byGenre))
         }.value
         guard let restored else { return }
         let snapshot = restored.snapshot
-        // Indexes first: `allSongs` is what views observe, so by the time it
-        // publishes, lookups against it already work.
         songsByID = restored.byID
         songsByArtist = restored.byArtist
         songsByAlbum = restored.byAlbum
@@ -96,11 +87,6 @@ extension LibraryManager {
         artists = snapshot.artists
         albums = snapshot.albums
         genres = snapshot.genres
-        // Restored only if the scan hasn't already populated it. Both this and
-        // the launch scan are kicked off around the same moment, and this one
-        // awaits a file read plus a JSON decode, so it can easily land second —
-        // overwriting a freshly-scanned library with a stale snapshot would turn
-        // a missed optimisation into actual data loss.
         if let imported = snapshot.importedSongs, importedSongs.isEmpty {
             importedSongs = imported
             appLog("Restored \(imported.count) imported song(s) from snapshot — scan will diff against these rather than treating every file as new",
@@ -109,70 +95,6 @@ extension LibraryManager {
         appLog("Loaded cached library snapshot: \(snapshot.songs.count) song(s)", category: "library")
     }
 
-    /// The snapshot with every Documents file URL moved into this install's
-    /// Documents directory.
-    ///
-    /// Song URLs are stored absolute, and the absolute path of the app's data
-    /// container changes when the app is updated or reinstalled. After every
-    /// update, then, each restored URL pointed into a container that no longer
-    /// existed: the scan's eviction step found none of the files, emptied
-    /// `importedSongs`, and re-imported the whole library as new. Field
-    /// telemetry showed it on the first launch of a new version every time
-    /// (`librarySize: 0, newSongs: 5006`), once as a 45-minute background scan.
-    /// `ScanCacheService` already keys on Documents-relative paths for this
-    /// reason; this brings the snapshot in line.
-    nonisolated private static func reanchoredToCurrentContainer(_ snapshot: LibrarySnapshot) -> LibrarySnapshot {
-        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return snapshot
-        }
-        let docsPath = docs.standardizedFileURL.path
-        func reanchor(_ songs: [Song]) -> [Song] {
-            songs.map { song in
-                guard let url = song.url, url.isFileURL else { return song }
-                let path = url.path
-                guard !path.hasPrefix(docsPath),
-                      let marker = path.range(of: "/Documents/")
-                else { return song }
-                var moved = song
-                moved.url = URL(fileURLWithPath: docsPath)
-                    .appendingPathComponent(String(path[marker.upperBound...]))
-                return moved
-            }
-        }
-        return LibrarySnapshot(
-            songs: reanchor(snapshot.songs),
-            artists: snapshot.artists,
-            albums: snapshot.albums,
-            genres: snapshot.genres,
-            importedSongs: snapshot.importedSongs.map(reanchor)
-        )
-    }
-
-    /// Writes the current library state to disk so the next launch can show it
-    /// instantly via `loadPersistedSnapshot`. Only called once a scan has
-    /// fully settled (`!isScanning`) so we never persist a half-populated
-    /// mid-scan state as if it were the real library. Encoding/writing
-    /// thousands of `Song` structs is real work — offloaded to a background
-    /// task exactly like `ScanCacheService.persist()`.
-    ///
-    /// Debounced ~2s (separate from `rebuildAllSongs()`'s own 100ms debounce):
-    /// `rebuildAllSongs()` runs once per single-song mutation too (e.g. one
-    /// BPM analysis completing at a time, or a metadata correction), and each
-    /// call used to trigger its own full snapshot re-encode+write. A run of
-    /// several such mutations a few seconds apart — common while background
-    /// BPM analysis works through a large library — now collapses into one
-    /// disk write instead of one per mutation.
-    ///
-    /// Also rate-limited to one write per `minimumSnapshotInterval`. A 2s
-    /// debounce collapses a burst, but background analysis produces a steady
-    /// trickle — one BPM result, one metadata correction, every few seconds for
-    /// as long as it runs — and each of those still rewrote the whole snapshot
-    /// (every song, twice over, since it carries `importedSongs` beside the
-    /// combined list). MetricKit reported this app writing 4 to 17 GB in a day,
-    /// which is enough sustained flash and CPU work to warm the phone on its
-    /// own. The snapshot only has to be recent enough to make the next launch
-    /// instant; `flushPendingSnapshot()` writes anything still pending when the
-    /// app is backgrounded.
     func persistSnapshotIfSettled() {
         guard !isScanning else { return }
         pendingSnapshotPersistTask?.cancel()
@@ -216,7 +138,7 @@ extension LibraryManager {
         let destination = Self.snapshotURL
         await Task.detached(priority: .utility) {
             guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            try? data.write(to: destination, options: .atomic)
+            _ = librarySnapshotSave(path: destination.path, json: data)
         }.value
     }
 }
