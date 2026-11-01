@@ -231,3 +231,174 @@ mod tests {
         assert_eq!(lms_effective_extension("/a/Song.MP3".into()), "mp3");
     }
 }
+
+// MARK: - Conversion pipeline (lock -> verify -> replace)
+
+/// Platform decoder check for containers the core can't decode itself
+/// (Swift answers with AVAudioFile). Only asked on `Unsupported`.
+#[uniffi::export(with_foreign)]
+pub trait AudioVerifier: Send + Sync {
+    fn is_valid_audio(&self, path: String) -> bool;
+}
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct LmsConvertOutcome {
+    /// The verified locked file, or nil when locking/verification failed.
+    pub locked_path: Option<String>,
+    /// An existing locked file at the destination verified and was kept.
+    pub adopted: bool,
+    pub before_bytes: i64,
+    pub locked_bytes: i64,
+    /// The plain original was deleted (false = left behind; the next scan
+    /// cleans it up).
+    pub original_removed: bool,
+    /// What happened, for the log.
+    pub detail: String,
+}
+
+fn size_of(p: &Path) -> i64 {
+    std::fs::metadata(p).map(|m| m.len() as i64).unwrap_or(-1)
+}
+
+fn tmp_with_ext(tmp_dir: &Path, ext: &str) -> PathBuf {
+    let name = uuid::Uuid::new_v4().to_string();
+    if ext.is_empty() { tmp_dir.join(name) } else { tmp_dir.join(format!("{name}.{ext}")) }
+}
+
+/// Unlock `locked` to a temp file with the real audio extension and check it
+/// decodes (core decoder, then `verifier` for containers it can't read).
+fn round_trips(locked: &Path, ext: &str, tmp_dir: &Path, verifier: &Option<Arc<dyn AudioVerifier>>) -> bool {
+    let _ = std::fs::create_dir_all(tmp_dir);
+    let out = tmp_with_ext(tmp_dir, ext);
+    let ok = fmt::unlock_file(locked, &out).is_ok() && {
+        let p = out.to_string_lossy().to_string();
+        match crate::analysis::validate_audio(p.clone(), tmp_dir.to_string_lossy().into(), None) {
+            crate::analysis::AudioValidation::Valid => true,
+            crate::analysis::AudioValidation::Unsupported => verifier.as_ref().is_some_and(|v| v.is_valid_audio(p)),
+            _ => false,
+        }
+    };
+    let _ = std::fs::remove_file(&out);
+    ok
+}
+
+/// Locked file verifies by unlock + decode round trip.
+#[uniffi::export]
+pub fn lms_verify_round_trip(locked_path: String, tmp_dir: String, verifier: Option<Arc<dyn AudioVerifier>>) -> bool {
+    let ext = lms_effective_extension(locked_path.clone());
+    round_trips(Path::new(&locked_path), &ext, Path::new(&tmp_dir), &verifier)
+}
+
+/// Lock `plain_path` into `locked_path` as-is (no re-encode), verify the
+/// round trip, then remove the original — never on faith. An existing file
+/// at `locked_path` is verified and adopted, or discarded and redone if it
+/// is a half-written leftover. A failed verify never leaves a locked file.
+#[uniffi::export]
+pub fn lms_convert(plain_path: String, locked_path: String, tmp_dir: String, verifier: Option<Arc<dyn AudioVerifier>>) -> LmsConvertOutcome {
+    let (plain, locked, tmp) = (Path::new(&plain_path), Path::new(&locked_path), Path::new(&tmp_dir));
+    let ext = plain.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let before = size_of(plain);
+    let out = |locked_path: Option<String>, adopted, locked_bytes, original_removed, detail: String| LmsConvertOutcome { locked_path, adopted, before_bytes: before, locked_bytes, original_removed, detail };
+    if lms_is_converted(plain_path.clone()) {
+        return out(Some(plain_path), true, before, false, "already converted".into());
+    }
+    if locked.exists() {
+        if round_trips(locked, &ext, tmp, &verifier) {
+            return out(Some(locked_path.clone()), true, size_of(locked), false, "adopted existing locked file".into());
+        }
+        let _ = std::fs::remove_file(locked);
+    }
+    if fmt::lock_file(plain, locked).is_err() {
+        return out(None, false, -1, false, "lock failed".into());
+    }
+    let locked_bytes = size_of(locked);
+    if !round_trips(locked, &ext, tmp, &verifier) {
+        let _ = std::fs::remove_file(locked);
+        return out(None, false, locked_bytes, false, "locked file failed round-trip verification".into());
+    }
+    let removed = std::fs::remove_file(plain).is_ok();
+    out(Some(locked_path.clone()), false, locked_bytes, removed, if removed { "converted".into() } else { "converted; original could not be removed".into() })
+}
+
+/// Migrate a `.lms`-named file that still holds plain (legacy) bytes into
+/// the real lock in place: lock to a temp file, verify, then atomically
+/// rename over `path`. `path` is untouched on any failure.
+#[uniffi::export]
+pub fn lms_relock_in_place(path: String, tmp_dir: String, verifier: Option<Arc<dyn AudioVerifier>>) -> bool {
+    let p = Path::new(&path);
+    if !lms_is_converted(path.clone()) || fmt::is_locked(p) {
+        return false;
+    }
+    let tmp = Path::new(&tmp_dir);
+    let _ = std::fs::create_dir_all(tmp);
+    // Same directory as `path` so the final rename can't cross volumes.
+    let staged = p.with_file_name(format!(".{}.relock", uuid::Uuid::new_v4()));
+    let ext = lms_effective_extension(path.clone());
+    // The vault tag is an xattr on the old inode; carry it to the new one.
+    let tag = xattr_get(&path);
+    let ok = fmt::lock_file(p, &staged).is_ok() && round_trips(&staged, if ext.is_empty() { "m4a" } else { &ext }, tmp, &verifier) && {
+        if let Some(t) = &tag {
+            xattr_set(&staged.to_string_lossy(), t);
+        }
+        std::fs::rename(&staged, p).is_ok()
+    };
+    if !ok {
+        let _ = std::fs::remove_file(&staged);
+    }
+    ok
+}
+
+#[cfg(test)]
+mod convert_tests {
+    use super::*;
+
+    fn wav(path: &Path) {
+        let rate = 8000u32;
+        let n = rate * 2;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + n * 2).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&(rate * 2).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&(n * 2).to_le_bytes());
+        for i in 0..n {
+            let v = ((i as f32 * 0.2).sin() * 8000.0) as i16;
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        std::fs::write(path, b).unwrap();
+    }
+
+    #[test]
+    fn convert_locks_verifies_and_removes_original() {
+        let d = std::env::temp_dir().join(format!("lmsconv-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        let plain = d.join("a.wav");
+        wav(&plain);
+        let locked = d.join("a.wav.lms");
+        let tmp = d.join("tmp").to_string_lossy().to_string();
+        let o = lms_convert(plain.to_string_lossy().into(), locked.to_string_lossy().into(), tmp.clone(), None);
+        assert_eq!(o.locked_path.as_deref(), Some(locked.to_str().unwrap()), "{}", o.detail);
+        assert!(o.original_removed && !plain.exists() && fmt::is_locked(&locked));
+        // Re-running with a fresh plain copy adopts the verified file.
+        wav(&plain);
+        let o2 = lms_convert(plain.to_string_lossy().into(), locked.to_string_lossy().into(), tmp.clone(), None);
+        assert!(o2.adopted && plain.exists());
+        // A corrupt leftover is replaced, not adopted.
+        std::fs::write(&locked, b"LMSLOCK1garbage").unwrap();
+        let o3 = lms_convert(plain.to_string_lossy().into(), locked.to_string_lossy().into(), tmp.clone(), None);
+        assert!(!o3.adopted && o3.locked_path.is_some() && lms_verify_round_trip(locked.to_string_lossy().into(), tmp.clone(), None));
+        // Legacy plain bytes under a .lms name get locked in place.
+        let legacy = d.join("b.wav.lms");
+        wav(&legacy);
+        assert!(lms_relock_in_place(legacy.to_string_lossy().into(), tmp.clone(), None));
+        assert!(fmt::is_locked(&legacy) && lms_verify_round_trip(legacy.to_string_lossy().into(), tmp, None));
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
