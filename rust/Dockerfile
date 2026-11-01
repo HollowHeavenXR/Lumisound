@@ -25,7 +25,9 @@ RUN pip install --no-cache-dir torch==2.3.1 torchaudio==2.3.1 --index-url https:
     && pip install --no-cache-dir numpy==2.3.3 soundfile demucs==4.0.1
 ENV TORCH_HOME=/app/cache/demucs
 RUN python -c "from demucs.pretrained import get_model; get_model('htdemucs'); print('htdemucs cached')"
-RUN pip install --no-cache-dir yt-dlp yt-dlp-ejs bgutil-ytdlp-pot-provider
+# yt-dlp[default] brings mutagen (thumbnail/metadata embedding into
+# Opus/M4A), pycryptodomex, brotli, websockets and certifi.
+RUN pip install --no-cache-dir "yt-dlp[default]" yt-dlp-ejs bgutil-ytdlp-pot-provider
 WORKDIR /app
 COPY --from=build /lumisound-bridge /usr/local/bin/lumisound-bridge
 COPY bridge/schema.sql /app/schema.sql
