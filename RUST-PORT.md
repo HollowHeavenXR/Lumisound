@@ -93,7 +93,7 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [ ] beat-match rate during smart crossfade, vibrato, spatial/head tracking (AV fallback)
       [x] ReplayGain/normalization applied in-engine (set_track_gain)
       [x] streams play on the engine once downloaded; Opus via its transcoded AAC copy
-      [ ] music haptics feed from the engine tap
+      [x] music haptics (fed through the visualizer tap)
       [ ] then delete the AVAudioEngine graph (EngineConfig/SpatialAudio/Effects nodes)
 - [ ] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files,
       silence trim, spectral EQ, pitch contour, normalization)
@@ -115,7 +115,8 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [ ] sync payload/merge, tracked-playlist auto-download orchestration
 - [ ] H. Swift rewired, old Swift services deleted, tvOS/watchOS on the core, release tag
       [x] tvOS app links the core (all HTTP via Core.data); universal iOS simulator slice
-      [ ] watchOS (linked, CI pending) ; release tag
+      [x] watchOS app links the core (arm64_32/arm64 device + universal simulator) — CI green
+      [ ] delete superseded Swift (AV graph etc.); release tag
 - [x] I. Appearance system: 7 styles (Liquid Glass, Frosted, Solid, Midnight OLED, Neon,
       Aurora, Minimal Mono) + density, tokens in rust/core/src/appearance.rs, picker in
       Settings > Appearance, synced via /user/appearance. (No light style yet: ~180 views
