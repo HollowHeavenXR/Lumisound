@@ -78,7 +78,8 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [x] core store.rs (Application Support/LumisoundCore JSON docs) + downloads.rs
           (ledger, in-flight claims, failure cool-offs, dest naming, formats)
       [x] bridge job flow (start/poll/stream result) -> core bridge_download_job
-      [ ] direct/relay transports, finalize+lock, tag writing (AudioTagWriter -> lofty)
+      [x] tag writing/reading (lofty; MP4 freeform, ID3 TXXX, Vorbis) — verified with ffprobe
+      [ ] direct/relay transports, finalize+lock
 - [ ] E. Audio engine — rust/core/src/engine/ (deck threads: symphonia + rubato -> rtrb
         rings; realtime mixer: gapless, crossfade cmd, RBJ 10-band EQ, Freeverb, mono,
         night-mode compressor, de-click/pause fades, per-track gain, peaks; cpal output on
