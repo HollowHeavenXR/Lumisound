@@ -57,25 +57,40 @@ responses against Python, then flip. When the list below is all checked, delete 
 
 ## App core (Swift Services → rust/core)
 
-- [ ] A. Crate + UniFFI + build-core.sh + CI xcframework step (copy SwarmPanel pattern)
+Branch `rust-app-core` (merge to main = release). Verify every step with
+`gh workflow run build-ios.yml --ref rust-app-core -f configuration=Debug`
+(branch builds never tag). Crates: rust/core (UniFFI, module LumisoundCore),
+rust/media (shared with the bridge). Swift glue: ios/Shared/Core/Core.swift.
+Swift models stay Codable view-data shapes; logic moves to Rust.
+
+- [x] A. Crate + UniFFI + build-core.sh + CI step in all 6 workflows (CI build green 2026-11-01)
 - [ ] B. API client + auth/token store + all AccountService+* calls
-- [ ] C. Lock system (AppLockService, LumisoundTrackVaultService, LMSLOCK1)
-- [ ] D. Download manager (BackgroundDownloadManager, StreamingService+DownloadToLibrary, ledger)
+      [x] _makeRequest -> Rust ApiClient (retries, FastAPI errors, 401)
+      [ ] StreamingService request builder (X-API-Key routes) -> ApiClient
+      [ ] token/session store, sync debounce + inventory diff logic
+      [ ] LiveUpdateService socket -> Rust (tokio-tungstenite), events to Swift callback
+- [ ] C. Lock system
+      [x] LMSLOCK1 lock/unlock (streamed, atomic), playable cache, vault (AES-GCM), xattr tag
+      [ ] LumisoundExclusiveExtensionService.convert pipeline + relock/integrity passes
+      [ ] AppLockService state (LocalAuthentication prompt itself stays Swift)
+- [ ] D. Download manager (BackgroundDownloadManager, StreamingService+DownloadToLibrary,
+      DownloadLedgerStore, DownloadFailureStore, AudioTagWriter -> lofty)
 - [ ] E. Audio engine: symphonia decode + cpal output, queue, gapless, crossfade, EQ/effects,
         A-B repeat, speed/pitch, ReplayGain, visualizer taps; Swift keeps AVAudioSession +
         NowPlaying/remote commands glue only
-- [ ] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files, tags)
-- [ ] G. Remaining services (social, rooms, podcasts, stats, backups, cache, diagnostics…)
+- [ ] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files,
+      silence trim, spectral EQ, pitch contour, normalization)
+- [ ] G. Remaining services (social, rooms, podcasts, stats, backups, cache, diagnostics,
+      stores: PlayHistory/Bookmark/TimeCapsule/LongTrackResume/RecentlyDeleted, Lua engines)
 - [ ] H. Swift rewired, old Swift services deleted, tvOS/watchOS on the core, release tag
-- [ ] I. Appearance system (user ask 2026-10-31): more styles besides Liquid Glass. Theme
-        definitions/tokens + selection/persistence live in Rust core (`appearance` module:
-        styles e.g. Liquid Glass, Solid, Midnight OLED, Paper/Light, Vapor/Neon, Minimal Mono,
-        accent + density + corner + blur params); Swift only maps tokens -> SwiftUI modifiers.
-        Picker in Settings, synced via user settings.
+- [x] I. Appearance system: 7 styles (Liquid Glass, Frosted, Solid, Midnight OLED, Neon,
+      Aurora, Minimal Mono) + density, tokens in rust/core/src/appearance.rs, picker in
+      Settings > Appearance, synced via /user/appearance. (No light style yet: ~180 views
+      hard-code white; needs a view sweep first.)
 - [ ] J. Audit: every remaining Swift file is view/app-shell/UniFFI glue only (list exceptions
         that iOS strictly requires: AVAudioSession, MPNowPlaying/RemoteCommand, BGTask,
         URLSession background transfers, Keychain, WidgetKit/ActivityKit/AppIntents/CarPlay
-        entry points, WatchConnectivity)
+        entry points, WatchConnectivity, LocalAuthentication)
 
 ## Other
 
