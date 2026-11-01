@@ -21,6 +21,6 @@ actor SilenceTrimAnalyzer {
             pcm = await BPMAnalyzerService.decodeMonoAV(url: url, sampleRate: 11025, maxSeconds: 15)
             if pcm == nil { return 0 }
         }
-        return leadingSilence(path: path, cacheDir: CoreAudio.unlockDir, pcm: pcm)
+        return Lumisound.leadingSilence(path: path, cacheDir: CoreAudio.unlockDir, pcm: pcm)
     }
 }

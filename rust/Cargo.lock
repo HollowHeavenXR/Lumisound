@@ -1907,6 +1907,7 @@ dependencies = [
  "reqwest",
  "rtrb",
  "rubato",
+ "rustfft",
  "serde",
  "serde_json",
  "sha2",

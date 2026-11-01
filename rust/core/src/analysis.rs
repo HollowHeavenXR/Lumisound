@@ -565,3 +565,142 @@ pub fn pitch_match_score(query: Vec<f32>, candidate: Vec<f32>) -> f32 {
     }
     best.max(0.0)
 }
+
+// ---- acoustic fingerprint (duplicate finder) ------------------------------------------------------
+
+const FP_CACHE: &str = "audio_fingerprint";
+const FP_FFT: usize = 2048;
+const FP_BANDS: usize = 48;
+const FP_SEGMENTS: usize = 18;
+
+/// 18 segment vectors of 48 log-magnitude bands (quadratic band spacing),
+/// each L2-normalised — the same profile the Swift/vDSP version produced.
+pub fn fingerprint_from(s: &[i16]) -> Option<Vec<Vec<f32>>> {
+    if s.len() < FP_FFT {
+        return None;
+    }
+    let total = s.len() / FP_FFT;
+    if total < FP_SEGMENTS {
+        return None;
+    }
+    let half = FP_FFT / 2;
+    let fft = rustfft::FftPlanner::<f32>::new().plan_fft_forward(FP_FFT);
+    let mut acc = vec![vec![0f32; FP_BANDS]; FP_SEGMENTS];
+    let mut counts = vec![0usize; FP_SEGMENTS];
+    let mut buf = vec![rustfft::num_complex::Complex32::new(0.0, 0.0); FP_FFT];
+    let ranges: Vec<(usize, usize)> = (0..FP_BANDS)
+        .map(|b| {
+            let lo = (((b as f64 / FP_BANDS as f64).powi(2) * half as f64) as usize).max(1);
+            let hi = ((((b + 1) as f64 / FP_BANDS as f64).powi(2) * half as f64) as usize).min(half).max(lo + 1);
+            (lo, hi)
+        })
+        .collect();
+    for w in 0..total {
+        let off = w * FP_FFT;
+        for (i, c) in buf.iter_mut().enumerate() {
+            *c = rustfft::num_complex::Complex32::new(s[off + i] as f32 / 32768.0, 0.0);
+        }
+        fft.process(&mut buf);
+        let seg = (FP_SEGMENTS - 1).min(w * FP_SEGMENTS / total);
+        for (b, (lo, hi)) in ranges.iter().enumerate() {
+            if lo >= hi {
+                continue;
+            }
+            let sum: f32 = buf[*lo..*hi].iter().map(|c| (c.norm_sqr() + 1.0).log10()).sum();
+            acc[seg][b] += sum / (hi - lo) as f32;
+        }
+        counts[seg] += 1;
+    }
+    if counts.iter().any(|c| *c == 0) {
+        return None;
+    }
+    acc.into_iter()
+        .zip(counts)
+        .map(|(v, n)| {
+            let v: Vec<f32> = v.iter().map(|x| x / n as f32).collect();
+            let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            (norm > 0.0).then(|| v.iter().map(|x| x / norm).collect())
+        })
+        .collect()
+}
+
+/// Fingerprint of 45 s after an 8 s skip (when the track is long enough).
+#[uniffi::export]
+pub fn audio_fingerprint(path: String, cache_dir: String, pcm: Option<Vec<i16>>) -> Option<Vec<Vec<f32>>> {
+    {
+        let m: HashMap<String, Vec<Vec<f32>>> = store::load(FP_CACHE);
+        if let Some(v) = m.get(&cache_key(&path)) {
+            return Some(v.clone());
+        }
+    }
+    let s = match pcm {
+        Some(p) => p,
+        None => {
+            let dur = probe_duration(path.clone(), cache_dir.clone());
+            let start = if dur > 13.0 { 8.0 } else { 0.0 };
+            decode_mono(path.clone(), cache_dir, 11025, start, 45.0)?
+        }
+    };
+    let v = fingerprint_from(&s)?;
+    let _g = LOCK.lock().unwrap();
+    let mut m: HashMap<String, Vec<Vec<f32>>> = store::load(FP_CACHE);
+    if m.len() > 8000 {
+        m.clear();
+    }
+    m.insert(cache_key(&path), v.clone());
+    store::save(FP_CACHE, &m);
+    Some(v)
+}
+
+#[uniffi::export]
+pub fn audio_fingerprint_import_legacy(json: Vec<u8>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(FP_CACHE) {
+        return;
+    }
+    let m: HashMap<String, Vec<Vec<f32>>> = serde_json::from_slice(&json).unwrap_or_default();
+    store::save(FP_CACHE, &m);
+}
+
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let (mut d, mut ma, mut mb) = (0f32, 0f32, 0f32);
+    for (x, y) in a.iter().zip(b) {
+        d += x * y;
+        ma += x * x;
+        mb += y * y;
+    }
+    if ma <= 0.0 || mb <= 0.0 { 0.0 } else { d / (ma.sqrt() * mb.sqrt()) }
+}
+
+/// Best mean segment similarity over alignments of ±4 segments, requiring
+/// ≥88% of overlapping segments to match at ≥0.985.
+#[uniffi::export]
+pub fn fingerprint_similarity(a: Vec<Vec<f32>>, b: Vec<Vec<f32>>) -> f32 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let mut best = 0f32;
+    for shift in -4i64..=4 {
+        let (a0, b0) = ((-shift).max(0) as usize, shift.max(0) as usize);
+        if a0 >= a.len() || b0 >= b.len() {
+            continue;
+        }
+        let overlap = (a.len() - a0).min(b.len() - b0);
+        let (mut total, mut matching) = (0f32, 0usize);
+        for i in 0..overlap {
+            let s = cosine(&a[a0 + i], &b[b0 + i]);
+            total += s;
+            if s >= 0.985 {
+                matching += 1;
+            }
+        }
+        let need = (overlap as f32 * 0.88).ceil() as usize;
+        if matching >= need {
+            best = best.max(total / overlap as f32);
+        }
+    }
+    best
+}
