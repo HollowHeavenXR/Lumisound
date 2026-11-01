@@ -165,7 +165,7 @@ final class TVAppLogger: ObservableObject {
 
         do {
             req.httpBody = try JSONEncoder().encode(entries)
-            let (_, resp) = try await URLSession.shared.data(for: req)
+            let (_, resp) = try await Core.data(for: req)
             // /internal/logs returns 204 on success, not 200 — check the
             // whole 2xx range (see AppLogger.swift's identical fix note:
             // checking for exactly 200 here previously meant every

@@ -85,6 +85,6 @@ enum TVRemoteLogger {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
-        _ = try? await URLSession.shared.data(for: request)
+        _ = try? await Core.data(for: request)
     }
 }

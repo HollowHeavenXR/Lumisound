@@ -89,7 +89,7 @@ final class TVAria: ObservableObject {
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let started = Date()
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await Core.data(for: req)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             guard (200..<300).contains(status) else {
                 TVRemoteLogger.logError(category: "aria", event: "daily_pick_failed",
@@ -164,7 +164,7 @@ final class TVAria: ObservableObject {
             struct Response: Decodable { let blurb: String? }
             let started = Date()
             do {
-                let (data, response) = try await URLSession.shared.data(for: req)
+                let (data, response) = try await Core.data(for: req)
                 guard !Task.isCancelled, self.lastBlurbTrackID == next.id else { return }
 
                 // The status is checked BEFORE decoding. It was ignored, so an

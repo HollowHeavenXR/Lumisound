@@ -49,7 +49,7 @@ extension TVPlayerModel {
         Task { [weak self] in
             var req = URLRequest(url: url)
             if let token = item.authToken { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-            guard let (data, response) = try? await URLSession.shared.data(for: req),
+            guard let (data, response) = try? await Core.data(for: req),
                   let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
                   let image = UIImage(data: data)
             else { return }

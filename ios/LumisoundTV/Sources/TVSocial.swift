@@ -104,7 +104,7 @@ extension TVBridgeClient {
         struct Response: Decodable { let activity: [TVSocialActivity] }
         let started = Date()
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await Core.data(for: req)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             guard (200..<300).contains(status) else {
                 TVRemoteLogger.logError(

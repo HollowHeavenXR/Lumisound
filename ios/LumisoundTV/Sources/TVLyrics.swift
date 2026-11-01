@@ -105,7 +105,7 @@ enum TVLyricsService {
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
         req.timeoutInterval = 8
 
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await Core.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let results = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
               !results.isEmpty
@@ -165,7 +165,7 @@ enum TVLyricsService {
             let plain_lyrics: String?
             let source: String?
         }
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
+        guard let (data, response) = try? await Core.data(for: req),
               let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let decoded = try? JSONDecoder().decode(Response.self, from: data)
         else { return nil }
@@ -190,7 +190,7 @@ enum TVLyricsService {
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
         req.timeoutInterval = 8
 
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await Core.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
@@ -226,7 +226,7 @@ enum TVLyricsService {
 
         var req = URLRequest(url: url)
         req.timeoutInterval = 8
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+        guard let (data, resp) = try? await Core.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let plain = result["lyrics"] as? String, !plain.isEmpty

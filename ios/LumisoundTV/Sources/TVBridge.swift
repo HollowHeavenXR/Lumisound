@@ -560,7 +560,7 @@ final class TVBridgeClient: ObservableObject {
             var req = URLRequest(url: url)
             req.setValue(token, forHTTPHeaderField: "X-Account-Token")
             req.timeoutInterval = 15
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await Core.data(for: req)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 return nil
             }
@@ -647,7 +647,7 @@ final class TVBridgeClient: ObservableObject {
     /// retry hits the server's warm cache and usually returns quickly.
     private func dataWithRetry(_ request: URLRequest, retries: Int = 1) async throws -> (Data, URLResponse) {
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Core.data(for: request)
             if let http = response as? HTTPURLResponse, http.statusCode >= 500, retries > 0 {
                 return try await dataWithRetry(request, retries: retries - 1)
             }
@@ -857,7 +857,7 @@ final class TVBridgeClient: ObservableObject {
         // site (playlist CRUD, favorites, sessions, notifications, play
         // history) routes through here.
         do {
-            let (_, response) = try await URLSession.shared.data(for: req)
+            let (_, response) = try await Core.data(for: req)
             guard let http = response as? HTTPURLResponse else {
                 tvWarn("Mutation returned no HTTP response", category: "network", extra: ["path": path, "method": method])
                 return false

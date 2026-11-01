@@ -201,6 +201,9 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: LumisoundTV/Sources
+      # Rust app core (see the Lumisound target).
+      - path: RustCore/LumisoundCore.swift
+      - path: Shared/Core
     resources:
       - path: LumisoundTV/Resources/Assets.xcassets
     settings:
@@ -212,6 +215,11 @@ targets:
         DEVELOPMENT_TEAM: ""
         TARGETED_DEVICE_FAMILY: "3"
         SKIP_INSTALL: "NO"
+    dependencies:
+      - framework: RustCore/LumisoundCore.xcframework
+        embed: false
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
     scheme:
       buildAction:
         targets:

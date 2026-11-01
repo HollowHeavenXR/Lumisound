@@ -6,7 +6,8 @@ import Foundation
 /// existing Swift callers already switch on.
 enum Core {
     /// One bridge client for the whole process (connection pool, HTTP/2).
-    static let api = ApiClient(baseUrl: StreamingService.defaultBridgeURL)
+    static let defaultBridgeURL = "https://lumisound-bridge.xenusanimations.studio"
+    static let api = ApiClient(baseUrl: defaultBridgeURL)
 
     /// Point the client at the current bridge + session before a call.
     static func prepare(baseURL: String, token: String?) {

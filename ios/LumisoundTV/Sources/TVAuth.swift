@@ -91,7 +91,7 @@ final class TVAccount: ObservableObject {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await Core.data(for: req)
             guard let http = response as? HTTPURLResponse else {
                 errorText = "Login failed. Try again."
                 tvWarn("Login failed: no HTTP response", category: "auth")
@@ -152,7 +152,7 @@ final class TVAccount: ObservableObject {
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        guard let (data, response) = try? await Core.data(for: request),
               let http = response as? HTTPURLResponse
         else {
             tvWarn("Session validation skipped — bridge unreachable", category: "auth")

@@ -76,7 +76,7 @@ actor TVLockedTrackCache {
 
         let data: Data
         do {
-            let (responseData, response) = try await URLSession.shared.data(for: request)
+            let (responseData, response) = try await Core.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             guard (200..<300).contains(status) else {
                 tvWarn("TVLockedTrackCache: bad response (\(status)) fetching \(item.title)", category: "playback")
