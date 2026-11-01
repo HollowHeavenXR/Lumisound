@@ -106,7 +106,8 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [x] NormalizationService -> core normalization_gain (BS.1770, = ffmpeg ebur128 on test)
       [x] beat grid, acoustic fingerprint (+similarity), silence trim, pitch contour/hum match
       [x] corrupt/truncated check (core validate_audio; AVAudioFile only for Opus)
-      [ ] duplicate finder orchestration, library scan/index
+      [x] duplicate grouping + text normalisation (core duplicates.rs)
+      [x] scan-time tag/property reading (core scan_read_track, lofty)
 - [ ] G. Remaining services (social, rooms, podcasts, stats, backups, cache, diagnostics,
       stores: PlayHistory/Bookmark/TimeCapsule/LongTrackResume/RecentlyDeleted, Lua engines)
       [x] library snapshot load/re-anchor/group/save (core library.rs)

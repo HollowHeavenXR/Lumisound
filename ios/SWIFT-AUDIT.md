@@ -46,18 +46,15 @@ logic around them is kept minimal and calls into the core.
 
 ## 3. Still Swift logic, to move next
 
-- AVAudioEngine path in `AudioPlayerManager` for what the Rust engine doesn't
-  cover yet: speed/pitch (time-stretch), spatial/8D/head tracking, special
-  effects (tremolo, vibrato, …), beat-matched smart crossfade, Opus decode
-  (`OpusDecoding/`), stream-while-downloading.
-- Visualizer FFT (`AudioVisualizerService`, Accelerate) — fed from the Rust
-  engine tap; the transform itself is still vDSP.
+- AVAudioEngine/AVPlayer path in `AudioPlayerManager` kept only as a fallback:
+  Apple Music `ipod-library://` items (AVFoundation-only), decode failures, and
+  the Settings toggle. Beat-matched tempo nudge during smart crossfade.
 - Sync payload build/merge (`AccountService+Sync`) and the per-feature
   `AccountService+*` request/decode wrappers (transport is already Rust).
-- Library scan orchestration and metadata enrichment (`LibraryManager+*`,
-  `MetadataFetchService`, `ArtworkService`, `ArtistImageService`).
-- Duplicate finder orchestration, corrupt-file finder (`AVAudioFile` checks),
-  smart-playlist rule evaluation outside Lua, mood playlists, AI DJ scripting.
+- Metadata enrichment and artwork (`MetadataFetchService`, `ArtworkService`,
+  `ArtistImageService`); scan orchestration in `LibraryManager+*` (tag reading
+  and the scan cache are Rust).
+- Smart-playlist rule evaluation outside Lua, mood playlists, AI DJ scripting.
 - `.lms` conversion pipeline (`LumisoundExclusiveExtensionService.convert`),
   tracked-playlist auto-download orchestration, direct/relay transports.
 - `DocumentImportService`, `M3UImportService`, `CacheManagerService`,
