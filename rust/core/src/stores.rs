@@ -810,7 +810,57 @@ pub fn tracked_set_destination(id: String, folder: String) {
     tracked_edit(&id, |p| p.destination_folder = (!folder.is_empty()).then_some(folder));
 }
 
+/// Auto-download playlists not checked within `min_interval_secs`.
+#[uniffi::export]
+pub fn tracked_due(min_interval_secs: f64) -> Vec<TrackedPlaylistRecord> {
+    let t = now();
+    tracked_all().into_iter().filter(|p| p.auto_download == Some(true) && p.last_auto_check.is_none_or(|c| t - c >= min_interval_secs)).collect()
+}
+
+/// What a finished auto-download batch means for its playlist.
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq)]
+pub enum TrackedBatchVerdict {
+    /// Ran to completion: stamp it checked.
+    MarkChecked,
+    /// Interrupted (task cancelled / bridge down): leave it due and stop the pass.
+    StayDueAndStop,
+    /// Nothing landed and some failed: probe the bridge, then ask again with `reachable`.
+    ProbeHealth,
+}
+
+/// Decide a batch's outcome. Blocked / already-have / in-flight results are
+/// not failures and don't count in `failed`. A wholesale failure (0 got, some
+/// failed) is a bridge outage only if the probe says so; partial failures are
+/// normal (region locks, deleted videos) and still count as checked.
+#[uniffi::export]
+pub fn tracked_batch_verdict(got: u32, failed: u32, cancelled: bool, reachable: Option<bool>) -> TrackedBatchVerdict {
+    if got == 0 && failed > 0 {
+        match reachable {
+            None => return TrackedBatchVerdict::ProbeHealth,
+            Some(false) => return TrackedBatchVerdict::StayDueAndStop,
+            Some(true) => {}
+        }
+    }
+    if cancelled { TrackedBatchVerdict::StayDueAndStop } else { TrackedBatchVerdict::MarkChecked }
+}
+
 #[uniffi::export]
 pub fn tracked_mark_checked(id: String) {
     tracked_edit(&id, |p| p.last_auto_check = Some(now()));
+}
+
+#[cfg(test)]
+mod tracked_verdict_tests {
+    use super::*;
+
+    #[test]
+    fn verdicts() {
+        use TrackedBatchVerdict::*;
+        assert_eq!(tracked_batch_verdict(3, 1, false, None), MarkChecked);
+        assert_eq!(tracked_batch_verdict(0, 0, false, None), MarkChecked);
+        assert_eq!(tracked_batch_verdict(0, 2, false, None), ProbeHealth);
+        assert_eq!(tracked_batch_verdict(0, 2, false, Some(false)), StayDueAndStop);
+        assert_eq!(tracked_batch_verdict(0, 2, false, Some(true)), MarkChecked);
+        assert_eq!(tracked_batch_verdict(5, 0, true, None), StayDueAndStop);
+    }
 }

@@ -60,20 +60,16 @@ extension StreamSearchView {
     /// and could be re-downloaded as duplicates.
     func refreshDownloadedStatus() {
         guard !library.allSongs.isEmpty else { return }
-        let localSourceIDs = Set(library.allSongs.compactMap { $0.sourceTrackID })
-        // Build the imported-track index ONCE (O(library)), then check each result
-        // in O(1). The old code called isAlreadyImported per result — O(library)
-        // each — which on a 1000-track playlist hung the main thread long enough
-        // for the watchdog to kill the app (the "big playlist" crash).
-        let index = library.importedIdentityIndex()
+        // Built ONCE (O(library)), then each result is O(1) — per-result
+        // library scans on a 1000-track playlist tripped the watchdog.
+        let index = library.metadataCopyIndex()
 
         // Collected locally and assigned once: inserting into the @State
         // sets per match invalidated the view once per track, which on a
         // resolved 1000-track playlist meant hundreds of state writes.
         var downloaded = downloadedTrackIDs
         for track in streaming.searchResults where !downloaded.contains(track.id) {
-            if localSourceIDs.contains(track.sourceTrackID)
-                || index.contains(title: track.title, artist: track.artist, duration: track.duration) {
+            if index.contains(candidate: track.remoteCandidate) {
                 downloaded.insert(track.id)
             }
         }
@@ -81,7 +77,8 @@ extension StreamSearchView {
 
         var downloadedServer = downloadedServerTrackIDs
         for track in streaming.serverTracks where !downloadedServer.contains(track.id) {
-            if index.contains(title: track.title, artist: track.artist, duration: track.duration) {
+            if index.contains(candidate: RemoteCandidate(sourceTrackId: "", title: track.title,
+                                                         artist: track.artist, duration: track.duration)) {
                 downloadedServer.insert(track.id)
             }
         }
@@ -220,13 +217,12 @@ extension StreamSearchView {
             // O(tracks × library) main-thread hang long enough to trip the
             // watchdog (the same "opening a big playlist crashes" bug fixed
             // in TrackedPlaylistDetailView/TrackedPlaylistStore).
-            let localSourceIDs = await library.localSourceIDs()
-            let identityIndex = library.importedIdentityIndex()
+            let index = await library.localCopyIndex()
 
             var toDownload: [StreamTrack] = []
             var skipped = 0
             for track in tracks {
-                if library.hasLocalCopy(of: track, localSourceIDs: localSourceIDs, identityIndex: identityIndex) {
+                if index.contains(candidate: track.remoteCandidate) {
                     skipped += 1
                     downloadedTrackIDs.insert(track.id)
                     downloadAllDone += 1

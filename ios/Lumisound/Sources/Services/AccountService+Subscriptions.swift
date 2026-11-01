@@ -198,9 +198,8 @@ extension AccountService {
         library: LibraryManager
     ) async {
         await library.scanLocalDocumentsAsync(userInitiated: false)
-        let localSourceIDs = await library.localSourceIDs()
-        let identityIndex = library.importedIdentityIndex()
-        let toGet = tracks.filter { !library.hasLocalCopy(of: $0, localSourceIDs: localSourceIDs, identityIndex: identityIndex) }
+        let index = await library.localCopyIndex()
+        let toGet = index.missing(candidates: tracks.map(\.remoteCandidate)).map { tracks[Int($0)] }
         guard !toGet.isEmpty else { return }
 
         let destinationDir = StreamingService.downloadDirectory(forFolderName: subscription.destinationFolder)

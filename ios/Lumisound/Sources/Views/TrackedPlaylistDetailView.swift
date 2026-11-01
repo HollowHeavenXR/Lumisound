@@ -321,21 +321,11 @@ struct TrackedPlaylistDetailView: View {
     /// Re-derives which tracks already exist locally. Assumes the caller has
     /// just scanned, so `library.allSongs` is current.
     ///
-    /// Builds the fast-path lookups ONCE before checking every track — the
-    /// naive `tracks.filter { library.hasLocalCopy(of: $0) }` called
-    /// `hasLocalCopy` (O(library) per call) once per track, which for a big
-    /// playlist (hundreds of tracks) against a sizeable library was an
-    /// O(tracks × library) main-thread hang long enough to trip the iOS
-    /// watchdog — the "opening a big playlist crashes" bug. Same fix as
-    /// `StreamSearchView.refreshDownloadedStatus`.
+    /// One index for the whole playlist (O(1) per track); per-track library
+    /// scans on a big playlist tripped the iOS watchdog.
     private func recomputeLocalCopies() async {
-        let ids = await library.localSourceIDs()
-        let index = library.importedIdentityIndex()
-        localCopyIDs = Set(
-            tracks
-                .filter { library.hasLocalCopy(of: $0, localSourceIDs: ids, identityIndex: index) }
-                .map { $0.id }
-        )
+        let index = await library.localCopyIndex()
+        localCopyIDs = Set(tracks.filter { index.contains(candidate: $0.remoteCandidate) }.map(\.id))
     }
 
     private func downloadOne(_ track: StreamTrack) async {

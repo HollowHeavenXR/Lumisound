@@ -175,12 +175,8 @@ final class TrackedPlaylistStore: ObservableObject {
         isRunningAutoDownloads = true
         defer { isRunningAutoDownloads = false }
 
-        let now = Date()
-        let due = playlists.filter { pl in
-            guard pl.isAutoDownload else { return false }
-            if let last = pl.lastAutoCheck { return now.timeIntervalSince(last) >= minInterval }
-            return true
-        }
+        let dueIDs = Set(trackedDue(minIntervalSecs: minInterval).map(\.id))
+        let due = playlists.filter { dueIDs.contains($0.id) }
         guard !due.isEmpty else { return }
 
         // Scanned ONCE up front rather than once per playlist.
@@ -236,21 +232,11 @@ final class TrackedPlaylistStore: ObservableObject {
                     return
                 }
             }
-            // Build the fast-path lookups ONCE before filtering — calling
-            // hasLocalCopy(of:) per track (O(library) each) over a big
-            // playlist was an O(tracks × library) main-thread hang long
-            // enough to trip the watchdog. Same fix as
-            // TrackedPlaylistDetailView.recomputeLocalCopies.
-            let localSourceIDs = await library.localSourceIDs()
-            let identityIndex = library.importedIdentityIndex()
-            var seenSourceIDs = Set<String>()
-            let toGet = tracks.filter {
-                // Resolvers can return the same video more than once (for
-                // repeated playlist entries). Never create two download jobs
-                // for one source ID in the same pass.
-                guard seenSourceIDs.insert($0.sourceTrackID).inserted else { return false }
-                return !library.hasLocalCopy(of: $0, localSourceIDs: localSourceIDs, identityIndex: identityIndex)
-            }
+            // One Rust-core index per playlist (O(1) per track): source id
+            // with the file still present, ledger entry, or title/artist/
+            // duration; repeated entries in the resolve collapse to one job.
+            let index = await library.localCopyIndex()
+            let toGet = index.missing(candidates: tracks.map(\.remoteCandidate)).map { tracks[Int($0)] }
             let destinationDir = StreamingService.downloadDirectory(forFolderName: pl.destinationFolder)
             let existingSongsSnapshot = library.allSongs
             // `got`/`blocked` and the per-track work itself run on
@@ -375,47 +361,19 @@ final class TrackedPlaylistStore: ObservableObject {
             }
             if !tracks.isEmpty { updateMetadata(id: pl.id, trackCount: tracks.count) }
 
-            // The bridge going down MID-BATCH, as opposed to before the resolve.
-            // The resolve succeeded, so the earlier health probe never ran, and
-            // every download after the outage failed into the generic catch
-            // above. Without this the playlist would be marked checked on the
-            // strength of a batch where nothing actually worked, and a playlist
-            // interrupted at track 12 of 300 would sit out the throttle window
-            // for no reason.
-            //
-            // Gated on `got == 0` so this only fires for a wholesale failure. A
-            // batch where most tracks landed and a few failed is a normal batch —
-            // some videos are region-locked, deleted, or simply flaky — and those
-            // must not stop the pass or hold back every other playlist.
-            if got == 0 && failed > 0 {
+            // Outcome rules (Rust core): interrupted, or nothing landed while
+            // the bridge is down -> stay due and stop the pass; partial
+            // failures are normal per-track misses and still count as checked.
+            var verdict = trackedBatchVerdict(got: UInt32(got), failed: UInt32(failed), cancelled: Task.isCancelled, reachable: nil)
+            if verdict == .probeHealth {
                 let reachable = await streaming.checkHealth()
-                if !reachable {
-                    appWarn("runAutoDownloads: bridge went down mid-batch on \"\(pl.name)\" (\(failed) failed, 0 downloaded) — leaving it due to retry", category: "network")
-                    return
+                verdict = trackedBatchVerdict(got: UInt32(got), failed: UInt32(failed), cancelled: Task.isCancelled, reachable: reachable)
+                if reachable {
+                    appWarn("runAutoDownloads: \(failed) track(s) from \"\(pl.name)\" failed but the bridge is reachable — treating as per-track failures, will retry on the next cycle", category: "network")
                 }
-                appWarn("runAutoDownloads: \(failed) track(s) from \"\(pl.name)\" failed but the bridge is reachable — treating as per-track failures, will retry on the next cycle", category: "network")
             }
-
-            // Only a pass that actually RAN TO COMPLETION counts as a check.
-            //
-            // This used to be unconditional, which is what stopped interrupted
-            // downloads resuming. `withTaskGroup` does not throw on
-            // cancellation — its children just return early — so an interrupted
-            // batch fell out of the loop looking exactly like a finished one,
-            // stamped `lastAutoCheck`, and made itself ineligible for the whole
-            // throttle window. A playlist cut off after 12 of 300 tracks was
-            // therefore guaranteed NOT to resume for the next five minutes, and
-            // if the next trigger was also cut short (the normal case for a
-            // background task with a ~30s budget), it could inch forward a
-            // dozen tracks at a time indefinitely.
-            //
-            // Note this deliberately keys on being interrupted, not on whether
-            // every track succeeded. Some tracks legitimately never download —
-            // an auto-generated "Topic" upload YouTube blocks, a deleted video —
-            // and treating a playlist as unchecked while any track is missing
-            // would re-resolve it on every single trigger, forever.
-            if Task.isCancelled {
-                appLog("runAutoDownloads: \"\(pl.name)\" interrupted after \(got)/\(toGet.count) — staying due so the next trigger picks up where this left off", category: "network")
+            if verdict == .stayDueAndStop {
+                appLog("runAutoDownloads: \"\(pl.name)\" interrupted after \(got)/\(toGet.count) (\(failed) failed) — staying due so the next trigger picks up where this left off", category: "network")
                 return
             }
             markAutoChecked(id: pl.id)
