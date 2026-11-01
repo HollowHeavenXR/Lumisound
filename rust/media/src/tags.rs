@@ -173,3 +173,9 @@ pub fn read_info(path: &Path) -> Option<Info> {
     info.source_id = read_lumisound(path).0;
     Some(info)
 }
+
+/// BPM written in the file's tags (TBPM / tmpo / BPM comment), if any.
+pub fn read_bpm(path: &Path) -> Option<f64> {
+    let file = lofty::read_from_path(path).ok()?;
+    file.tags().iter().find_map(|t| t.get_string(&ItemKey::Bpm).or(t.get_string(&ItemKey::IntegerBpm)).and_then(|v| v.trim().parse::<f64>().ok()).filter(|b| *b > 0.0))
+}
