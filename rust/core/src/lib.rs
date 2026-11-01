@@ -16,6 +16,7 @@ pub mod lock;
 pub mod error;
 pub mod retry;
 pub mod store;
+pub mod stores;
 
 use std::future::Future;
 use std::sync::LazyLock;
