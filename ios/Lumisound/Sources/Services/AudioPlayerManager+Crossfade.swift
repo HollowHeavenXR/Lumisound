@@ -58,6 +58,10 @@ extension AudioPlayerManager {
     }
 
     func beginCrossfade() {
+        if isUsingRustEngine {
+            beginRustCrossfade()
+            return
+        }
         guard let nextSong = peekNextSong(), let nextURL = nextSong.url else {
             skipToNext(); return
         }
@@ -276,6 +280,11 @@ extension AudioPlayerManager {
         crossfadeTimer?.invalidate()
         crossfadeTimer = nil
         crossfadeTriggerPosition = nil
+        if isUsingRustEngine {
+            // The engine drops the fading deck on the next load/seek.
+            isCrossfading = false
+            return
+        }
         if isCrossfading {
             // `usingPrimaryNode`/`activeNode` already point at the track that's
             // becoming current (flipped at the start of the fade — see

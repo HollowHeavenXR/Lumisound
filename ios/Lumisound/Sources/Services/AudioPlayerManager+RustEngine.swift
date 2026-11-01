@@ -37,7 +37,7 @@ extension AudioPlayerManager {
     func rustEligible(for url: URL) -> Bool {
         guard Self.rustEngineEnabled, !rustBypassOnce else { return false }
         let s = audioSettings
-        if s.speed != 1 || s.pitchSemitones != 0 || s.crossfadeActive { return false }
+        if s.speed != 1 || s.pitchSemitones != 0 { return false }
         if s.spatialAudioEnabled == true || s.eightDAudioEnabled == true || s.activeEffectID != "none" { return false }
         return CoreAudio.canDecode(path: LumisoundExclusiveExtensionService.playableURL(for: url).path)
     }
@@ -79,7 +79,7 @@ extension AudioPlayerManager {
         position = startTime
         gaplessScheduled = false
         pendingNextIndex = nil
-        crossfadeTriggerPosition = nil
+        setRustCrossfadeTrigger()
         applyRustSettings()
         prewarmBPM(for: currentSong)
         prewarmBPM(for: peekNextSong())
@@ -90,7 +90,7 @@ extension AudioPlayerManager {
     }
 
     func queueRustGaplessNext() {
-        guard isUsingRustEngine, audioSettings.gaplessEnabled, rustNextDeckID == nil,
+        guard isUsingRustEngine, audioSettings.gaplessEnabled, !audioSettings.crossfadeActive, rustNextDeckID == nil,
               let next = peekNextSong(), let url = next.url, url.isFileURL else { return }
         if LumisoundExclusiveExtensionService.isConverted(url),
            !LumisoundExclusiveExtensionService.hasWarmPlayableCache(for: url) {
@@ -153,6 +153,54 @@ extension AudioPlayerManager {
         guard isUsingRustEngine, !isSchedulingAsync else { return }
         let p = Self.rust.position()
         position = min(duration > 0 ? duration : p, max(0, p))
+    }
+
+    private func setRustCrossfadeTrigger() {
+        if audioSettings.crossfadeActive && audioSettings.crossfadeDuration > 0 {
+            let trigger = duration - transitionLead()
+            crossfadeTriggerPosition = trigger > 0 ? trigger : nil
+        } else {
+            crossfadeTriggerPosition = nil
+        }
+    }
+
+    /// Fade into the next track inside the engine (equal-power or linear,
+    /// smart-crossfade length when enabled).
+    func beginRustCrossfade() {
+        guard let nextSong = peekNextSong(), let nextURL = nextSong.url, nextURL.isFileURL else {
+            skipToNext(); return
+        }
+        let path = LumisoundExclusiveExtensionService.playableURL(for: nextURL).path
+        guard CoreAudio.canDecode(path: path) else { skipToNext(); return }
+        let plan = audioSettings.smartCrossfadeEnabled ? transitionPlan(into: nextSong) : nil
+        let fade = max(0.1, plan?.duration ?? audioSettings.crossfadeDuration)
+        Self.rust.clearNext()
+        rustNextDeckID = nil
+        rustNextPath = nil
+        let equalPower = (audioSettings.crossfadeCurve ?? .equalPower) == .equalPower
+        guard let id = try? Self.rust.crossfadeTo(path: path, secs: fade, startSecs: 0, gainDb: 0, equalPower: equalPower) else {
+            skipToNext(); return
+        }
+        rustDeckID = id
+        isCrossfading = true
+        advanceIndex()
+        currentSong = nextSong
+        let probed = probeDuration(path: path, cacheDir: CoreAudio.unlockDir)
+        duration = probed > 0 ? probed : nextSong.duration
+        position = 0
+        updateNowPlaying()
+        applyAutoEQIfNeeded(bpm: bpmCache[nextSong.id] ?? nextSong.bpm)
+        prewarmBPM(for: peekNextSong())
+        prewarmPlayableCache(for: peekNextSong())
+        let nextTrigger = duration - fade
+        crossfadeTriggerPosition = nextTrigger > 0 ? nextTrigger : nil
+        let gen = scheduleGeneration
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(fade * 1_000_000_000))
+            guard let self, self.scheduleGeneration == gen else { return }
+            self.isCrossfading = false
+        }
+        appLog(String(format: "Rust engine: crossfade %.1fs → %@", fade, nextSong.displayName), category: "audio")
     }
 
     // MARK: Engine events

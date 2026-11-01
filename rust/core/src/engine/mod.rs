@@ -130,12 +130,12 @@ impl AudioEngine {
     }
 
     /// Crossfade from the current track into `path` over `secs`.
-    pub fn crossfade_to(&self, path: String, secs: f64, start_secs: f64, gain_db: f32) -> Result<u64, EngineError> {
+    pub fn crossfade_to(&self, path: String, secs: f64, start_secs: f64, gain_db: f32, equal_power: bool) -> Result<u64, EngineError> {
         let d = self.open(&path, start_secs, gain_db)?;
         let id = d.id;
         *self.current.lock().unwrap() = Some((path, gain_db));
         let frames = (secs.max(0.0) * self.output_rate() as f64) as u64;
-        self.send(Cmd::Crossfade { deck: Box::new(d), frames });
+        self.send(Cmd::Crossfade { deck: Box::new(d), frames, equal_power });
         Ok(id)
     }
 
@@ -441,6 +441,35 @@ mod tests {
         // 87.2% of samples -> ~41.9k frames at 48 kHz. A gap at the seam or
         // dropped buffers would show up as a shortfall.
         assert!((40_500..=43_500).contains(&loud), "loud frames {loud}");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn crossfades_without_a_gap() {
+        let d = std::env::temp_dir().join(format!("engine-xf-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&d).unwrap();
+        let (a, b) = (d.join("a.wav"), d.join("b.wav"));
+        wav(&a, 1.0, 440.0, 48_000);
+        wav(&b, 1.0, 660.0, 48_000);
+        let l = Arc::new(L(Mutex::new(vec![])));
+        let e = AudioEngine::new(l.clone());
+        e.load(a.to_string_lossy().into(), 0.0, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        e.play();
+        let mut out = pump(&e, 0.4);
+        let ib = e.crossfade_to(b.to_string_lossy().into(), 0.3, 0.0, 0.0, true).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        out.extend(pump(&e, 0.6));
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(l.0.lock().unwrap().contains(&format!("start{ib}")));
+        // No silent stretch longer than a sine zero-crossing during the fade.
+        let mut run = 0usize;
+        let mut worst = 0usize;
+        for f in out.chunks(2).skip(2048) {
+            if f[0].abs() < 1e-4 { run += 1; worst = worst.max(run) } else { run = 0 }
+        }
+        assert!(worst < 8, "silent run of {worst} frames");
+        assert_eq!(e.current_id(), ib);
         let _ = std::fs::remove_dir_all(d);
     }
 }

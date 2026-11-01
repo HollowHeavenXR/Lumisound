@@ -19,7 +19,7 @@ pub enum Cmd {
     QueueNext(Box<Deck>),
     ClearNext,
     /// Fade the current deck out and `deck` in over `frames`.
-    Crossfade { deck: Box<Deck>, frames: u64 },
+    Crossfade { deck: Box<Deck>, frames: u64, equal_power: bool },
     Stop,
 }
 
@@ -45,12 +45,19 @@ pub struct Telemetry {
     pub levels_bits: AtomicU64,
 }
 
+/// Crossfade gain curve: equal power (constant loudness) or linear.
+#[inline]
+fn shape(x: f32, equal_power: bool) -> f32 {
+    if equal_power { (x * std::f32::consts::FRAC_PI_2).sin() } else { x }
+}
+
 pub struct Mixer {
     rate: u32,
     cur: Option<Box<Deck>>,
     next: Option<Box<Deck>>,
     fading: Option<(Box<Deck>, Ramp)>,
     fade_in: Ramp,
+    equal_power: bool,
     master: Ramp,
     volume: f32,
     playing: bool,
@@ -66,7 +73,7 @@ pub struct Mixer {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), mono: false, cmds, events, tele }
+        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), mono: false, cmds, events, tele }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -125,7 +132,8 @@ impl Mixer {
                     self.retire(old);
                 }
             }
-            Cmd::Crossfade { deck, frames } => {
+            Cmd::Crossfade { deck, frames, equal_power } => {
+                self.equal_power = equal_power;
                 if let Some((f, _)) = self.fading.take() {
                     self.retire(f);
                 }
@@ -191,7 +199,7 @@ impl Mixer {
                 if d.ring.slots() >= 2 {
                     let a = d.ring.pop().unwrap_or(0.0);
                     let b = d.ring.pop().unwrap_or(0.0);
-                    let fi = self.fade_in.next() * d.gain;
+                    let fi = shape(self.fade_in.next(), self.equal_power) * d.gain;
                     l += a * fi;
                     r += b * fi;
                     d.frames_played += 1;
@@ -199,7 +207,7 @@ impl Mixer {
             }
             let mut fade_done = false;
             if let Some((d, ramp)) = self.fading.as_mut() {
-                let fg = ramp.next() * d.gain;
+                let fg = shape(ramp.next(), self.equal_power) * d.gain;
                 if d.ring.slots() >= 2 {
                     l += d.ring.pop().unwrap_or(0.0) * fg;
                     r += d.ring.pop().unwrap_or(0.0) * fg;
