@@ -16,3 +16,10 @@ fn bpm_ffmpeg_raw() {
     let s: Vec<i16> = b.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
     println!("ffmpeg samples={} bpm={:?}", s.len(), lumisound_media::analysis::bpm_simple(&s));
 }
+
+#[test]
+fn lufs_on_real_file() {
+    let Ok(p) = std::env::var("LUMI_TEST_AUDIO") else { return };
+    let (rate, ch) = lumisound_media::decode::planar(std::path::Path::new(&p), Some(0.0), Some(60.0)).expect("decode");
+    println!("lufs={:?}", lumisound_media::analysis::integrated_lufs(rate, &ch));
+}

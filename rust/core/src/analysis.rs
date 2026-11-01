@@ -141,3 +141,66 @@ pub fn spectral_profile(path: String, cache_dir: String) -> Option<Vec<f64>> {
     let s = decode::mono_pcm(Path::new(&p), 32000, Some(start), Some(60.0))?;
     dsp::spectral_from(&s)
 }
+
+// ---- loudness normalization -------------------------------------------------------------------
+
+const NORM_CACHE: &str = "normalization_gain";
+
+fn norm_key(path: &str) -> String {
+    let p = Path::new(path);
+    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or(path);
+    match std::fs::metadata(p) {
+        Ok(m) => {
+            let ms = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0);
+            format!("{name}_{}_{ms}", m.len())
+        }
+        Err(_) => name.to_string(),
+    }
+}
+
+/// One-time import of the Swift-era normalization cache (same key format).
+#[uniffi::export]
+pub fn normalization_import_legacy(json: Vec<u8>) {
+    let _g = LOCK.lock().unwrap();
+    if store::exists(NORM_CACHE) {
+        return;
+    }
+    let m: HashMap<String, f32> = serde_json::from_slice(&json).unwrap_or_default();
+    store::save(NORM_CACHE, &m);
+}
+
+/// Gain (dB, -20…+12) that brings the middle 60 s of the track to -18 LUFS.
+/// 0 when the file can't be analysed. Cached per file name/size/mtime.
+#[uniffi::export]
+pub fn normalization_gain(path: String, cache_dir: String) -> f32 {
+    let key = norm_key(&path);
+    {
+        let m: HashMap<String, f32> = store::load(NORM_CACHE);
+        if let Some(v) = m.get(&key) {
+            return *v;
+        }
+    }
+    let p = readable(&path, &cache_dir);
+    let dur = decode::probe(Path::new(&p)).map(|x| x.duration).unwrap_or(0.0);
+    let start = if dur > 60.0 { (dur - 60.0) / 2.0 } else { 0.0 };
+    let g = decode::planar(Path::new(&p), Some(start), Some(60.0))
+        .and_then(|(rate, ch)| dsp::integrated_lufs(rate, &ch))
+        .map(|lufs| ((-18.0 - lufs).clamp(-20.0, 12.0)) as f32)
+        .unwrap_or(0.0);
+    let _g = LOCK.lock().unwrap();
+    let mut m: HashMap<String, f32> = store::load(NORM_CACHE);
+    if m.len() > 4000 {
+        m.clear();
+    }
+    m.insert(key, g);
+    store::save(NORM_CACHE, &m);
+    g
+}
+
+/// True when the file decodes as audio for at least `min_secs` (corrupt /
+/// truncated / non-audio files fail).
+#[uniffi::export]
+pub fn is_valid_audio(path: String, cache_dir: String, min_secs: f64) -> bool {
+    let p = readable(&path, &cache_dir);
+    decode::mono_pcm(Path::new(&p), 8000, Some(0.0), Some(min_secs.max(0.1))).is_some_and(|s| s.len() as f64 >= 8000.0 * min_secs.max(0.1) * 0.9)
+}

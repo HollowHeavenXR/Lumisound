@@ -85,9 +85,10 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [x] Local files play through it (AudioPlayerManager+RustEngine.swift; Settings >
           Playback "Lumisound Audio Engine" toggle, key rust_audio_engine, default on;
           decode failure -> automatic AVAudioEngine fallback)
-      [ ] crossfade via engine.crossfade_to (+ smart crossfade plan, beat-match)
-      [ ] ReplayGain/normalization gain_db from analysis; speed/pitch (time-stretch)
-      [ ] streams (downloadAndSchedule -> engine once cached), Opus decode
+      [x] crossfade via engine.crossfade_to (equal-power/linear, smart plan length)
+      [ ] beat-match rate during smart crossfade; speed/pitch (time-stretch)
+      [x] ReplayGain/normalization applied in-engine (set_track_gain)
+      [x] streams play on the engine once downloaded; Opus via its transcoded AAC copy
       [ ] spatial/8D/special effects, visualizer FFT taps, music haptics feed
       [ ] then delete the AVAudioEngine graph (EngineConfig/SpatialAudio/Effects nodes)
 - [ ] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files,
@@ -96,7 +97,9 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
           core analysis.rs: decode_mono, bpm (cached), key, waveform, transition, spectral
       [x] BPMAnalyzerService on the core (AVAssetReader only for Opus/WebM)
       [ ] Opus decode in Rust (symphonia has none; options: libopus static via audiopus_sys)
+      [x] NormalizationService -> core normalization_gain (BS.1770, = ffmpeg ebur128 on test)
       [ ] beat grid, fingerprint, silence trim, pitch contour, duplicates, corrupt finder
+          (core is_valid_audio exists; CorruptFileFinder still AVAudioFile)
 - [ ] G. Remaining services (social, rooms, podcasts, stats, backups, cache, diagnostics,
       stores: PlayHistory/Bookmark/TimeCapsule/LongTrackResume/RecentlyDeleted, Lua engines)
 - [ ] H. Swift rewired, old Swift services deleted, tvOS/watchOS on the core, release tag

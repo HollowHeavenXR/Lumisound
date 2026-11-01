@@ -113,3 +113,54 @@ pub fn mono_pcm(path: &Path, rate: u32, start: Option<f64>, max_len: Option<f64>
     }
     (!out.is_empty()).then_some(out)
 }
+
+/// Native-rate float PCM, de-interleaved per channel (max 2 used), from
+/// `start` for up to `max_len` seconds. Returns (rate, channels).
+pub fn planar(path: &Path, start: Option<f64>, max_len: Option<f64>) -> Option<(u32, Vec<Vec<f32>>)> {
+    let (mut fmt, id) = open(path)?;
+    let params = fmt.tracks().iter().find(|t| t.id == id)?.codec_params.clone();
+    let rate = params.sample_rate?;
+    let mut dec = symphonia::default::get_codecs().make(&params, &DecoderOptions::default()).ok()?;
+    if let Some(s) = start.filter(|s| *s > 0.0) {
+        let _ = fmt.seek(SeekMode::Accurate, SeekTo::Time { time: Time::new(s.trunc() as u64, s.fract()), track_id: Some(id) });
+    }
+    let want = max_len.map(|l| (l * rate as f64) as usize);
+    let mut chans: Vec<Vec<f32>> = Vec::new();
+    let mut buf: Option<SampleBuffer<f32>> = None;
+    loop {
+        if want.is_some_and(|w| chans.first().is_some_and(|c| c.len() >= w)) {
+            break;
+        }
+        let packet = match fmt.next_packet() {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        if packet.track_id() != id {
+            continue;
+        }
+        let decoded = match dec.decode(&packet) {
+            Ok(d) => d,
+            Err(Error::DecodeError(_)) => continue,
+            Err(_) => break,
+        };
+        let spec = *decoded.spec();
+        let ch = spec.channels.count().max(1);
+        if chans.is_empty() {
+            chans = vec![Vec::new(); ch.min(2)];
+        }
+        let b = buf.get_or_insert_with(|| SampleBuffer::new(decoded.capacity() as u64, spec));
+        if b.capacity() < decoded.capacity() * ch {
+            *b = SampleBuffer::new(decoded.capacity() as u64, spec);
+        }
+        b.copy_interleaved_ref(decoded);
+        for f in b.samples().chunks(ch) {
+            for (c, v) in chans.iter_mut().zip(f) {
+                c.push(*v);
+            }
+        }
+    }
+    if let Some(w) = want {
+        chans.iter_mut().for_each(|c| c.truncate(w));
+    }
+    (!chans.is_empty() && !chans[0].is_empty()).then_some((rate, chans))
+}

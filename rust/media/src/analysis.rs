@@ -364,3 +364,75 @@ pub fn spectral_from(s: &[i16]) -> Option<Vec<f64>> {
 }
 
 // ---- artwork ----------------------------------------------------------------------------------
+
+// ---- loudness (ITU-R BS.1770 K-weighting, gated integrated loudness) -------------------------
+
+struct Bq {
+    b: [f64; 3],
+    a: [f64; 2],
+    x: [f64; 2],
+    y: [f64; 2],
+}
+
+impl Bq {
+    fn process(&mut self, x: f64) -> f64 {
+        let y = self.b[0] * x + self.b[1] * self.x[0] + self.b[2] * self.x[1] - self.a[0] * self.y[0] - self.a[1] * self.y[1];
+        self.x = [x, self.x[0]];
+        self.y = [y, self.y[0]];
+        y
+    }
+}
+
+fn k_weighting(sr: f64) -> (Bq, Bq) {
+    let (f0, g, q) = (1681.9744509555319, 3.99984385397, 0.7071752369554193);
+    let k = (std::f64::consts::PI * f0 / sr).tan();
+    let vh = 10f64.powf(g / 20.0);
+    let vb = vh.powf(0.4996667741545416);
+    let a0 = 1.0 + k / q + k * k;
+    let shelf = Bq { b: [(vh + vb * k / q + k * k) / a0, 2.0 * (k * k - vh) / a0, (vh - vb * k / q + k * k) / a0], a: [2.0 * (k * k - 1.0) / a0, (1.0 - k / q + k * k) / a0], x: [0.0; 2], y: [0.0; 2] };
+    let (f1, q1) = (38.13547087602444, 0.5003270373238773);
+    let k1 = (std::f64::consts::PI * f1 / sr).tan();
+    let a01 = 1.0 + k1 / q1 + k1 * k1;
+    let hp = Bq { b: [1.0, -2.0, 1.0], a: [2.0 * (k1 * k1 - 1.0) / a01, (1.0 - k1 / q1 + k1 * k1) / a01], x: [0.0; 2], y: [0.0; 2] };
+    (shelf, hp)
+}
+
+/// Integrated loudness (LUFS) of planar float audio: 400 ms blocks, 75%
+/// overlap, absolute (-70) and relative (-10 LU) gates.
+pub fn integrated_lufs(rate: u32, chans: &[Vec<f32>]) -> Option<f64> {
+    let sr = rate as f64;
+    let frames = chans.first()?.len();
+    let weighted: Vec<Vec<f64>> = chans
+        .iter()
+        .map(|c| {
+            let (mut s, mut h) = k_weighting(sr);
+            c.iter().map(|x| h.process(s.process(*x as f64))).collect()
+        })
+        .collect();
+    let block = (sr * 0.4) as usize;
+    let step = ((sr * 0.1) as usize).max(1);
+    if block == 0 || frames < block {
+        return None;
+    }
+    let mut blocks: Vec<(f64, f64)> = Vec::new();
+    let mut start = 0;
+    while start + block <= frames {
+        let p: f64 = weighted.iter().map(|w| w[start..start + block].iter().map(|s| s * s).sum::<f64>() / block as f64).sum();
+        if p > 0.0 {
+            blocks.push((p, -0.691 + 10.0 * p.log10()));
+        }
+        start += step;
+    }
+    let abs: Vec<(f64, f64)> = blocks.into_iter().filter(|b| b.1 > -70.0).collect();
+    if abs.is_empty() {
+        return None;
+    }
+    let mean = abs.iter().map(|b| b.0).sum::<f64>() / abs.len() as f64;
+    let rel = -0.691 + 10.0 * mean.log10() - 10.0;
+    let gated: Vec<f64> = abs.iter().filter(|b| b.1 > rel).map(|b| b.0).collect();
+    if gated.is_empty() {
+        return None;
+    }
+    let p = gated.iter().sum::<f64>() / gated.len() as f64;
+    (p > 0.0).then(|| -0.691 + 10.0 * p.log10())
+}
