@@ -38,9 +38,12 @@ base64 = "0.22"
 libc = "0.2"
 rtrb = "0.3"
 rustfft = "6"
-mlua = { version = "0.10", features = ["lua54", "vendored", "serialize", "send"] }
 rubato = "0.15"
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "aac", "isomp4", "flac", "wav", "pcm", "ogg", "vorbis", "alac", "adpcm", "aiff", "caf"] }
+
+# lua-src has no tvOS/watchOS build; those targets get a stub (they don't run scripts).
+[target.'cfg(not(any(target_os = "tvos", target_os = "watchos")))'.dependencies]
+mlua = { version = "0.10", features = ["lua54", "vendored", "serialize", "send"] }
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 cpal = "0.15"

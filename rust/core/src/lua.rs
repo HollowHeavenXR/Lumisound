@@ -4,6 +4,10 @@
 //! can't hang the app. Scripts return a JSON string the app decodes.
 
 use crate::error::{CoreError, CoreResult};
+
+#[cfg(not(any(target_os = "tvos", target_os = "watchos")))]
+mod imp {
+    use super::*;
 use mlua::{Lua, LuaOptions, LuaSerdeExt, StdLib, Value};
 use std::time::{Duration, Instant};
 
@@ -40,13 +44,27 @@ fn new_state() -> mlua::Result<Lua> {
 
 /// Run `source` and return the string it evaluates to (scripts end with
 /// `return json.encode(...)`).
-#[uniffi::export]
 pub fn lua_eval_string(source: String, chunk_name: String) -> CoreResult<String> {
     let lua = new_state().map_err(|e| CoreError::invalid(e.to_string()))?;
     let v: Value = lua.load(&source).set_name(chunk_name).eval().map_err(|e| CoreError::invalid(e.to_string()))?;
     match v {
         Value::String(s) => Ok(s.to_str().map_err(|e| CoreError::invalid(e.to_string()))?.to_string()),
         other => Err(CoreError::invalid(format!("script returned {} instead of a JSON string", other.type_name()))),
+    }
+}
+
+}
+
+/// Run `source` and return the string it evaluates to (scripts end with
+/// `return json.encode(...)`).
+#[uniffi::export]
+pub fn lua_eval_string(source: String, chunk_name: String) -> CoreResult<String> {
+    #[cfg(not(any(target_os = "tvos", target_os = "watchos")))]
+    return imp::lua_eval_string(source, chunk_name);
+    #[cfg(any(target_os = "tvos", target_os = "watchos"))]
+    {
+        let _ = (source, chunk_name);
+        Err(CoreError::invalid("Lua scripts are not available on this platform"))
     }
 }
 
