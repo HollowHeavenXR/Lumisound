@@ -10,7 +10,6 @@ The bridge server itself is Rust: `../rust/bridge` (axum + sqlx), built from
 - `cookies.txt` — YouTube cookie jar mounted read-only into the container.
 - `refresh_youtube_cookies.sh` + `lumisound-youtube-cookies-refresh.*` — host
   systemd units that keep `cookies.txt` fresh.
-- `start_tunnel.sh` / `start_cloudflared.sh` — Cloudflare tunnel helpers.
 
 ## Run
 

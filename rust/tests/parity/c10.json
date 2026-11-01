@@ -1,7 +1,0 @@
-[
- {"p":"/api/stem-separation/status?job_id=nope","auth":"user"},
- {"p":"/api/stem-separation/result?job_id=nope&stem=vocals","auth":"user"},
- {"m":"POST","p":"/api/stem-separation?video_id=abc","auth":"user","both":true},
- {"m":"POST","p":"/api/stem-separation?video_id=ab$cd%25e","auth":"user","both":true},
- {"m":"POST","p":"/api/fingerprint/identify","auth":"user","both":true}
-]

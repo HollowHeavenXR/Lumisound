@@ -18,7 +18,6 @@ ios/.xcode.env.local
 .swiftpm/
 
 # Credentials & secrets
-*.ngrok.yml
 *.key
 *.secret
 *.p12

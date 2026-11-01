@@ -142,22 +142,17 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
 
 ## Notes / decisions log
 
-- 2026-10-31: Go-live (Rust on :8002, Python on 127.0.0.1:8012) is staged in
-  ~/Projects/web-stack/docker-compose.yml but NOT deployed: the auto-mode
-  classifier blocks production deploys, so the user has to run
-  `cd ~/Projects/web-stack && docker compose up -d ios-bridge-legacy ios-bridge`.
-  (The scratchpad compose backup was lost in a 2026-11-01 reboot; rollback =
-  point `ios-bridge` back at `build: ../Lumisound/ios-bridge` on :8002 and drop
-  `ios-bridge-legacy`. Prod still runs the old Python image until go-live.)
+- 2026-11-01: Rust bridge live in production (single `ios-bridge` service in
+  ~/Projects/web-stack, :8002 behind cloudflared). The Python bridge, its
+  images, the parity harness and the rollback compose backup were removed.
 - 2026-11-01 (user): go live with the Rust bridge ONLY after the Rust-core app
   is verified and released on GitHub. After all phases, tag one big release
   (app functionally all-Rust). App work happens on branch `rust-app-core`
   (CI dispatch builds there never tag); merging to main cuts the release.
 - Test rig (isolated): network lumi-test (internal) + lumi-test-out; containers
   lumi_test_pg (tmpfs copy of discord_music_gws, webhooks/push tokens blanked),
-  lumi_py_test, lumi_rs_test. Harness lives in rust/tests/parity: setup.sh
-  (whole rig from scratch), restart.sh (recreate bridges), run.sh <cases.json>
-  (diff py vs rs), jobs.py (transcribe / stems / fingerprint end-to-end).
+  lumi_py_test, lumi_rs_test, driven by a py-vs-rs diff harness (removed with the
+  Python bridge after go-live 2026-11-01).
   Test accounts rusttest + rustmade1, operator session minted in the copy
   (tokens.json, gitignored).
 - Rust owns /ws/live. Python relays its live events to Rust via LIVE_PUSH_URL
@@ -193,7 +188,7 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
   now 256 MB globally. serde_json float_roundtrip on (exact decimals in jsonb passthrough).
 - Remaining 422 diffs are only pydantic's extra `input`/`ctx`/`type` fields in
   validation errors; the apps read `detail` text only on 4xx.
-- Final regression (rust/tests/parity/c_all_get.json, every Python GET route x 2 users):
+- Final regression (every Python GET route x 2 users):
   only validation-ordering (Python validates query before API key; both are errors),
   random OAuth state, newer yt-dlp thumbnails and the documented shadowing fixes differ.
 - Known schema quirk (unchanged): ios_user_music_metadata.id is the content hash alone, so

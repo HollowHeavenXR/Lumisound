@@ -4,8 +4,7 @@ import SwiftUI
 //
 // A playlist's tracks come from whichever device(s) added them and may point
 // at an on-device library item (`local_song_id`) instead of a stream URL —
-// tvOS has no local file/media library access at all (see
-// TVOS_WATCHOS_FEASIBILITY.md), so those entries are shown but not playable
+// tvOS has no local file/media library access at all, so those entries are shown but not playable
 // here. Entries backed by a Personal Cloud Library upload carry the bridge's
 // own `/user/music/stream` URL as `track_url` and play like any other track.
 //

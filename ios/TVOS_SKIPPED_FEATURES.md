@@ -1,7 +1,6 @@
 # tvOS: What Was Skipped and Why
 
-Companion to `TVOS_WATCHOS_FEASIBILITY.md` (the original planning doc). This
-covers the 4-round tvOS upgrade (2026-08-24) and is honest about what
+This covers the 4-round tvOS upgrade (2026-08-24) and is honest about what
 *wasn't* built — split into two categories that get very different treatment
 if this is ever revisited:
 
@@ -127,7 +126,7 @@ tvOS-sized.
 
 ## Where this fits in the bigger picture
 
-Everything above was scoped against the [round 1–4 build](TVOS_WATCHOS_FEASIBILITY.md)
+Everything above was scoped against the round 1–4 build
 that took tvOS from a ~1,500-line minimal client to a full-featured app:
 core playback/library, Now Playing richness, discovery/smart features, and
 social/account depth. See git log for `LumisoundTV` commits for the full
