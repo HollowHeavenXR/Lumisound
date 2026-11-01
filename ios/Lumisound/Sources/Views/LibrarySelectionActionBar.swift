@@ -54,7 +54,7 @@ struct LibrarySelectionActionBar: View {
         .foregroundStyle(AppTheme.dynamicAccent)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
+        .styleAwareMaterial(.ultraThinMaterial, in: Rectangle())
         .overlay(Divider(), alignment: .top)
         .confirmationDialog(
             "Delete \(selectedCount) song\(selectedCount == 1 ? "" : "s")?",

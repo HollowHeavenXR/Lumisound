@@ -80,6 +80,9 @@ enum NavbarSelectionStyle: String, CaseIterable, Identifiable {
 /// switches, so every `AppTheme` read picks up the new edition's palette.
 struct ContentView: View {
     @AppStorage(InterfaceEdition.storageKey) private var editionRaw: String = InterfaceEdition.current.rawValue
+    /// Both editions read colors through static getters, so a new interface
+    /// style repaints by rebuilding the tree (tabs persist; see `commitPalette`).
+    @ObservedObject private var appearance = Appearance.shared
 
     var body: some View {
         let edition = InterfaceEdition(rawValue: editionRaw) ?? .lumen
@@ -93,7 +96,7 @@ struct ContentView: View {
             case .classic: ClassicContentView()
             }
         }
-        .id(editionRaw)
+        .id("\(editionRaw)-\(appearance.paletteStamp)")
         .transition(.opacity)
     }
 }

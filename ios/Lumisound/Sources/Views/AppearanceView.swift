@@ -67,6 +67,11 @@ struct AppearanceView: View {
     // MARK: Body
 
     var body: some View {
+        content
+            .onDisappear { Appearance.shared.commitPalette() }
+    }
+
+    private var content: some View {
         List {
 
             // MARK: — Interface Style

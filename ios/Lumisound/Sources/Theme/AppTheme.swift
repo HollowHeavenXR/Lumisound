@@ -18,8 +18,8 @@ enum AppTheme {
     /// replacement for.
     static var accent: Color        { InterfaceEdition.isLumen ? LumenPalette.iris : classicAccent }
     static var accentSoft: Color    { InterfaceEdition.isLumen ? LumenPalette.azure : classicAccentSoft }
-    static var textPrimary: Color   { InterfaceEdition.isLumen ? LumenPalette.textPrimary : classicTextPrimary }
-    static var textSecondary: Color { InterfaceEdition.isLumen ? LumenPalette.textSecondary : classicTextSecondary }
+    static var textPrimary: Color   { InterfaceEdition.isLumen ? LumenPalette.textPrimary : (Appearance.classicColor(\.textPrimary) ?? classicTextPrimary) }
+    static var textSecondary: Color { InterfaceEdition.isLumen ? LumenPalette.textSecondary : (Appearance.classicColor(\.textSecondary) ?? classicTextSecondary) }
     static var warning: Color       { InterfaceEdition.isLumen ? LumenPalette.warning : classicWarning }
     static var success: Color       { InterfaceEdition.isLumen ? LumenPalette.success : classicSuccess }
     static var error: Color         { InterfaceEdition.isLumen ? LumenPalette.error : classicError }
@@ -59,15 +59,15 @@ enum AppTheme {
     // preset override, which is a deliberate per-user choice.
     static var background: Color {
         customBackgroundOverride?.background
-            ?? (InterfaceEdition.isLumen ? LumenPalette.ink : backgroundTheme.background)
+            ?? (InterfaceEdition.isLumen ? LumenPalette.ink : (Appearance.classicColor(\.background) ?? backgroundTheme.background))
     }
     static var surface: Color {
         customBackgroundOverride?.surface
-            ?? (InterfaceEdition.isLumen ? LumenPalette.surface : backgroundTheme.surface)
+            ?? (InterfaceEdition.isLumen ? LumenPalette.surface : (Appearance.classicColor(\.surface) ?? backgroundTheme.surface))
     }
     static var elevatedSurface: Color {
         customBackgroundOverride?.elevatedSurface
-            ?? (InterfaceEdition.isLumen ? LumenPalette.elevated : backgroundTheme.elevatedSurface)
+            ?? (InterfaceEdition.isLumen ? LumenPalette.elevated : (Appearance.classicColor(\.elevated) ?? backgroundTheme.elevatedSurface))
     }
 
     // MARK: Lua-Driven Custom Background Override
@@ -126,14 +126,16 @@ enum AppTheme {
         static let spacingScale = "lua_layout_spacing_scale"
     }
 
+    // Classic also takes the interface style's corner shape and density
+    // here (Lumen applies them in its own design system).
     static var layoutCornerRadiusScale: Double {
         let v = UserDefaults.standard.double(forKey: LuaLayoutKeys.cornerRadiusScale)
-        return v > 0 ? v : 1.0
+        return (v > 0 ? v : 1.0) * (InterfaceEdition.isLumen ? 1.0 : Appearance.current.cornerScale)
     }
 
     static var layoutSpacingScale: Double {
         let v = UserDefaults.standard.double(forKey: LuaLayoutKeys.spacingScale)
-        return v > 0 ? v : 1.0
+        return (v > 0 ? v : 1.0) * (InterfaceEdition.isLumen ? 1.0 : Appearance.current.spacingScale)
     }
 
     static func saveLayoutScales(cornerRadius: Double, spacing: Double) {
@@ -157,6 +159,8 @@ enum AppTheme {
     /// a color in Lumen never repaints Classic and switching back restores
     /// whatever Classic had.
     static var dynamicAccent: Color {
+        // A style with its own accent (Minimal Mono) wins in both editions.
+        if let forced = Appearance.current.accentOverride { return forced.color }
         if let data = UserDefaults.standard.data(forKey: accentKey),
            let uiColor = try? NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: data) {
             return Color(uiColor)
@@ -391,6 +395,7 @@ extension AppTheme {
 }
 
 private struct PanelStyleModifier: ViewModifier {
+    @ObservedObject private var appearance = Appearance.shared
     @AppStorage("panel_opacity") private var opacity: Double = 1.0
     @AppStorage("panel_material_style") private var materialStyleRaw: String = PanelMaterialStyle.solid.rawValue
 
@@ -418,6 +423,11 @@ private struct PanelStyleModifier: ViewModifier {
                                 .strokeBorder(LumenPalette.hairline, lineWidth: 1)
                         )
                 }
+        } else if !Appearance.isLiquidGlass {
+            // Classic with another interface style: the style's own surface.
+            content
+                .padding(pad)
+                .styledSurface(in: RoundedRectangle(cornerRadius: radius, style: .continuous), tint: nil)
         } else if isFrostedGlass {
             content
                 .padding(pad)

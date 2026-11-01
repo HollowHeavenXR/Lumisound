@@ -718,7 +718,7 @@ private struct FolderAlbumHeader: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         // Plain-list section headers stay pinned while their section
         // scrolls; without a background the rows show through the header.
-        .background(.ultraThinMaterial)
+        .styleAwareMaterial(.ultraThinMaterial, in: Rectangle())
         .listRowInsets(EdgeInsets())
         .textCase(nil)
     }
@@ -935,7 +935,7 @@ private struct FolderSelectionActionBar: View {
         .foregroundStyle(AppTheme.dynamicAccent)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
+        .styleAwareMaterial(.ultraThinMaterial, in: Rectangle())
         .overlay(Divider(), alignment: .top)
         .confirmationDialog(
             "Delete \(selectedCount) song\(selectedCount == 1 ? "" : "s")?",
