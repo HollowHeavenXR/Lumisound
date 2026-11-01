@@ -15,6 +15,7 @@ pub mod library;
 pub mod live;
 pub mod lock;
 pub mod lua;
+pub mod metadata;
 pub mod error;
 pub mod retry;
 pub mod store;
