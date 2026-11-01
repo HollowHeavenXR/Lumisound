@@ -16,3 +16,18 @@ fn writes_and_reads_tags() {
         println!("{ext}: ok");
     }
 }
+
+#[test]
+fn reads_scan_info() {
+    let Ok(dir) = std::env::var("LUMI_TAG_DIR") else { return };
+    for ext in ["m4a", "mp3", "flac", "opus"] {
+        let i = lumisound_media::tags::read_info(std::path::Path::new(&format!("{dir}/t.{ext}"))).unwrap();
+        println!("{ext}: {:?}", i);
+        assert_eq!(i.title.as_deref(), Some("Song Ü"));
+        assert_eq!(i.artist.as_deref(), Some("Band"));
+        assert_eq!(i.track, Some(3));
+        assert_eq!(i.year.as_deref(), Some("2024"));
+        assert_eq!(i.source_id.as_deref(), Some("youtube:abc123"));
+        assert!(i.duration > 1.5 && i.sample_rate > 0);
+    }
+}

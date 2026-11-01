@@ -121,3 +121,55 @@ pub fn can_tag(path: &Path) -> bool {
 
 #[allow(dead_code)]
 fn _assert_audiofile<T: AudioFile>() {}
+
+/// What a library scan needs from a file's tags and stream properties.
+#[derive(Default, Clone, Debug)]
+pub struct Info {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub genre: Option<String>,
+    pub year: Option<String>,
+    pub track: Option<u32>,
+    pub source_id: Option<String>,
+    pub duration: f64,
+    pub sample_rate: u32,
+    pub bitrate_kbps: u32,
+}
+
+/// "(13)Pop" -> "Pop" (ID3v1 numeric prefixes); otherwise trimmed.
+pub fn cleaned_genre(raw: &str) -> String {
+    let t = raw.trim();
+    if let (true, Some(close)) = (t.starts_with('('), t.find(')')) {
+        let rest = t[close + 1..].trim();
+        if !rest.is_empty() {
+            return rest.to_string();
+        }
+    }
+    t.to_string()
+}
+
+pub fn read_info(path: &Path) -> Option<Info> {
+    use lofty::file::AudioFile;
+    let file = lofty::read_from_path(path).ok()?;
+    let props = file.properties();
+    let mut info = Info {
+        duration: props.duration().as_secs_f64(),
+        sample_rate: props.sample_rate().unwrap_or(0),
+        bitrate_kbps: props.audio_bitrate().or(props.overall_bitrate()).unwrap_or(0),
+        ..Default::default()
+    };
+    let nz = |s: Option<std::borrow::Cow<'_, str>>| s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    for tag in std::iter::once(file.primary_tag()).flatten().chain(file.tags().iter()) {
+        info.title = info.title.or_else(|| nz(tag.title()));
+        info.artist = info.artist.or_else(|| nz(tag.artist()));
+        info.album = info.album.or_else(|| nz(tag.album()));
+        info.genre = info.genre.or_else(|| nz(tag.genre()).map(|g| cleaned_genre(&g)));
+        info.year = info.year.or_else(|| {
+            tag.get_string(&ItemKey::RecordingDate).or(tag.get_string(&ItemKey::Year)).map(|y| y.trim().chars().take(4).collect::<String>()).filter(|y| !y.is_empty()).or_else(|| tag.year().map(|y| y.to_string()))
+        });
+        info.track = info.track.or(tag.track().filter(|t| *t > 0));
+    }
+    info.source_id = read_lumisound(path).0;
+    Some(info)
+}

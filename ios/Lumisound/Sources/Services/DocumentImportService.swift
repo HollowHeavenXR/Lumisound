@@ -222,10 +222,7 @@ struct DocumentImportService {
         // the inner ".m4a"/etc extension) — the "still seeing .m4a in the
         // title" / "metadata and artwork data is bugged" reports.
         let readableURL = LumisoundExclusiveExtensionService.playableURL(for: url)
-        let asset = AVURLAsset(url: readableURL)
-        let loadedDuration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
-        let commonMetadata = (try? await asset.load(.commonMetadata)) ?? []
-        let metadata = (try? await asset.load(.metadata)) ?? []
+        var loadedDuration: Double = 0
 
         // Filename fallback title: strip BOTH the outer Lumisound marker
         // (".lms") and the real container extension underneath it
@@ -249,6 +246,32 @@ struct DocumentImportService {
         // `Song.albumInferredFromFolder`.
         var albumInferredFromFolder = false
 
+        var sampleRate = 0
+        var bitrate = 0
+        // Tags + stream properties from the Rust core (lofty, every
+        // container incl. Opus); AVFoundation only if it can't parse the file.
+        if let r = scanReadTrack(path: url.path, cacheDir: CoreAudio.unlockDir) {
+            title = r.title
+            artist = r.artist
+            album = r.album
+            albumInferredFromFolder = r.albumInferredFromFolder
+            genre = r.genre
+            year = r.year
+            trackNumber = Int(r.trackNumber)
+            sourceTrackID = r.sourceTrackId
+            loadedDuration = r.duration
+            sampleRate = Int(r.sampleRate)
+            bitrate = Int(r.bitrateKbps)
+            if sourceTrackID == nil, ["m4a", "mp4", "m4v", "mov"].contains(LumisoundExclusiveExtensionService.effectiveExtension(for: url)) {
+                // Files tagged by the older AVFoundation exporter carry the id
+                // as a QuickTime mdta key only AVFoundation reads.
+                sourceTrackID = await LumisoundExclusiveExtensionService.embeddedSourceTrackID(fileURL: url)
+            }
+        } else {
+        let asset = AVURLAsset(url: readableURL)
+        loadedDuration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
+        let commonMetadata = (try? await asset.load(.commonMetadata)) ?? []
+        let metadata = (try? await asset.load(.metadata)) ?? []
         for item in commonMetadata {
             switch item.commonKey?.rawValue {
             case "title":
@@ -313,8 +336,6 @@ struct DocumentImportService {
 
         // Extract audio technical properties via AVAudioFile, which is the
         // simplest way to get sampleRate without decoding format descriptions.
-        var sampleRate = 0
-        var bitrate = 0
 
         if let audioFile = try? AVAudioFile(forReading: readableURL) {
             let rate = audioFile.processingFormat.sampleRate
@@ -338,6 +359,7 @@ struct DocumentImportService {
         // real container format for a file already converted to the Lumisound-exclusive
         // extension (see LumisoundExclusiveExtensionService) — its outer ".lms" alone
         // would otherwise look like neither opus/ogg nor a known video container.
+        }
         let fileExt = LumisoundExclusiveExtensionService.effectiveExtension(for: url)
         let opusExtensions: Set<String> = ["opus", "ogg"]
         if opusExtensions.contains(fileExt), title == fallbackTitle {

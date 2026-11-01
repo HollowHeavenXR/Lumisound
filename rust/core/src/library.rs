@@ -251,3 +251,74 @@ pub fn scan_cache_persist() {
         }
     }
 }
+
+// ---- scan-time metadata ----------------------------------------------------------------------
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct ScannedTrack {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub album_inferred_from_folder: bool,
+    pub genre: String,
+    pub year: String,
+    pub track_number: i64,
+    pub source_track_id: Option<String>,
+    pub duration: f64,
+    pub sample_rate: i64,
+    pub bitrate_kbps: i64,
+}
+
+/// Tags + stream properties for a library file (`.lms` read through its
+/// unlocked copy), with the app's fallbacks: filename as title, "Artist -
+/// Title" filenames split, the parent folder as album (except the import
+/// roots). None when the file can't be parsed (caller falls back).
+#[uniffi::export]
+pub fn scan_read_track(path: String, cache_dir: String) -> Option<ScannedTrack> {
+    let p = Path::new(&path);
+    let readable = crate::lock::lms_playable_path(path.clone(), cache_dir);
+    let info = lumisound_media::tags::read_info(Path::new(&readable))?;
+    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let fallback = {
+        let mut stem = Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or(name).to_string();
+        if crate::lock::lms_is_converted(path.clone()) {
+            stem = Path::new(&stem).file_stem().and_then(|s| s.to_str()).unwrap_or(&stem).to_string();
+        }
+        stem
+    };
+    let mut title = info.title.clone().unwrap_or_else(|| fallback.clone());
+    let mut artist = info.artist.clone().unwrap_or_default();
+    if title == fallback && title.contains(" - ") {
+        let mut parts = title.split(" - ");
+        let first = parts.next().unwrap_or("").trim().to_string();
+        let rest: Vec<&str> = parts.collect();
+        if !rest.is_empty() {
+            if artist.is_empty() {
+                artist = first;
+            }
+            title = rest.join(" - ").trim().to_string();
+        }
+    }
+    let mut album = info.album.clone().unwrap_or_default();
+    let mut inferred = false;
+    if album.is_empty() {
+        let parent = p.parent().and_then(|d| d.file_name()).and_then(|n| n.to_str()).unwrap_or("");
+        if !matches!(parent, "Imported Music" | "Documents" | "") {
+            album = parent.to_string();
+            inferred = true;
+        }
+    }
+    Some(ScannedTrack {
+        title,
+        artist,
+        album,
+        album_inferred_from_folder: inferred,
+        genre: info.genre.unwrap_or_default(),
+        year: info.year.unwrap_or_default(),
+        track_number: info.track.unwrap_or(0) as i64,
+        source_track_id: info.source_id,
+        duration: info.duration,
+        sample_rate: info.sample_rate as i64,
+        bitrate_kbps: info.bitrate_kbps as i64,
+    })
+}
