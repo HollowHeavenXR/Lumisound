@@ -215,7 +215,7 @@ struct DocumentImportService {
             raw = await Self.readWithAVFoundation(url: url).tags
         }
         let currentTags = SongTags(title: current.title, artist: current.artist, album: current.album,
-                                   albumInferredFromFolder: current.albumInferredFromFolder, genre: current.genre,
+                                   albumInferredFromFolder: current.albumInferredFromFolder ?? false, genre: current.genre,
                                    year: current.year, trackNumber: Int64(current.trackNumber),
                                    sourceTrackId: current.sourceTrackID)
         guard let merged = tagRefreshMerge(path: url.path, current: currentTags, raw: raw) else { return nil }
