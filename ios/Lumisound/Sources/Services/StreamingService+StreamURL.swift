@@ -5,12 +5,6 @@ extension StreamingService {
 
     // MARK: - Stream URL
 
-    /// Decodes FastAPI's standard `{"detail": "..."}` error body, if present.
-    static func decodeErrorDetail(_ data: Data) -> String? {
-        struct ErrorBody: Decodable { let detail: String }
-        return try? JSONDecoder().decode(ErrorBody.self, from: data).detail
-    }
-
     func streamURL(for track: StreamTrack) async throws -> URL {
         guard isConfigured else {
             throw StreamingError.notConfigured

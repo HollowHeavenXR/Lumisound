@@ -37,10 +37,6 @@ actor BeatGridAnalyzerService {
         return onsets.isEmpty ? nil : onsets
     }
 
-    func cachedBeatGrid(for url: URL) -> [Double]? {
-        guard let c = beatGridCached(path: url.standardizedFileURL.path), !c.isEmpty else { return nil }
-        return c
-    }
 }
 
 /// Outside the actor so its `beatGrid` member doesn't shadow the core function.

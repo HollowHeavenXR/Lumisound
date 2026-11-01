@@ -155,18 +155,6 @@ extension AudioPlayerManager {
         Self.rust.setTrackGain(gainDb: 20 * log10(max(linear, 0.0001)))
     }
 
-    func activeEffectNeedsPitchModulation() -> Bool {
-        let id = audioSettings.activeEffectID
-        guard !id.isEmpty, id != "none" else { return false }
-        let effect: AudioEffect?
-        if let ref = LuaEffectEngine.scriptRef(forEffectID: id) {
-            effect = try? LuaEffectEngine.resolve(ref, track: currentSong)
-        } else {
-            effect = AudioEffectsService.allEffects.first(where: { $0.id == id })
-        }
-        return effect?.specialMode.type == .vibrato
-    }
-
     /// 8D rotation / tremolo state -> engine modulation.
     func applyRustModulation() {
         guard isUsingRustEngine else { return }

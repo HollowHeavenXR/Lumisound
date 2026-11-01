@@ -159,13 +159,6 @@ final class CacheManagerService: ObservableObject {
 
     // MARK: - Private Helpers
 
-    /// Returns (fileCount, totalByteSize) for a directory (recursive).
-    nonisolated static func directoryStats(at url: URL?) -> (Int, Int64) {
-        guard let url else { return (0, 0) }
-        let s = cacheDirStats(dir: url.path)
-        return (Int(s.files), Int64(s.bytes))
-    }
-
     /// Removes all contents inside `url` without removing the directory itself.
     nonisolated func removeContents(of url: URL) {
         cacheClearContents(dir: url.path)

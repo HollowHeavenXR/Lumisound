@@ -46,8 +46,4 @@ final class PlayHistoryStore {
         if let e = entries.removeValue(forKey: oldID), oldID != newID { entries[newID] = e }
     }
 
-    func pruneEntries(keeping validIDs: Set<String>) {
-        playHistoryPrune(validIds: Array(validIDs))
-        entries = entries.filter { validIDs.contains($0.key) }
-    }
 }

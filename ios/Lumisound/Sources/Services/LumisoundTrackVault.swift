@@ -9,18 +9,4 @@ enum LumisoundTrackVault {
         var trackID: String
         var sourceURL: String
     }
-
-    enum VaultError: Error {
-        case encodingFailed
-        case invalidCiphertext
-    }
-
-    static func encrypt(trackID: String, sourceURL: String) throws -> String {
-        guard let blob = vaultEncrypt(trackId: trackID, sourceUrl: sourceURL) else { throw VaultError.encodingFailed }
-        return blob
-    }
-
-    static func decrypt(_ base64: String) -> Payload? {
-        vaultDecrypt(blob: base64).map { Payload(v: Int($0.v), trackID: $0.trackId, sourceURL: $0.sourceUrl) }
-    }
 }

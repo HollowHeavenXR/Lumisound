@@ -142,25 +142,6 @@ final class AudioEncoderService {
         return CorruptFileFinderService.isValidAudioFile(at: destinationURL)
     }
 
-    /// Converts a source into a standard 16-bit/44.1 kHz ALAC M4A. This is
-    /// useful when a caller needs a broadly playable lossless container;
-    /// native lossless sources should still be copied/played directly to
-    /// avoid an unnecessary decode/re-encode.
-    func convertLosslessly(_ url: URL, to destinationURL: URL) async -> Bool {
-        let playableURL = LumisoundExclusiveExtensionService.playableURL(for: url)
-        try? FileManager.default.removeItem(at: destinationURL)
-
-        if await oggOpusTranscode(playableURL, to: destinationURL, settings: Self.alacSettings),
-           CorruptFileFinderService.isValidAudioFile(at: destinationURL) {
-            return true
-        }
-        try? FileManager.default.removeItem(at: destinationURL)
-        guard await decodeAndReencode(playableURL, to: destinationURL, settings: Self.alacSettings) else {
-            return false
-        }
-        return CorruptFileFinderService.isValidAudioFile(at: destinationURL)
-    }
-
     // MARK: - Ogg-Opus hand-decoded tier
 
     /// Demuxes a raw Ogg-Opus container (`OggOpusDemuxer`) and decodes its

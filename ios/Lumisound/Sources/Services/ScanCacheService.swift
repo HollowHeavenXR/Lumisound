@@ -44,10 +44,6 @@ final class ScanCacheService {
         return String(filePath.dropFirst(docsPath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
-    nonisolated static func stableKey(for url: URL) -> String {
-        Self.documentsRelativePath(for: url) ?? url.standardizedFileURL.path
-    }
-
     /// Splits files into cached Songs (unchanged since cached) and URLs that
     /// need a fresh read — one core call for the whole batch.
     nonisolated static func partition(_ urls: [URL]) -> (cached: [Song], uncached: [URL]) {
@@ -66,7 +62,4 @@ final class ScanCacheService {
         Task.detached(priority: .utility) { scanCachePersist() }
     }
 
-    func evictMissing() {
-        scanCacheEvictMissing(documentsDir: docsPath)
-    }
 }

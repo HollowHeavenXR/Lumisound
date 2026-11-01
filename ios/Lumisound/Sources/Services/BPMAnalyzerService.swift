@@ -39,10 +39,6 @@ actor BPMAnalyzerService {
         return CoreAudio.bpm(path: path, pcm: pcm)
     }
 
-    func cachedBPM(for url: URL) -> Double? {
-        bpmCached(path: url.standardizedFileURL.path)
-    }
-
     /// Mono 16-bit PCM at `sampleRate` for the first `maxSeconds` — decoded by
     /// the Rust core; AVAssetReader only for formats it can't read.
     static func decodeMono(url: URL, sampleRate: Double, maxSeconds: Double) async -> [Int16]? {
