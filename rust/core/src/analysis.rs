@@ -753,3 +753,48 @@ pub fn spectrum(samples: Vec<f32>, sample_rate: f32, fft_size: u32, bar_count: u
         overall: norm(mag.iter().sum::<f32>() / half.max(1) as f32),
     }
 }
+
+// ---- integrity check ---------------------------------------------------------------------------
+
+#[derive(uniffi::Enum, Clone, Debug, PartialEq)]
+pub enum AudioValidation {
+    Valid,
+    TooSmall,
+    Unreadable { reason: String },
+    Truncated { actual: f64, expected: f64 },
+    /// The core can't decode this container (e.g. Opus) — ask AVFoundation.
+    Unsupported,
+}
+
+/// Readable header, a decodable tail, and (when `expected_duration` is
+/// given) no more than max(10 s, 15%) shorter than expected.
+#[uniffi::export]
+pub fn validate_audio(path: String, cache_dir: String, expected_duration: Option<f64>) -> AudioValidation {
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    if size == 0 && !Path::new(&path).exists() {
+        return AudioValidation::Unreadable { reason: "could not read file attributes".into() };
+    }
+    if size < 1024 {
+        return AudioValidation::TooSmall;
+    }
+    let p = readable(&path, &cache_dir);
+    let Some(info) = decode::probe(Path::new(&p)) else { return AudioValidation::Unsupported };
+    if info.duration <= 0.0 {
+        // No frame count in the header (some MP3s): decode a little instead.
+        return match decode::mono_pcm(Path::new(&p), 8000, None, Some(1.0)) {
+            Some(_) => AudioValidation::Valid,
+            None => AudioValidation::Unreadable { reason: "no decodable audio".into() },
+        };
+    }
+    let tail_start = (info.duration - 0.6).max(0.0);
+    if decode::mono_pcm(Path::new(&p), 8000, Some(tail_start), Some(0.5)).is_none() {
+        return AudioValidation::Unreadable { reason: "tail read produced no audio frames".into() };
+    }
+    if let Some(exp) = expected_duration.filter(|e| *e > 0.0) {
+        let tol = (exp * 0.15).max(10.0);
+        if info.duration < exp - tol {
+            return AudioValidation::Truncated { actual: info.duration, expected: exp };
+        }
+    }
+    AudioValidation::Valid
+}

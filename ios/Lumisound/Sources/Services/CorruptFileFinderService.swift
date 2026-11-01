@@ -222,6 +222,14 @@ final class CorruptFileFinderService: ObservableObject {
     /// post-conversion check instead of a weaker one silently drifting out
     /// of sync with it.
     nonisolated private static func validateAudioFile(at url: URL, expectedDuration: TimeInterval?) -> AudioValidationResult {
+        // Rust core (symphonia) first; AVAudioFile only for what it can't decode.
+        switch validateAudio(path: url.path, cacheDir: CoreAudio.unlockDir, expectedDuration: expectedDuration) {
+        case .valid: return .valid
+        case .tooSmall: return .tooSmall
+        case .unreadable(let reason): return .unreadable(reason)
+        case .truncated(let actual, let expected): return .truncated(actual: actual, expected: expected)
+        case .unsupported: break
+        }
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = attrs[.size] as? Int64 else {
             return .unreadable("could not read file attributes")
