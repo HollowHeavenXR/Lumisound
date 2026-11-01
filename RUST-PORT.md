@@ -88,10 +88,12 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
           Playback "Lumisound Audio Engine" toggle, key rust_audio_engine, default on;
           decode failure -> automatic AVAudioEngine fallback)
       [x] crossfade via engine.crossfade_to (equal-power/linear, smart plan length)
-      [ ] beat-match rate during smart crossfade; speed/pitch (time-stretch)
+      [x] speed/pitch (WSOLA time-stretch + pitch resample), 8D rotation, tremolo, visualizer tap,
+          spectrum FFT in Rust
+      [ ] beat-match rate during smart crossfade, vibrato, spatial/head tracking (AV fallback)
       [x] ReplayGain/normalization applied in-engine (set_track_gain)
       [x] streams play on the engine once downloaded; Opus via its transcoded AAC copy
-      [ ] spatial/8D/special effects, visualizer FFT taps, music haptics feed
+      [ ] music haptics feed from the engine tap
       [ ] then delete the AVAudioEngine graph (EngineConfig/SpatialAudio/Effects nodes)
 - [ ] F. Library index + analysis (BPM, beat grid, fingerprint, duplicates, corrupt files,
       silence trim, spectral EQ, pitch contour, normalization)
@@ -101,8 +103,8 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
       [ ] Opus decode in Rust (symphonia has none; options: libopus static via audiopus_sys)
       [x] NormalizationService -> core normalization_gain (BS.1770, = ffmpeg ebur128 on test)
       [x] beat grid, acoustic fingerprint (+similarity), silence trim, pitch contour/hum match
-      [ ] duplicate finder orchestration, corrupt finder (core is_valid_audio exists;
-          CorruptFileFinder still AVAudioFile), library scan/index
+      [x] corrupt/truncated check (core validate_audio; AVAudioFile only for Opus)
+      [ ] duplicate finder orchestration, library scan/index
 - [ ] G. Remaining services (social, rooms, podcasts, stats, backups, cache, diagnostics,
       stores: PlayHistory/Bookmark/TimeCapsule/LongTrackResume/RecentlyDeleted, Lua engines)
       [x] library snapshot load/re-anchor/group/save (core library.rs)
