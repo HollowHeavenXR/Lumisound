@@ -5,6 +5,7 @@
 //! `AudioEngine` and gets track events through `EngineListener`.
 
 pub mod binaural;
+pub mod health;
 pub mod deck;
 pub mod dsp;
 pub mod mixer;
@@ -65,6 +66,7 @@ impl AudioEngine {
         let mixer = Arc::new(Mutex::new(Mixer::new(rate, cmd_rx, evt_tx, tele.clone())));
         let shutdown = Arc::new(AtomicBool::new(false));
         let sd = shutdown.clone();
+        let tele_ev = tele.clone();
         std::thread::Builder::new()
             .name("lumisound-engine-events".into())
             .spawn(move || {
@@ -75,6 +77,7 @@ impl AudioEngine {
                             Event::Started { id } => listener.on_track_started(id),
                             Event::Failed { id } => listener.on_track_failed(id),
                             Event::Retire(d) => drop(d),
+                            Event::Incident(i) => tele_ev.health.record(i),
                         }
                     }
                     std::thread::sleep(Duration::from_millis(15));
@@ -99,7 +102,21 @@ impl AudioEngine {
     pub fn start_output(&self) -> Result<(), EngineError> {
         let mut o = self.output.lock().unwrap();
         *o = None;
-        let out = output::Output::start(self.mixer.clone()).map_err(|m| EngineError::Output { message: m })?;
+        let out = output::Output::start(self.mixer.clone(), self.tele.clone()).map_err(|m| {
+            use std::sync::atomic::Ordering::Relaxed;
+            self.tele.health.output_errors.fetch_add(1, Relaxed);
+            self.tele.health.record(health::EngineIncident {
+                kind: health::IncidentKind::OutputStartFailed,
+                phase: health::PlaybackPhase::Starting,
+                deck_id: self.current_id(),
+                position: self.position(),
+                value: 0.0,
+                budget_ms: 0.0,
+                message: Some(m.clone()),
+                at: 0.0,
+            });
+            EngineError::Output { message: m }
+        })?;
         *o = Some(out);
         Ok(())
     }
@@ -235,6 +252,26 @@ impl AudioEngine {
         self.send(Cmd::Modulation { pan_hz, tremolo_hz, tremolo_depth, vibrato_hz, vibrato_semitones });
     }
 
+    /// Cumulative health counters (underruns, callback load, decode speed…).
+    pub fn health(&self) -> health::EngineHealth {
+        self.tele.health.snapshot()
+    }
+
+    /// Counter deltas and grouped incidents since the previous call (drains
+    /// the incident log). The app uploads this when `has_problems`.
+    pub fn health_report(&self) -> health::EngineReport {
+        self.tele.health.report()
+    }
+
+    /// The incident log (most recent 256), oldest first.
+    pub fn incidents(&self) -> Vec<health::EngineIncident> {
+        self.tele.health.incidents()
+    }
+
+    pub fn reset_health(&self) {
+        self.tele.health.reset();
+    }
+
     pub fn position(&self) -> f64 {
         f64::from_bits(self.tele.position_bits.load(Ordering::Relaxed))
     }
@@ -306,7 +343,7 @@ impl AudioEngine {
     fn open_with(&self, path: &str, start: f64, gain_db: f32, nudge: Option<deck::Nudge>) -> Result<deck::Deck, EngineError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (speed, pitch) = *self.tempo.lock().unwrap();
-        deck::open(id, path, start, self.output_rate(), db_to_lin(gain_db), speed, pitch, nudge).map_err(|m| EngineError::Open { message: m })
+        deck::open(id, path, start, self.output_rate(), db_to_lin(gain_db), speed, pitch, nudge, self.tele.clone()).map_err(|m| EngineError::Open { message: m })
     }
 
     fn send(&self, c: Cmd) {
@@ -356,7 +393,8 @@ mod output {
     }
 
     impl Output {
-        pub fn start(mixer: Arc<Mutex<Mixer>>) -> Result<Self, String> {
+        pub fn start(mixer: Arc<Mutex<Mixer>>, tele: Arc<super::mixer::Telemetry>) -> Result<Self, String> {
+            let tele_err = tele.clone();
             let (stop_tx, stop_rx) = mpsc::channel::<()>();
             let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
             std::thread::Builder::new()
@@ -377,7 +415,11 @@ mod output {
                                     scratch.resize(frames * 2, 0.0);
                                     match mixer.try_lock() {
                                         Ok(mut m) => m.render(&mut scratch),
-                                        Err(_) => scratch.iter_mut().for_each(|s| *s = 0.0),
+                                        Err(_) => {
+                                            // Silence this buffer rather than block the audio thread.
+                                            tele.health.lock_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                            scratch.iter_mut().for_each(|s| *s = 0.0)
+                                        }
                                     }
                                     for (i, f) in data.chunks_mut(channels.max(1)).enumerate() {
                                         let (l, r) = (scratch[i * 2], scratch[i * 2 + 1]);
@@ -393,7 +435,20 @@ mod output {
                                         }
                                     }
                                 },
-                                |e| eprintln!("lumisound output error: {e}"),
+                                move |e| {
+                                    // Device lost / route change / reset: the app restarts output.
+                                    tele_err.health.output_errors.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    tele_err.health.record(super::health::EngineIncident {
+                                        kind: super::health::IncidentKind::OutputError,
+                                        phase: super::health::PlaybackPhase::Playing,
+                                        deck_id: tele_err.deck_id.load(std::sync::atomic::Ordering::Relaxed),
+                                        position: f64::from_bits(tele_err.position_bits.load(std::sync::atomic::Ordering::Relaxed)),
+                                        value: 0.0,
+                                        budget_ms: 0.0,
+                                        message: Some(e.to_string()),
+                                        at: 0.0,
+                                    });
+                                },
                                 None,
                             )
                             .map_err(|e| e.to_string())?;
@@ -437,7 +492,7 @@ mod output {
     pub struct Output;
 
     impl Output {
-        pub fn start(_mixer: Arc<Mutex<Mixer>>) -> Result<Self, String> {
+        pub fn start(_mixer: Arc<Mutex<Mixer>>, _tele: Arc<super::mixer::Telemetry>) -> Result<Self, String> {
             Err("no audio output on this platform".into())
         }
     }
@@ -636,6 +691,47 @@ mod tests {
             let played = out.len() as f64 / 2.0 / 48_000.0;
             assert!((e.position() / (played * speed) - 1.0).abs() < 0.08, "{st:+} st position {}", e.position());
         }
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn health_counts_callbacks_without_false_alarms_and_groups_incidents() {
+        let d = std::env::temp_dir().join(format!("engine-health-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&d).unwrap();
+        let a = d.join("a.wav");
+        wav(&a, 2.0, 440.0, 48_000);
+        let l = Arc::new(L(Mutex::new(vec![])));
+        let e = AudioEngine::new(l.clone());
+        e.load(a.to_string_lossy().into(), 0.0, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        e.play();
+        pump(&e, 1.0);
+        std::thread::sleep(Duration::from_millis(60));
+        let h = e.health();
+        assert!(h.callbacks >= 40, "{h:?}");
+        assert!(h.playing_seconds > 0.9, "{h:?}");
+        assert_eq!(h.underrun_events, 0, "{h:?} {:?}", e.incidents());
+        assert_eq!(h.nonfinite_samples, 0);
+        assert!(h.start_latency_max_ms > 0.0 && h.start_latency_max_ms < 400.0, "{h:?}");
+        assert!(h.callback_load_avg < 1.0, "{h:?}");
+        let r = e.health_report();
+        assert!(!r.severe && r.delta.callbacks == h.callbacks);
+        // A second report only covers what happened since.
+        assert_eq!(e.health_report().delta.callbacks, 0);
+
+        // Grouping/severity from recorded incidents.
+        use health::*;
+        let mk = |kind, value| EngineIncident { kind, phase: PlaybackPhase::Playing, deck_id: 7, position: 12.0, value, budget_ms: 0.0, message: None, at: 0.0 };
+        e.tele.health.record(mk(IncidentKind::Underrun, 40.0));
+        e.tele.health.record(mk(IncidentKind::Underrun, 300.0));
+        e.tele.health.record(mk(IncidentKind::LateCallback, 90.0));
+        let r = e.health_report();
+        assert!(r.severe, "300 ms dropout is severe");
+        let g = r.groups.iter().find(|g| g.kind == IncidentKind::Underrun).unwrap();
+        assert_eq!((g.count, g.worst, g.total), (2, 300.0, 340.0));
+        let j: serde_json::Value = serde_json::from_str(&engine_report_json(r)).unwrap();
+        assert_eq!(j["groups"][0]["kind"], "underrun");
+        assert!(e.incidents().is_empty(), "report drains the log");
         let _ = std::fs::remove_dir_all(d);
     }
 }

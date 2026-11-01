@@ -80,6 +80,7 @@ fn configs() -> Vec<Cfg> {
 }
 
 struct Render {
+    health: lumisound_core::engine::health::EngineHealth,
     out: Vec<f32>,
     rate: f64,
     pos_start: f64,
@@ -122,7 +123,8 @@ fn render(path: &str, c: &Cfg) -> Render {
         // ~4x real time: plenty of headroom for the decode threads.
         std::thread::sleep(Duration::from_millis(5));
     }
-    Render { out, rate, pos_start, pos_end: e.position(), dsp_secs: dsp.as_secs_f64() }
+    std::thread::sleep(Duration::from_millis(50));
+    Render { health: e.health(), out, rate, pos_start, pos_end: e.position(), dsp_secs: dsp.as_secs_f64() }
 }
 
 fn write_tone(path: &Path, hz: f64, secs: f64) {
@@ -289,7 +291,9 @@ fn cloud_tracks_through_engine_and_effects() {
             let pos_ratio = (r.pos_end - r.pos_start) / (played * c.speed);
             let rtf = r.dsp_secs / played;
             let check;
-            let mut pass = bad == 0 && clipped == 0 && (pos_ratio - 1.0).abs() < 0.02 && rms(&r.out) > 1e-4;
+            // Telemetry must agree: no underruns or invalid samples when the output is clean.
+            let mut pass = bad == 0 && clipped == 0 && (pos_ratio - 1.0).abs() < 0.02 && rms(&r.out) > 1e-4
+                && r.health.underrun_events == 0 && r.health.nonfinite_samples == 0 && r.health.deck_failures == 0;
             let w = (r.rate * 0.05) as usize;
             match c.name {
                 "baseline" => check = format!("L/R corr {:.2}", correlation(&l, &rr)),
@@ -394,6 +398,34 @@ fn cloud_tracks_through_engine_and_effects() {
         let pass = (hz / expect - 1.0).abs() < 0.02 && (pos_ratio - 1.0).abs() < 0.02;
         eprintln!("tone speed {speed}x pitch {pitch:+} st: {hz:.1} Hz (expect {expect:.1}), pos {pos_ratio:.3}  {}", if pass { "PASS" } else { "FAIL" });
         rows.push(Row { track: "tone440".into(), cfg: format!("speed {speed} pitch {pitch}"), pos_ratio, check: format!("{hz:.1} Hz vs {expect:.1}"), pass, ..Default::default() });
+    }
+
+    // Starvation: render as fast as possible (no pacing), so the deck can
+    // fall behind. Telemetry must account for exactly the audio that was lost.
+    for t in tracks.iter().take(3) {
+        let ev = Arc::new(Events(Mutex::new(vec![])));
+        let e = AudioEngine::new(ev);
+        e.set_speed_pitch(1.3, 2.0).unwrap(); // WSOLA + resampling: the heaviest decode path
+        e.load(t.to_string_lossy().into(), START, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        e.play();
+        let rate = e.output_rate() as f64;
+        let n = (20.0 * rate) as usize / CHUNK;
+        let p0 = e.position();
+        for _ in 0..n {
+            e.render_offline(CHUNK);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        let h = e.health();
+        let played = (n * CHUNK) as f64 / rate;
+        let lost = played - (e.position() - p0) / 1.3; // output seconds with no track audio
+        let reported = h.underrun_ms / 1000.0;
+        let incidents = e.incidents();
+        let pass = (lost < 0.05 && h.underrun_events == 0) || (lost >= 0.05 && h.underrun_events > 0 && (reported - lost).abs() < 0.1 + lost * 0.05);
+        eprintln!("starvation {}: lost {lost:.2}s of {played:.0}s, telemetry {reported:.2}s in {} underruns ({} incidents logged), worst {:.0} ms  {}",
+            t.file_name().unwrap().to_string_lossy(), h.underrun_events, incidents.len(),
+            incidents.iter().map(|i| i.value).fold(0.0, f64::max), if pass { "PASS" } else { "FAIL" });
+        rows.push(Row { track: "starvation".into(), cfg: "unpaced".into(), pass, check: format!("lost {lost:.2}s, reported {reported:.2}s"), pos_ratio: 1.0, ..Default::default() });
     }
 
     // Crossfade + beat-match between consecutive tracks.

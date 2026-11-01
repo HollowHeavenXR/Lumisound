@@ -46,6 +46,10 @@ pub struct Deck {
     seg_left: u64,
     seg_step: f64,
     track_secs: f64,
+    /// When the deck was opened (first-audio latency).
+    pub opened_at: std::time::Instant,
+    /// Became current by gapless hand-over (phase for incidents).
+    pub handed_over: bool,
 }
 
 /// Tempo match for a beat-matched crossfade: play at `start` × speed, hold for
@@ -108,7 +112,8 @@ impl Drop for Deck {
 
 /// Open `path` and start decoding from `start` seconds. Returns once the
 /// container is probed (fails fast on unreadable files).
-pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f64, pitch_semitones: f64, nudge: Option<Nudge>) -> Result<Deck, String> {
+pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f64, pitch_semitones: f64, nudge: Option<Nudge>, tele: Arc<super::mixer::Telemetry>) -> Result<Deck, String> {
+    let opened_at = std::time::Instant::now();
     let speed = speed.clamp(0.25, 4.0);
     let pitch = 2f64.powf(pitch_semitones.clamp(-24.0, 24.0) / 12.0);
     // Pitch: resample to out_rate/p and play at out_rate (p times faster and
@@ -161,14 +166,63 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f6
     std::thread::Builder::new()
         .name("lumisound-deck".into())
         .spawn(move || {
-            let r = decode_loop(&mut *fmt, &mut *dec, tid, src_rate, target_rate, tempo, prod, seg_prod, &sh);
+            let mut stats = DecodeStats::default();
+            let r = decode_loop(&mut *fmt, &mut *dec, tid, src_rate, target_rate, tempo, prod, seg_prod, &sh, &mut stats);
+            report_decode(&tele, id, actual_start, duration, src_rate, &stats, r.as_ref().err());
             if r.is_err() {
                 sh.failed.store(true, Ordering::Release);
             }
             sh.eof.store(true, Ordering::Release);
         })
         .map_err(|e| e.to_string())?;
-    Ok(Deck { id, path: path.to_string(), start_offset: actual_start.max(0.0), frames_played: 0, out_rate, ring: cons, shared, gain, speed, segs, seg_left: 0, seg_step: speed / out_rate as f64, track_secs: 0.0 })
+    Ok(Deck { id, path: path.to_string(), start_offset: actual_start.max(0.0), frames_played: 0, out_rate, ring: cons, shared, gain, speed, segs, seg_left: 0, seg_step: speed / out_rate as f64, track_secs: 0.0, opened_at, handed_over: false })
+}
+
+/// What the decode thread saw, reported when it finishes.
+#[derive(Default)]
+struct DecodeStats {
+    frames: u64,
+    /// Time spent in the codec only (not waiting on the ring).
+    decode_secs: f64,
+    decode_errors: u64,
+    read_error: Option<String>,
+}
+
+fn report_decode(tele: &super::mixer::Telemetry, deck: u64, start: f64, duration: f64, src_rate: u32, st: &DecodeStats, err: Option<&String>) {
+    use super::health::{EngineIncident, IncidentKind, PlaybackPhase, SLOW_DECODE_X, atomic_min_nonzero};
+    use std::sync::atomic::Ordering::Relaxed;
+    let h = &tele.health;
+    let decoded_secs = st.frames as f64 / src_rate.max(1) as f64;
+    let reached = start + decoded_secs;
+    let inc = |kind, value: f64, message: Option<String>| EngineIncident { kind, phase: PlaybackPhase::Playing, deck_id: deck, position: reached, value, budget_ms: 0.0, message, at: 0.0 };
+    if st.decode_errors > 0 {
+        h.decode_errors.fetch_add(st.decode_errors, Relaxed);
+        h.record(inc(IncidentKind::DecodeErrors, st.decode_errors as f64, None));
+    }
+    // Speed over a meaningful stretch only (codec time, excluding ring waits).
+    if decoded_secs >= 5.0 && st.decode_secs > 0.0 {
+        let x = decoded_secs / st.decode_secs;
+        atomic_min_nonzero(&h.decode_speed_min_milli, (x * 1000.0) as u64);
+        if x < SLOW_DECODE_X {
+            h.slow_decodes.fetch_add(1, Relaxed);
+            h.record(inc(IncidentKind::SlowDecode, x, None));
+        }
+    }
+    if let Some(e) = err {
+        if st.frames == 0 {
+            h.deck_failures.fetch_add(1, Relaxed);
+            h.record(inc(IncidentKind::DeckFailed, 0.0, Some(e.clone())));
+        } else {
+            h.decode_stopped_early.fetch_add(1, Relaxed);
+            h.record(inc(IncidentKind::DecodeStoppedEarly, (duration - reached).max(0.0), Some(e.clone())));
+        }
+    } else if duration > 0.0 && reached < duration - 2.0 && st.frames > 0 {
+        // Ended (stopped decks report nothing: they exit before EOF) well short of the end.
+        if let Some(e) = &st.read_error {
+            h.decode_stopped_early.fetch_add(1, Relaxed);
+            h.record(inc(IncidentKind::DecodeStoppedEarly, duration - reached, Some(e.clone())));
+        }
+    }
 }
 
 fn push_all(prod: &mut rtrb::Producer<f32>, data: &[f32], sh: &DeckShared) -> bool {
@@ -230,6 +284,7 @@ fn decode_loop(
     mut prod: rtrb::Producer<f32>,
     mut segs: rtrb::Producer<(u64, f64)>,
     sh: &DeckShared,
+    stats: &mut DecodeStats,
 ) -> Result<(), String> {
     let mut wsola = super::stretch::Wsola::new(tempo.stretch_ratio * tempo.nudge.map_or(1.0, |n| n.start));
     let mut out_frames: u64 = 0;
@@ -297,18 +352,30 @@ fn decode_loop(
         }
         let packet = match fmt.next_packet() {
             Ok(p) => p,
-            Err(Error::IoError(_)) => break,
+            Err(Error::IoError(e)) => {
+                // UnexpectedEof is the normal end; anything else is a read error.
+                if e.kind() != std::io::ErrorKind::UnexpectedEof {
+                    stats.read_error = Some(e.to_string());
+                }
+                break;
+            }
             Err(Error::ResetRequired) => break,
             Err(e) => return Err(e.to_string()),
         };
         if packet.track_id() != track_id {
             continue;
         }
+        let t0 = std::time::Instant::now();
         let decoded = match dec.decode(&packet) {
             Ok(d) => d,
-            Err(Error::DecodeError(_)) => continue,
+            Err(Error::DecodeError(_)) => {
+                stats.decode_errors += 1;
+                continue;
+            }
             Err(e) => return Err(e.to_string()),
         };
+        stats.decode_secs += t0.elapsed().as_secs_f64();
+        stats.frames += decoded.frames() as u64;
         let spec = *decoded.spec();
         let ch = spec.channels.count().max(1);
         let need = decoded.capacity() * ch;

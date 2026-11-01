@@ -36,10 +36,11 @@ extension AudioPlayerManager {
 
     func rustEligible(for url: URL) -> Bool {
         guard Self.rustEngineEnabled, !rustBypassOnce else { return false }
-        let s = audioSettings
         // Effects map onto settings + a modulation (8D, tremolo, vibrato),
         // all of which the engine does.
-        return CoreAudio.canDecode(path: LumisoundExclusiveExtensionService.playableURL(for: url).path)
+        let ok = CoreAudio.canDecode(path: LumisoundExclusiveExtensionService.playableURL(for: url).path)
+        if !ok { reportEngineFallback(reason: "unsupported_format", url: url) }
+        return ok
     }
 
     private func ensureRustOutput() -> Bool {
@@ -48,9 +49,11 @@ extension AudioPlayerManager {
         do {
             try Self.rust.startOutput()
             rustOutputStarted = true
+            startEngineTelemetry()
             return true
         } catch {
             appWarn("Rust audio output failed to start: \(error.localizedDescription)", category: "audio")
+            reportEngineFallback(reason: "output_start_failed", url: currentSong?.url, error: error.localizedDescription)
             return false
         }
     }
@@ -73,6 +76,7 @@ extension AudioPlayerManager {
             rustNextPath = nil
         } catch {
             appWarn("Rust engine could not open \(url.lastPathComponent): \(error.localizedDescription)", category: "audio")
+            reportEngineFallback(reason: "open_failed", url: url, error: error.localizedDescription)
             return false
         }
         audioFile = nil
@@ -290,6 +294,8 @@ extension AudioPlayerManager {
     func rustTrackFailed(id: UInt64) {
         guard id == rustDeckID else { return }
         appWarn("Rust engine failed to decode \(currentSong?.displayName ?? "?") — using AVAudioEngine", category: "audio")
+        reportEngineFallback(reason: "decode_failed", url: currentSong?.url,
+                             error: Self.rust.incidents().last(where: { $0.kind == .deckFailed })?.message)
         tearDownRustEngine()
         rustBypassOnce = true
         playCurrent(from: position)

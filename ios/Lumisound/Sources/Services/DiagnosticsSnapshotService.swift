@@ -240,6 +240,8 @@ enum DiagnosticsSnapshotService {
                 "currentlySpeaking": AIDJService.shared?.isSpeaking ?? false,
             ],
             "silenceTrimEnabled": SilenceTrimService.shared?.isEnabled ?? false,
+            "engine": player.isUsingRustEngine ? "lumisound" : "avaudioengine",
+            "lumisoundEngine": AudioPlayerManager.engineHealthSnapshot(),
         ]
     }
 
