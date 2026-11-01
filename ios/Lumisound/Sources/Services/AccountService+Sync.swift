@@ -7,22 +7,22 @@ extension AccountService {
     // MARK: - Sync
 
     /// Call schedulePush instead of this directly — it debounces rapid mutations.
+    ///
+    /// Payload shape and the push gate are the Rust core's (`sync.rs`); this
+    /// gathers the device state it needs: favourites, playlists resolved
+    /// against the library, the synced UserDefaults keys and store blobs.
     func pushSync(
         library: LibraryManager,
         audioSettings: AudioSettings? = nil,
         trackAudioSettings: [String: AudioSettings]? = nil
     ) async {
         guard isLoggedIn else { return }
-        // The server REPLACES favorites and playlist tracks with whatever this
-        // push carries. Playlist tracks are resolved against the loaded library
-        // below, so a push that goes out before the library has loaded sends
-        // every playlist empty and wipes it server-side. Field telemetry caught
-        // the favourites version of this: one push replaced the account's set
-        // with nothing, and the next launch re-added 243 of them one request at
-        // a time. Wait for a library before saying what is in it.
-        let hasLocalState = !library.favoriteSongIDs.isEmpty
-            || library.playlists.contains { !$0.songIDs.isEmpty }
-        if library.allSongs.isEmpty && hasLocalState {
+        // The server REPLACES favourites and playlist tracks with what a push
+        // carries, and playlists resolve against the loaded library — so an
+        // early push would wipe them server-side.
+        guard syncShouldPush(libraryLoaded: !library.allSongs.isEmpty,
+                             favoriteCount: UInt32(library.favoriteSongIDs.count),
+                             hasNonemptyPlaylist: library.playlists.contains { !$0.songIDs.isEmpty }) else {
             appLog("Push sync skipped — library not loaded yet", category: "account")
             return
         }
@@ -31,70 +31,30 @@ extension AccountService {
         errorMessage = nil
         defer { isSyncing = false }
 
-        // Every favourite id is sent, whether or not its song is in the
-        // library right now.
-        //
-        // This used to send only `favoriteSongs` — favourites whose song is
-        // currently loaded. A favourite for a file that had been renamed, moved
-        // or not yet re-downloaded was left out, so the server (which replaces
-        // the set) deleted it, and the next launch's merge saw it missing and
-        // POSTed it back. Every launch, forever: 46 favourites re-added each
-        // time for one account, 1,800 requests in five days. Favourites matched
-        // only by filename (see `isFavorite`) are included under the library's
-        // own id as well, as they were before.
-        var favoritesByID: [String: SyncFavorite] = [:]
-        for id in library.favoriteSongIDs {
+        // Every favourite id, loaded or not (a favourite for a moved/renamed
+        // file left out of the push was deleted server-side, then re-added on
+        // every launch), plus filename-matched favourites under the library id.
+        var favorites = library.favoriteSongIDs.map { id -> SyncFavoriteRec in
             let song = library.songsByID[id]
-            favoritesByID[id] = SyncFavorite(
-                songId: id,
-                title: song?.title,
-                artist: song?.artistName,
-                album: song?.albumName
-            )
+            return SyncFavoriteRec(songId: id, title: song?.title, artist: song?.artistName, album: song?.albumName)
         }
-        for song in library.favoriteSongs where favoritesByID[song.id] == nil {
-            favoritesByID[song.id] = SyncFavorite(
-                songId: song.id,
-                title: song.title,
-                artist: song.artistName,
-                album: song.albumName
-            )
+        favorites += library.favoriteSongs.map {
+            SyncFavoriteRec(songId: $0.id, title: $0.title, artist: $0.artistName, album: $0.albumName)
         }
-        let favorites = Array(favoritesByID.values)
-
-        // Build playlists from library
-        let playlists = library.playlists.map { playlist -> SyncPlaylist in
+        let playlists = library.playlists.map { playlist -> SyncPlaylistRec in
             let songs = playlist.songIDs.compactMap { library.songsByID[$0] }
-            let tracks = songs.enumerated().map { idx, song in
-                SyncTrack(
-                    localSongId: song.id,
-                    trackUrl: song.url?.absoluteString,
-                    title: song.title,
-                    artist: song.artist.isEmpty ? nil : song.artist,
-                    album: song.album.isEmpty ? nil : song.album,
-                    durationSeconds: Int(song.duration),
-                    position: idx
-                )
-            }
-            return SyncPlaylist(
-                id: playlist.id.uuidString,
-                name: playlist.name,
-                description: nil,
-                folder: playlist.folder,
-                tags: playlist.tags,
-                tracks: tracks
-            )
+            return SyncPlaylistRec(
+                id: playlist.id.uuidString, name: playlist.name, folder: playlist.folder, tags: playlist.tags,
+                tracks: songs.enumerated().map { idx, song in
+                    SyncTrackRec(localSongId: song.id, trackUrl: song.url?.absoluteString, title: song.title,
+                                 artist: song.artist.isEmpty ? nil : song.artist,
+                                 album: song.album.isEmpty ? nil : song.album,
+                                 durationSeconds: Int64(song.duration), position: Int64(idx))
+                })
         }
-
-        // Serialize audio settings to JSON if provided
-        let audioJSON: String? = audioSettings.flatMap { settings in
-            (try? JSONEncoder().encode(settings)).flatMap { String(data: $0, encoding: .utf8) }
+        func json<T: Encodable>(_ v: T?) -> String? {
+            v.flatMap { try? JSONEncoder().encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
         }
-        // Serialize per-track audio settings overrides to JSON if provided
-        let trackAudioJSON: String? = trackAudioSettings.flatMap { map in
-            (try? JSONEncoder().encode(map)).flatMap { String(data: $0, encoding: .utf8) }
-        }
-        // Read current accent colour from UserDefaults (saved by AppTheme.saveAccentColor)
         let themeHex: String? = {
             guard let data = UserDefaults.standard.data(forKey: "accent_color_data"),
                   let uiColor = try? NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: data)
@@ -103,117 +63,24 @@ extension AccountService {
             uiColor.getRed(&r, green: &g, blue: &b, alpha: &a)
             return String(format: "#%02X%02X%02X", Int(r*255), Int(g*255), Int(b*255))
         }()
-
-        let defaults = UserDefaults.standard
-
-        // Visual/layout preferences — mirrored from ios_user_settings_expanded
-        // columns so they round-trip through the normal sync push/pull too.
-        // "Vinyl disc enabled" maps to the legacy `nowPlaying_showVinylDisc`
-        // bool if present (NowPlayingView migrates it to nowPlaying_artworkStyle
-        // on first read), otherwise derive it from the current artwork style.
-        let vinylDiscEnabled: Bool? = {
-            if let legacy = defaults.object(forKey: "nowPlaying_showVinylDisc") as? Bool {
-                return legacy
-            }
-            if let style = defaults.string(forKey: "nowPlaying_artworkStyle") {
-                return style == "vinylDisc"
-            }
-            return nil
-        }()
-        let showQueuePreview: Bool? = defaults.object(forKey: "nowPlaying_showQueuePreview") != nil
-            ? defaults.bool(forKey: "nowPlaying_showQueuePreview") : nil
-        let songsPerRow: Int? = defaults.object(forKey: "library_songs_columns") != nil
-            ? defaults.integer(forKey: "library_songs_columns") : nil
-        let albumsPerRow: Int? = defaults.object(forKey: "library_albums_columns") != nil
-            ? defaults.integer(forKey: "library_albums_columns") : nil
-        let bgAnimation = defaults.string(forKey: "bgService.animation")
-        let bgOpacity: Double? = defaults.object(forKey: "bgService.opacity") != nil
-            ? defaults.double(forKey: "bgService.opacity") : nil
-        let bgEnabled: Bool? = defaults.object(forKey: "bgService.isEnabled") != nil
-            ? defaults.bool(forKey: "bgService.isEnabled") : nil
-        let bgBlurRadius: Double? = defaults.object(forKey: "bgService.blurRadius") != nil
-            ? defaults.double(forKey: "bgService.blurRadius") : nil
-        let bgShuffleInterval: Double? = defaults.object(forKey: "bgService.shuffleInterval") != nil
-            ? defaults.double(forKey: "bgService.shuffleInterval") : nil
-        let preferredAudioFormat = defaults.string(forKey: StreamingService.preferredFormatKey)
-        let downloadPath = defaults.string(forKey: StreamingService.downloadPathKey)
-
-        // New sync fields
-        let carModeEnabled: Bool? = defaults.object(forKey: "carModeEnabled") != nil
-            ? defaults.bool(forKey: "carModeEnabled") : nil
-        let libraryArtistsColumns: Int? = defaults.object(forKey: "library_artists_columns") != nil
-            ? defaults.integer(forKey: "library_artists_columns") : nil
-        let nowPlayingArtworkStyle = defaults.string(forKey: "nowPlaying_artworkStyle")
-        let nowPlayingSeekerStyle = defaults.string(forKey: "nowPlaying_seekerStyle")
-        let earnedBadgesJSON: String? = {
-            guard let data = defaults.data(forKey: "earnedBadges"),
-                  let decoded = try? JSONDecoder().decode(Set<String>.self, from: data),
-                  !decoded.isEmpty
-            else { return nil }
-            return (try? JSONEncoder().encode(decoded)).flatMap { String(data: $0, encoding: .utf8) }
-        }()
-
-        // Previously device-local-only stores — see SyncData's doc comments
-        // on each field for why these were gaps.
-        let playHistoryJSON: String? = {
-            let entries = PlayHistoryStore.shared.entries
-            guard !entries.isEmpty else { return nil }
-            return (try? JSONEncoder().encode(entries)).flatMap { String(data: $0, encoding: .utf8) }
-        }()
-        let smartPlaylistsJSON: String? = {
-            let playlists = SmartPlaylistStore.shared.playlists
-            guard !playlists.isEmpty else { return nil }
-            return (try? JSONEncoder().encode(playlists)).flatMap { String(data: $0, encoding: .utf8) }
-        }()
-        let trackedPlaylistsJSON: String? = {
-            let playlists = TrackedPlaylistStore.shared.playlists
-            guard !playlists.isEmpty else { return nil }
-            return (try? JSONEncoder().encode(playlists)).flatMap { String(data: $0, encoding: .utf8) }
-        }()
-        let bookmarksJSON: String? = {
-            let bookmarks = BookmarkStore.shared.bookmarksBySong
-            guard !bookmarks.isEmpty else { return nil }
-            return (try? JSONEncoder().encode(bookmarks)).flatMap { String(data: $0, encoding: .utf8) }
-        }()
-        let bpmBySourceTrackIDJSON: String? = {
-            var map: [String: Double] = [:]
-            for song in library.allSongs {
-                guard let sourceID = song.sourceTrackID, let bpm = song.bpm else { continue }
-                map[sourceID] = bpm
-            }
-            guard !map.isEmpty else { return nil }
-            return (try? JSONEncoder().encode(map)).flatMap { String(data: $0, encoding: .utf8) }
-        }()
-
-        let payload = SyncData(
-            favorites: favorites,
-            playlists: playlists,
-            audioSettingsJSON: audioJSON,
-            trackAudioSettingsJSON: trackAudioJSON,
-            themeColor: themeHex ?? "#EC4079",
-            vinylDiscEnabled: vinylDiscEnabled,
-            showQueuePreview: showQueuePreview,
-            songsPerRow: songsPerRow,
-            albumsPerRow: albumsPerRow,
-            bgAnimation: bgAnimation,
-            bgOpacity: bgOpacity,
-            bgEnabled: bgEnabled,
-            bgBlurRadius: bgBlurRadius,
-            bgShuffleInterval: bgShuffleInterval,
-            preferredAudioFormat: preferredAudioFormat,
-            downloadPath: downloadPath,
-            carModeEnabled: carModeEnabled,
-            libraryArtistsColumns: libraryArtistsColumns,
-            nowPlayingArtworkStyle: nowPlayingArtworkStyle,
-            nowPlayingSeekerStyle: nowPlayingSeekerStyle,
-            earnedBadgesJSON: earnedBadgesJSON,
-            extraSettingsJSON: Self.buildExtraSettingsJSON(),
-            playHistoryJSON: playHistoryJSON,
-            smartPlaylistsJSON: smartPlaylistsJSON,
-            trackedPlaylistsJSON: trackedPlaylistsJSON,
-            bookmarksJSON: bookmarksJSON,
-            bpmBySourceTrackIDJSON: bpmBySourceTrackIDJSON
-        )
+        let history = PlayHistoryStore.shared.entries
+        let smart = SmartPlaylistStore.shared.playlists
+        let tracked = TrackedPlaylistStore.shared.playlists
+        let bookmarks = BookmarkStore.shared.bookmarksBySong
+        let blobs = SyncBlobs(
+            audioSettingsJson: json(audioSettings),
+            trackAudioSettingsJson: json(trackAudioSettings),
+            playHistoryJson: history.isEmpty ? nil : json(history),
+            smartPlaylistsJson: smart.isEmpty ? nil : json(smart),
+            trackedPlaylistsJson: tracked.isEmpty ? nil : json(tracked),
+            bookmarksJson: bookmarks.isEmpty ? nil : json(bookmarks))
+        let bpm = library.allSongs.compactMap { song -> BpmEntry? in
+            guard let id = song.sourceTrackID, let bpm = song.bpm else { return nil }
+            return BpmEntry(sourceTrackId: id, bpm: bpm)
+        }
+        let payload = syncBuildPayload(local: SyncLocal(
+            favorites: favorites, playlists: playlists, prefs: Self.readSyncedPrefs(),
+            themeHex: themeHex, earnedBadges: Array(Self.earnedBadges()), blobs: blobs, bpmBySource: bpm))
 
         do {
             // Retried, because the push is an idempotent upsert — the server
@@ -227,9 +94,7 @@ extension AccountService {
             // account here — so these were ordinary network blips, not requests too
             // big to finish. Three attempts with backoff cover a blip in seconds
             // instead of twenty minutes.
-            _ = try await NetworkRetry.withRetry(maxAttempts: 3, baseDelay: 0.8) {
-                try await makeRequest("/user/sync", method: "POST", body: payload)
-            }
+            _ = try await _makeRequest("/user/sync", method: "POST", bodyData: payload, maxAttempts: 3)
             lastSyncDate = Date()
             // The server broadcasts a "sync_changed" live event to every one
             // of this account's active connections after a successful push —
@@ -273,117 +138,40 @@ extension AccountService {
         }
     }
 
-    /// Additional UserDefaults-backed preference keys (and their value type)
-    /// included in the per-user auto backup beyond the explicitly-modelled
-    /// SyncData columns. Backed up/restored as a single JSON bag
-    /// (`extra_settings_json`). Adding a new backed-up preference is a one-line
-    /// addition here.
-    static let extraBackupKeys: [(key: String, kind: ExtraSettingKind)] = [
-        ("library_cardStyle", .string),
-        ("autoRadio_enabled", .bool),
-        ("notifications_enabled", .bool),
-        ("ytdlp_use_aria2", .bool),
-        // Liquid Glass customization (see GlassSettings)
-        ("glass_tintStrength", .double),
-        ("glass_tintHue", .double),
-        ("glass_useAccentTint", .bool),
-        ("glass_translucency", .double),
-        // Remaining per-tab grid column counts — songs/albums/artists were
-        // already covered above via dedicated SyncData columns; these were
-        // simply never added when those later tabs picked up the same
-        // list/grid toggle.
-        ("library_favorites_columns", .int),
-        ("library_genres_columns", .int),
-        ("library_folders_columns", .int),
-        ("folderDetail_columns", .int),
-        ("albumDetail_columns", .int),
-        // Appearance customization (Settings → Appearance) — only accent
-        // color was covered before; a user who customized background theme/
-        // font/launch screen/transitions/panel style lost the rest on a
-        // fresh install.
-        ("app_background_theme", .string),
-        ("app_font_style", .string),
-        ("launch_screen_style", .string),
-        ("tab_transition_style", .string),
-        ("panel_material_style", .string),
-        ("panel_opacity", .double),
-        ("app_reduce_motion", .bool),
-        // yt-dlp download tuning beyond the aria2 toggle, and the
-        // "auto-backup downloads to cloud" preference.
-        ("ytdlp_download_folder", .string),
-        ("ytdlp_throttle_seconds", .int),
-        ("ytdlp_concurrent_fragments", .int),
-        ("autoCloudBackup", .bool),
-        // Custom navbar layout (Settings → Appearance → Navbar) — a user who
-        // hid tabs, switched selection style, or turned off tab labels lost
-        // all of it on a fresh install; only the artwork/seeker style
-        // preferences (dedicated SyncData columns) survived before this.
-        ("navbarDisplayMode", .string),
-        ("navbarShowTabLabels", .bool),
-        ("navbarSelectionStyle", .string),
-        ("navbarHiddenTabs", .string),
-        // Gallery Background source + Ken Burns — the source picker
-        // (Photos/Sonic Wallpaper/Reactive Aura) and motion toggle were
-        // never backed up; only the photo-specific animation/opacity/blur
-        // settings (dedicated SyncData columns) were.
-        (GalleryBackgroundSource.storageKey, .string),
-        ("bgService.kenBurnsEnabled", .bool),
-        // Home hub customization (reorder/hide sections, custom greeting,
-        // accent) — entirely unbacked-up before this; a reinstall silently
-        // reset a customized Home tab back to its default layout.
-        (HomeHubLayoutStore.orderKey, .string),
-        (HomeHubLayoutStore.hiddenKey, .string),
-        ("home_hub_custom_greeting", .string),
-        ("home_hub_accent_hex", .string),
-        // Wi-Fi-only downloads — a real user preference (avoids burning
-        // cellular data on auto-downloads), previously device-local only.
-        ("wifiOnlyDownloads.enabled", .bool),
-    ]
+    // MARK: - Synced preferences (key list and types come from the core)
 
-    enum ExtraSettingKind { case bool, double, string, int }
-
-    /// Serializes the current values of `extraBackupKeys` (only those actually
-    /// set) into a JSON object string for the backup payload.
-    static func buildExtraSettingsJSON() -> String? {
-        let defaults = UserDefaults.standard
-        var dict: [String: Any] = [:]
-        for entry in extraBackupKeys {
-            guard defaults.object(forKey: entry.key) != nil else { continue }
-            switch entry.kind {
-            case .bool:   dict[entry.key] = defaults.bool(forKey: entry.key)
-            case .double: dict[entry.key] = defaults.double(forKey: entry.key)
-            case .int:    dict[entry.key] = defaults.integer(forKey: entry.key)
-            case .string: dict[entry.key] = defaults.string(forKey: entry.key)
+    /// Current values of every synced UserDefaults key that is set.
+    static func readSyncedPrefs() -> [PrefEntry] {
+        let d = UserDefaults.standard
+        return syncPrefKeys().compactMap { k in
+            guard d.object(forKey: k.key) != nil else { return nil }
+            let value: PrefValue
+            switch k.kind {
+            case .bool: value = .bool(v: d.bool(forKey: k.key))
+            case .int: value = .int(v: Int64(d.integer(forKey: k.key)))
+            case .double: value = .double(v: d.double(forKey: k.key))
+            case .str:
+                guard let s = d.string(forKey: k.key) else { return nil }
+                value = .str(v: s)
             }
+            return PrefEntry(key: k.key, value: value)
         }
-        guard !dict.isEmpty,
-              let data = try? JSONSerialization.data(withJSONObject: dict),
-              let json = String(data: data, encoding: .utf8)
-        else { return nil }
-        return json
     }
 
-    /// Restores backed-up extra settings, writing each key only when it's not
-    /// already set locally — first-run/new-device bootstrap only, mirroring the
-    /// non-destructive restore policy used for the other synced settings (see
-    /// the destructive-pull-sync fix) so a fresher local value is never
-    /// clobbered by a stale server one.
-    static func applyExtraSettingsJSON(_ json: String?) {
-        guard let json, let data = json.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return }
-        let defaults = UserDefaults.standard
-        for entry in extraBackupKeys {
-            guard defaults.object(forKey: entry.key) == nil, let value = dict[entry.key] else { continue }
-            switch entry.kind {
-            case .bool:   if let b = value as? Bool   { defaults.set(b, forKey: entry.key) }
-            case .double: if let d = value as? Double { defaults.set(d, forKey: entry.key) }
-                          else if let n = value as? NSNumber { defaults.set(n.doubleValue, forKey: entry.key) }
-            case .int:    if let i = value as? Int    { defaults.set(i, forKey: entry.key) }
-                          else if let n = value as? NSNumber { defaults.set(n.intValue, forKey: entry.key) }
-            case .string: if let s = value as? String { defaults.set(s, forKey: entry.key) }
-            }
+    static func writePref(_ p: PrefEntry) {
+        let d = UserDefaults.standard
+        switch p.value {
+        case .bool(let v): d.set(v, forKey: p.key)
+        case .int(let v): d.set(Int(v), forKey: p.key)
+        case .double(let v): d.set(v, forKey: p.key)
+        case .str(let v): d.set(v, forKey: p.key)
         }
+    }
+
+    static func earnedBadges() -> Set<String> {
+        guard let data = UserDefaults.standard.data(forKey: "earnedBadges"),
+              let set = try? JSONDecoder().decode(Set<String>.self, from: data) else { return [] }
+        return set
     }
 
     func pullSync(library: LibraryManager, player: AudioPlayerManager? = nil) async {
@@ -395,230 +183,64 @@ extension AccountService {
 
         do {
             let data = try await makeRequest("/user/sync")
-            let sync = try JSONDecoder().decode(SyncData.self, from: data)
+            let defaults = UserDefaults.standard
+            // Merge rules (Rust core sync.rs): favourites/playlists only ever
+            // added, settings only restored into unset keys, badges unioned.
+            let plan = try syncPullPlan(remote: data, local: SyncPullLocal(
+                favoriteIds: Array(library.favoriteSongIDs),
+                playlistNames: library.playlists.map(\.name),
+                setKeys: syncPrefKeys().map(\.key).filter { defaults.object(forKey: $0) != nil },
+                hasAudioSettings: PersistenceService.shared.loadAudioSettings() != nil,
+                hasTrackAudioSettings: !PersistenceService.shared.loadTrackAudioSettings().isEmpty,
+                hasAccentColor: defaults.data(forKey: "accent_color_data") != nil,
+                earnedBadges: Array(Self.earnedBadges())))
 
-            // Apply favorites: merge remote into local — add anything missing locally.
-            //
-            // This used to be a destructive "toggle to match remote exactly", which
-            // also *removed* any local favorite absent from the server payload. That
-            // silently wiped out the user's likes whenever the remote was behind the
-            // device (e.g. the previous session's pushSync hadn't completed before
-            // the app was terminated, or ran against a flaky connection) — which is
-            // exactly what showed up as "app data doesn't seem to hold anything
-            // locally". Only ever add; the merged superset gets pushed back up by
-            // the `.onChange(of: favoriteSongIDs)` → schedulePush handler, so both
-            // sides converge without data loss.
-            let remoteIDs = Set(sync.favorites.map { $0.songId })
-            let localFavorites = library.favoriteSongIDs
-            let toAdd = remoteIDs.subtracting(localFavorites)
-            // `addFavorites` (one persistence write, one toast) instead of
-            // looping `toggleFavorite` once per id: this pull runs on every
-            // launch/foreground while logged in — the "auto reload" users
-            // reported as freezing the whole app — and `toggleFavorite`
-            // does a synchronous disk write PLUS pops a toast on every
-            // single call. With hundreds of favorites that's hundreds of
-            // synchronous writes and toast animations firing back-to-back
-            // on the main actor with no `await` in between to yield at, a
-            // real multi-second block on all interaction, not just a
-            // rendering-cost issue.
-            if !toAdd.isEmpty { library.addFavorites(ids: toAdd) }
-
-            // Apply playlists: merge server playlists (add missing by name, skip existing).
-            // Same fix as favorites above: build each new playlist's full
-            // song id list first and create it in one `createPlaylist(name:songIDs:)`
-            // call (one write, no toast — same helper M3U import already
-            // uses for this exact "several tracks into a fresh playlist"
-            // shape) instead of `createPlaylist(name:)` + one `addSong`
-            // call per track, which was the dominant cost here for anyone
-            // with sizable playlists — a 500-track playlist meant 500
-            // synchronous writes/toasts for that ONE playlist alone.
-            let existingNames = Set(library.playlists.map { $0.name })
-            for sp in sync.playlists {
-                guard !existingNames.contains(sp.name) else { continue }
-                let songIDs = sp.tracks.compactMap { $0.localSongId }
-                let newPL = library.createPlaylist(name: sp.name, songIDs: songIDs)
+            // One write / no per-item toast each (this runs on every
+            // launch/foreground; per-item writes froze the app).
+            if !plan.favoritesToAdd.isEmpty { library.addFavorites(ids: Set(plan.favoritesToAdd)) }
+            for sp in plan.playlistsToCreate {
+                let newPL = library.createPlaylist(name: sp.name, songIDs: sp.tracks.compactMap(\.localSongId))
                 if sp.folder != nil { library.setFolder(sp.folder, forPlaylistID: newPL.id) }
                 if !sp.tags.isEmpty { library.setTags(sp.tags, forPlaylistID: newPL.id) }
             }
-
-            // Restore audio settings from DB — but only as a first-run/new-device
-            // bootstrap (no local settings yet). Unconditionally overwriting local
-            // settings with whatever the server last received clobbers more recent
-            // local changes whenever a previous pushSync didn't finish before the
-            // app was terminated (the debounced 2s push is easy to race on app
-            // close), which presents to the user as "my settings keep resetting /
-            // don't actually save". The local copy — which `onChange` keeps pushed
-            // up via schedulePush — is always at least as fresh as the server's.
-            if PersistenceService.shared.loadAudioSettings() == nil,
-               let json = sync.audioSettingsJSON,
-               let jsonData = json.data(using: .utf8),
-               let restoredSettings = try? JSONDecoder().decode(AudioSettings.self, from: jsonData) {
-                PersistenceService.shared.saveAudioSettings(restoredSettings)
-                // Signal the player to apply them (observers in LumisoundApp reload on launch)
+            if let json = plan.audioSettingsJson, let d = json.data(using: .utf8),
+               let restored = try? JSONDecoder().decode(AudioSettings.self, from: d) {
+                PersistenceService.shared.saveAudioSettings(restored)
             }
-
-            // Restore per-track audio settings overrides — same first-run-only
-            // guard as the global audio settings above, to avoid clobbering
-            // settings saved locally since the last successful push.
-            if PersistenceService.shared.loadTrackAudioSettings().isEmpty,
-               let json = sync.trackAudioSettingsJSON,
-               let jsonData = json.data(using: .utf8),
-               let restoredMap = try? JSONDecoder().decode([String: AudioSettings].self, from: jsonData),
-               !restoredMap.isEmpty {
-                if let player {
-                    player.restorePerTrackAudioSettings(restoredMap)
-                } else {
-                    PersistenceService.shared.saveTrackAudioSettings(restoredMap)
-                }
+            if let json = plan.trackAudioSettingsJson, let d = json.data(using: .utf8),
+               let restored = try? JSONDecoder().decode([String: AudioSettings].self, from: d), !restored.isEmpty {
+                if let player { player.restorePerTrackAudioSettings(restored) }
+                else { PersistenceService.shared.saveTrackAudioSettings(restored) }
             }
-
-            // Restore theme colour — same first-run-only guard as audio settings above:
-            // there's no `.onChange` hook pushing accent-colour changes immediately
-            // (it only rides along on the next favorites/playlist/settings push), so
-            // an unconditional overwrite here would routinely revert a just-picked
-            // colour back to whatever stale value the server last happened to receive.
-            if UserDefaults.standard.data(forKey: "accent_color_data") == nil,
-               let hex = sync.themeColor, hex.hasPrefix("#"), hex.count == 7 {
-                let scanner = Scanner(string: String(hex.dropFirst()))
-                var rgb: UInt64 = 0
-                if scanner.scanHexInt64(&rgb) {
-                    let r = CGFloat((rgb >> 16) & 0xFF) / 255
-                    let g = CGFloat((rgb >> 8)  & 0xFF) / 255
-                    let b = CGFloat( rgb        & 0xFF) / 255
-                    AppTheme.saveAccentColor(Color(red: r, green: g, blue: b))
-                }
+            if let c = plan.accent {
+                AppTheme.saveAccentColor(Color(red: c.r, green: c.g, blue: c.b))
             }
-
-            // Restore expanded visual/layout preferences and the new sync
-            // fields — same first-run-only guard as audio settings/theme above:
-            // only apply when the local UserDefaults key is unset, so a fresher
-            // local change is never clobbered by a stale server value.
-            let defaults = UserDefaults.standard
-
-            if defaults.object(forKey: "nowPlaying_showVinylDisc") == nil,
-               defaults.string(forKey: "nowPlaying_artworkStyle") == nil,
-               let vinylDiscEnabled = sync.vinylDiscEnabled {
-                defaults.set(vinylDiscEnabled, forKey: "nowPlaying_showVinylDisc")
+            plan.prefsToSet.forEach(Self.writePref)
+            if let badges = plan.mergedBadges, let encoded = try? JSONEncoder().encode(Set(badges)) {
+                defaults.set(encoded, forKey: "earnedBadges")
             }
-            if defaults.object(forKey: "nowPlaying_showQueuePreview") == nil,
-               let showQueuePreview = sync.showQueuePreview {
-                defaults.set(showQueuePreview, forKey: "nowPlaying_showQueuePreview")
-            }
-            if defaults.object(forKey: "library_songs_columns") == nil,
-               let songsPerRow = sync.songsPerRow {
-                defaults.set(songsPerRow, forKey: "library_songs_columns")
-            }
-            if defaults.object(forKey: "library_albums_columns") == nil,
-               let albumsPerRow = sync.albumsPerRow {
-                defaults.set(albumsPerRow, forKey: "library_albums_columns")
-            }
-            if defaults.string(forKey: "bgService.animation") == nil,
-               let bgAnimation = sync.bgAnimation {
-                defaults.set(bgAnimation, forKey: "bgService.animation")
-            }
-            if defaults.object(forKey: "bgService.opacity") == nil,
-               let bgOpacity = sync.bgOpacity {
-                defaults.set(bgOpacity, forKey: "bgService.opacity")
-            }
-            if defaults.object(forKey: "bgService.isEnabled") == nil,
-               let bgEnabled = sync.bgEnabled {
-                defaults.set(bgEnabled, forKey: "bgService.isEnabled")
-            }
-            if defaults.object(forKey: "bgService.blurRadius") == nil,
-               let bgBlurRadius = sync.bgBlurRadius {
-                defaults.set(bgBlurRadius, forKey: "bgService.blurRadius")
-            }
-            if defaults.object(forKey: "bgService.shuffleInterval") == nil,
-               let bgShuffleInterval = sync.bgShuffleInterval {
-                defaults.set(bgShuffleInterval, forKey: "bgService.shuffleInterval")
-            }
-            // Re-apply the (possibly just-updated) gallery background settings to
-            // the live BackgroundService instance — without this, a value written
-            // to UserDefaults above sits unused until the next app launch, and the
-            // very next `didSet` on the running instance (e.g. opening the
-            // background settings screen) immediately pushes its still-old
-            // in-memory value back to the server, overwriting what was just pulled.
+            // Re-apply gallery background settings to the live instance, or its
+            // next didSet would push the stale in-memory values back up.
             BackgroundService.shared?.loadSettings()
-            if defaults.string(forKey: StreamingService.preferredFormatKey) == nil,
-               let preferredAudioFormat = sync.preferredAudioFormat {
-                defaults.set(preferredAudioFormat, forKey: StreamingService.preferredFormatKey)
-            }
-            if defaults.string(forKey: StreamingService.downloadPathKey) == nil,
-               let downloadPath = sync.downloadPath {
-                defaults.set(downloadPath, forKey: StreamingService.downloadPathKey)
-            }
-            if defaults.object(forKey: "carModeEnabled") == nil,
-               let carModeEnabled = sync.carModeEnabled {
-                defaults.set(carModeEnabled, forKey: "carModeEnabled")
-            }
-            if defaults.object(forKey: "library_artists_columns") == nil,
-               let libraryArtistsColumns = sync.libraryArtistsColumns {
-                defaults.set(libraryArtistsColumns, forKey: "library_artists_columns")
-            }
-            if defaults.string(forKey: "nowPlaying_artworkStyle") == nil,
-               let nowPlayingArtworkStyle = sync.nowPlayingArtworkStyle {
-                defaults.set(nowPlayingArtworkStyle, forKey: "nowPlaying_artworkStyle")
-            }
-            if defaults.string(forKey: "nowPlaying_seekerStyle") == nil,
-               let nowPlayingSeekerStyle = sync.nowPlayingSeekerStyle {
-                defaults.set(nowPlayingSeekerStyle, forKey: "nowPlaying_seekerStyle")
-            }
 
-            // Earned badges: UNION merge with local regardless of whether local
-            // already has a value — badges should never be "lost" by syncing
-            // from a device that hasn't unlocked them all yet.
-            if let json = sync.earnedBadgesJSON,
-               let jsonData = json.data(using: .utf8),
-               let remoteBadges = try? JSONDecoder().decode(Set<String>.self, from: jsonData),
-               !remoteBadges.isEmpty {
-                var localBadges: Set<String> = []
-                if let stored = defaults.data(forKey: "earnedBadges"),
-                   let decoded = try? JSONDecoder().decode(Set<String>.self, from: stored) {
-                    localBadges = decoded
-                }
-                let merged = localBadges.union(remoteBadges)
-                if merged != localBadges,
-                   let encoded = try? JSONEncoder().encode(merged) {
-                    defaults.set(encoded, forKey: "earnedBadges")
-                }
+            // Store-owned blobs: each store merges with its own policy.
+            func decode<T: Decodable>(_ json: String?, as: T.Type) -> T? {
+                json?.data(using: .utf8).flatMap { try? JSONDecoder().decode(T.self, from: $0) }
             }
-
-            // Restore any additional backed-up preferences (card style,
-            // auto-radio, notifications, Liquid Glass customization, …) — only
-            // for keys not already set locally (new-device bootstrap).
-            Self.applyExtraSettingsJSON(sync.extraSettingsJSON)
-
-            // Restore previously device-local-only stores. Each has its own
-            // merge policy (see the store's mergeFromSync doc comment) —
-            // none of these are a blind overwrite, so a fresher local value
-            // is never clobbered the same way audio settings/theme above
-            // are guarded against it.
-            if let json = sync.playHistoryJSON, let jsonData = json.data(using: .utf8),
-               let remote = try? JSONDecoder().decode([String: PlayHistoryEntry].self, from: jsonData) {
-                PlayHistoryStore.shared.mergeFromSync(remote)
-            }
-            if let json = sync.smartPlaylistsJSON, let jsonData = json.data(using: .utf8),
-               let remote = try? JSONDecoder().decode([SmartPlaylist].self, from: jsonData) {
-                SmartPlaylistStore.shared.mergeFromSync(remote)
-            }
-            if let json = sync.trackedPlaylistsJSON, let jsonData = json.data(using: .utf8),
-               let remote = try? JSONDecoder().decode([TrackedPlaylist].self, from: jsonData) {
-                TrackedPlaylistStore.shared.mergeFromSync(remote)
-            }
-            if let json = sync.bookmarksJSON, let jsonData = json.data(using: .utf8),
-               let remote = try? JSONDecoder().decode([String: [TrackBookmark]].self, from: jsonData) {
-                BookmarkStore.shared.mergeFromSync(remote)
-            }
-            if let json = sync.bpmBySourceTrackIDJSON, let jsonData = json.data(using: .utf8),
-               let remote = try? JSONDecoder().decode([String: Double].self, from: jsonData), !remote.isEmpty {
+            if let r = decode(plan.blobs.playHistoryJson, as: [String: PlayHistoryEntry].self) { PlayHistoryStore.shared.mergeFromSync(r) }
+            if let r = decode(plan.blobs.smartPlaylistsJson, as: [SmartPlaylist].self) { SmartPlaylistStore.shared.mergeFromSync(r) }
+            if let r = decode(plan.blobs.trackedPlaylistsJson, as: [TrackedPlaylist].self) { TrackedPlaylistStore.shared.mergeFromSync(r) }
+            if let r = decode(plan.blobs.bookmarksJson, as: [String: [TrackBookmark]].self) { BookmarkStore.shared.mergeFromSync(r) }
+            if !plan.bpmBySource.isEmpty {
+                let remote = Dictionary(plan.bpmBySource.map { ($0.sourceTrackId, $0.bpm) }, uniquingKeysWith: { a, _ in a })
                 for song in library.allSongs {
-                    guard song.bpm == nil, let sourceID = song.sourceTrackID, let bpm = remote[sourceID] else { continue }
+                    guard song.bpm == nil, let id = song.sourceTrackID, let bpm = remote[id] else { continue }
                     library.storeBPM(bpm, for: song.id)
                 }
             }
 
             lastSyncDate = Date()
-            appLog("Pull sync complete (favorites: \(remoteIDs.count), playlists: \(sync.playlists.count))", category: "account")
+            appLog("Pull sync complete (favorites: \(plan.remoteFavoriteCount), playlists: \(plan.remotePlaylistCount))", category: "account")
         } catch let err as AccountError {
             appError("Pull sync failed [\(err.statusCode)]: \(err.message)", category: "account")
             errorMessage = err.message

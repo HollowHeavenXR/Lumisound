@@ -22,6 +22,7 @@ pub mod error;
 pub mod retry;
 pub mod smart;
 pub mod store;
+pub mod sync;
 pub mod stores;
 
 use std::future::Future;

@@ -107,90 +107,6 @@ struct AppUser: Codable, Equatable {
     }
 }
 
-struct SyncData: Codable {
-    var favorites: [SyncFavorite]
-    var playlists: [SyncPlaylist]
-    var audioSettingsJSON: String?
-    var trackAudioSettingsJSON: String?
-    var themeColor: String?
-    var vinylDiscEnabled: Bool?
-    var showQueuePreview: Bool?
-    var songsPerRow: Int?
-    var albumsPerRow: Int?
-    var bgAnimation: String?
-    var bgOpacity: Double?
-    var bgEnabled: Bool?
-    var bgBlurRadius: Double?
-    var bgShuffleInterval: Double?
-    var preferredAudioFormat: String?
-    var downloadPath: String?
-    var carModeEnabled: Bool?
-    var libraryArtistsColumns: Int?
-    var nowPlayingArtworkStyle: String?
-    var nowPlayingSeekerStyle: String?
-    var earnedBadgesJSON: String?
-    /// JSON-encoded bag of additional UserDefaults-backed prefs (card style,
-    /// auto-radio, notifications toggle, Liquid Glass customization, …) so they
-    /// ride along in the per-user auto backup without a column each. See
-    /// `AccountService.extraBackupKeys`.
-    var extraSettingsJSON: String?
-    /// JSON-encoded `[String: PlayHistoryEntry]` (see `PlayHistoryStore`) —
-    /// per-song play counts/last-played dates, otherwise device-local only
-    /// and lost on reinstall (which also silently breaks "Most Played"/
-    /// "Recently Played" Smart Playlists, since they read straight from it).
-    var playHistoryJSON: String?
-    /// JSON-encoded `[SmartPlaylist]` (see `SmartPlaylistStore`) — user-authored
-    /// filter rules, previously device-local only.
-    var smartPlaylistsJSON: String?
-    /// JSON-encoded `[TrackedPlaylist]` (see `TrackedPlaylistStore`) — the
-    /// "auto-download new tracks from this playlist" list, previously
-    /// device-local only (losing it silently stops auto-downloads on a new
-    /// device with no user-visible warning).
-    var trackedPlaylistsJSON: String?
-    /// JSON-encoded `[String: [TrackBookmark]]` (see `BookmarkStore`) —
-    /// per-track timestamp markers, previously device-local only.
-    var bookmarksJSON: String?
-    /// JSON-encoded `[String: Double]` mapping a track's `sourceTrackID`
-    /// (e.g. "youtube:dQw4w9WgXcQ") to its analyzed BPM — NOT the same
-    /// keying as `BPMAnalyzerService`'s own on-disk cache (which is keyed by
-    /// absolute file path + mtime + size and is therefore useless across
-    /// devices/reinstalls). sourceTrackID is portable, so this lets a
-    /// re-downloaded/re-imported copy of the same track skip re-analysis —
-    /// applied straight to `Song.bpm` via `LibraryManager.storeBPM`, not into
-    /// the analyzer's own cache.
-    var bpmBySourceTrackIDJSON: String?
-
-    enum CodingKeys: String, CodingKey {
-        case favorites
-        case playlists
-        case audioSettingsJSON      = "audio_settings_json"
-        case trackAudioSettingsJSON = "track_audio_settings_json"
-        case themeColor             = "theme_color"
-        case vinylDiscEnabled       = "vinyl_disc_enabled"
-        case showQueuePreview       = "show_queue_preview"
-        case songsPerRow            = "songs_per_row"
-        case albumsPerRow           = "albums_per_row"
-        case bgAnimation            = "bg_animation"
-        case bgOpacity              = "bg_opacity"
-        case bgEnabled              = "bg_enabled"
-        case bgBlurRadius           = "bg_blur_radius"
-        case bgShuffleInterval      = "bg_shuffle_interval"
-        case preferredAudioFormat   = "preferred_audio_format"
-        case downloadPath           = "download_path"
-        case carModeEnabled         = "car_mode_enabled"
-        case libraryArtistsColumns  = "library_artists_columns"
-        case nowPlayingArtworkStyle = "now_playing_artwork_style"
-        case nowPlayingSeekerStyle  = "now_playing_seeker_style"
-        case earnedBadgesJSON       = "earned_badges_json"
-        case extraSettingsJSON      = "extra_settings_json"
-        case playHistoryJSON        = "play_history_json"
-        case smartPlaylistsJSON     = "smart_playlists_json"
-        case trackedPlaylistsJSON   = "tracked_playlists_json"
-        case bookmarksJSON          = "bookmarks_json"
-        case bpmBySourceTrackIDJSON = "bpm_by_source_track_id_json"
-    }
-}
-
 // MARK: - Folder Structure Backup (item 3)
 
 /// One track inside a backed-up watched folder, as pushed to/pulled from
@@ -223,52 +139,6 @@ struct FolderBackupEntry: Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case folderPath = "folder_path"
         case tracks
-    }
-}
-
-struct SyncFavorite: Codable {
-    let songId: String
-    let title: String?
-    let artist: String?
-    let album: String?
-
-    enum CodingKeys: String, CodingKey {
-        case songId = "song_id"
-        case title
-        case artist
-        case album
-    }
-}
-
-struct SyncPlaylist: Codable {
-    let id: String
-    let name: String
-    let description: String?
-    var folder: String?
-    var tags: [String]
-    var tracks: [SyncTrack]
-
-    enum CodingKeys: String, CodingKey {
-        case id, name, description, folder, tags, tracks
-    }
-
-    init(id: String, name: String, description: String?, folder: String? = nil, tags: [String] = [], tracks: [SyncTrack]) {
-        self.id = id
-        self.name = name
-        self.description = description
-        self.folder = folder
-        self.tags = tags
-        self.tracks = tracks
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
-        description = try container.decodeIfPresent(String.self, forKey: .description)
-        folder = try container.decodeIfPresent(String.self, forKey: .folder)
-        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
-        tracks = try container.decodeIfPresent([SyncTrack].self, forKey: .tracks) ?? []
     }
 }
 
@@ -943,27 +813,6 @@ struct DuplicateResolution {
     /// else is treated as a plain suggestion the user reviews manually, same as before.
     let confidence: String
 }
-
-struct SyncTrack: Codable {
-    let localSongId: String?
-    let trackUrl: String?
-    let title: String
-    let artist: String?
-    let album: String?
-    let durationSeconds: Int?
-    let position: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case localSongId      = "local_song_id"
-        case trackUrl         = "track_url"
-        case title
-        case artist
-        case album
-        case durationSeconds  = "duration_seconds"
-        case position
-    }
-}
-
 
 // MARK: - Admin Dashboard
 

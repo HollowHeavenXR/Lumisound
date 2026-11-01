@@ -84,14 +84,21 @@ extension AccountService {
     /// inventory upload sends every owned source id at once (3,378 for the largest
     /// account here) and the server replaces the whole set, which is what produced
     /// a long tail of "request timed out" on that one endpoint.
+    /// `maxAttempts` > 1 retries with backoff — only for idempotent writes
+    /// (the default retries GETs only; a retried write could double-apply).
     func _makeRequest(_ path: String, method: String, bodyData: Data?,
-                      timeout: TimeInterval? = nil) async throws -> Data {
+                      timeout: TimeInterval? = nil, maxAttempts: UInt32? = nil) async throws -> Data {
         // Transport, retries (idempotent GETs only — a retried write could
         // double-apply), FastAPI error bodies and 401 detection all live in
         // the Rust core's ApiClient.
         Core.prepare(baseURL: bridgeURL, token: token)
         do {
-            let data = try await Core.api.request(path: path, method: method, body: bodyData, timeoutSecs: timeout)
+            let data = if let maxAttempts {
+                try await Core.api.requestWithRetry(path: path, method: method, body: bodyData, timeoutSecs: timeout,
+                                                    maxAttempts: maxAttempts, baseDelay: 0.8)
+            } else {
+                try await Core.api.request(path: path, method: method, body: bodyData, timeoutSecs: timeout)
+            }
             // Swift task cancellation doesn't reach the Rust future; honour it
             // here so superseded debounced calls still read as cancelled.
             if Task.isCancelled { throw URLError(.cancelled) }
