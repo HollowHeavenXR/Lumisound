@@ -135,6 +135,9 @@ enum LumisoundTrackVaultService {
     /// BGProcessingTask timing is not guaranteed.
     @MainActor
     static func runBackfill() async {
+        // Whole-file lock/decode work: skip this round while the device is hot
+        // (the five-minute loop and background task retry).
+        guard await HeatGovernor.waitForHeadroom(job: "vault backfill") else { return }
         guard let library = LibraryManager.shared else { return }
 
         let candidatesToCheck = library.importedSongs.compactMap { song -> (String, URL, String)? in
@@ -215,6 +218,9 @@ enum LumisoundTrackVaultService {
     /// waits for the next pass, same as backfilled-tag tracks do.
     @MainActor
     static func runExtensionConversionPass() async {
+        // Whole-file lock/decode work: skip this round while the device is hot
+        // (the five-minute loop and background task retry).
+        guard await HeatGovernor.waitForHeadroom(job: ".lms conversion pass") else { return }
         guard let library = LibraryManager.shared else { return }
         let passStartedAt = Date()
         let currentlyPlayingID = AudioPlayerManager.shared?.currentSong?.id
@@ -362,6 +368,9 @@ enum LumisoundTrackVaultService {
 
     @MainActor
     static func runMetadataRepairMigrationIfNeeded() async {
+        // Whole-file lock/decode work: skip this round while the device is hot
+        // (the five-minute loop and background task retry).
+        guard await HeatGovernor.waitForHeadroom(job: "metadata repair migration") else { return }
         let lastRun = UserDefaults.standard.double(forKey: metadataRepairMigrationLastRunKey)
         guard Date().timeIntervalSince1970 - lastRun >= metadataRepairMigrationInterval else { return }
         guard let library = LibraryManager.shared else { return }
@@ -521,6 +530,9 @@ enum LumisoundTrackVaultService {
 
     @MainActor
     static func runConversionIntegrityPassIfNeeded() async {
+        // Whole-file lock/decode work: skip this round while the device is hot
+        // (the five-minute loop and background task retry).
+        guard await HeatGovernor.waitForHeadroom(job: "conversion integrity pass") else { return }
         let lastRun = UserDefaults.standard.double(forKey: conversionIntegrityLastRunKey)
         guard Date().timeIntervalSince1970 - lastRun >= conversionIntegrityInterval else { return }
         guard let library = LibraryManager.shared else { return }

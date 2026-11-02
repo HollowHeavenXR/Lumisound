@@ -19,6 +19,8 @@ extension AudioPlayerManager {
         // A 4096-frame tap preserves the FFT resolution while halving callback,
         // allocation, and SwiftUI publication overhead.
         engine.mainMixerNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
+            // Heat-governed rate: most buffers are dropped here, before any work.
+            guard AudioVisualizerService.wantsSample() else { return }
             handler(buffer)
         }
         // Rust engine: poll its output tap ~23x/s (4096 frames at 48 kHz per
@@ -28,7 +30,8 @@ extension AudioPlayerManager {
         rustTapTimer?.invalidate()
         rustTapTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 23.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.isUsingRustEngine, self.isPlaying else { return }
+                guard let self, self.isUsingRustEngine, self.isPlaying,
+                      AudioVisualizerService.wantsSample() else { return }
                 let samples = Self.rust.tapSamples(count: 4096)
                 guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
                       let ch = buffer.floatChannelData?[0] else { return }

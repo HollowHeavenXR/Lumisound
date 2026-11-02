@@ -350,7 +350,10 @@ extension AudioPlayerManager {
     /// populated asynchronously and read synchronously from `beginCrossfade`.
     func prewarmBPM(for song: Song?) {
         guard let song, bpmCache[song.id] == nil, song.url != nil else { return }
+        // Upcoming tracks can wait for thermal headroom; the current one can't.
+        let upcoming = song.id != currentSong?.id
         Task { [weak self] in
+            if upcoming, !(await HeatGovernor.waitForHeadroom(job: "BPM pre-analysis", maxWait: 600)) { return }
             guard let self, let library = self.libraryManager,
                   let bpm = await library.bpm(for: song)
             else { return }

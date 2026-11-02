@@ -62,6 +62,8 @@ extension LibraryManager {
     /// pattern `resolveSongs`/`performLocalDocumentsScan` already avoid for
     /// the same reason.
     func refreshNextMetadataBatch() async {
+        // Optional upkeep: skip this round while the device is hot.
+        guard await HeatGovernor.waitForHeadroom(job: "metadata refresh") else { return }
         guard !isRefreshingMetadata, !importedSongs.isEmpty else { return }
 
         isRefreshingMetadata = true
