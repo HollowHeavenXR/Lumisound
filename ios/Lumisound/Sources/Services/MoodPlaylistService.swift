@@ -46,6 +46,7 @@ final class MoodPlaylistService: ObservableObject {
     /// Analyzes the provided song list and distributes songs into mood buckets.
     /// Runs at background priority so the main thread is never blocked.
     func analyze(songs: [Song]) async {
+        guard await HeatGovernor.waitForHeadroom(job: "mood analysis", maxWait: 1800) else { return }
         guard !songs.isEmpty else { return }
 
         isAnalyzing = true

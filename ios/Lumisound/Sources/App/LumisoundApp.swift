@@ -56,6 +56,8 @@ struct LumisoundApp: App {
 
     init() {
         Core.bootstrap()
+        // Heat governor: observes thermal state / Low Power Mode / foreground from launch.
+        _ = HeatGovernor.shared
         // Must happen before the app finishes launching — too late if done
         // from a View's .task/.onAppear. See BackgroundRefreshService's docs
         // for what this actually does (and doesn't) guarantee.

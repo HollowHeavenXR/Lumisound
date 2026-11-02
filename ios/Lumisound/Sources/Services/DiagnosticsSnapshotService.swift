@@ -141,6 +141,8 @@ enum DiagnosticsSnapshotService {
             "buildNumber": info?["CFBundleVersion"] as? String ?? "unknown",
             "osVersion": UIDevice.current.systemVersion,
             "thermalState": ProcessInfo.processInfo.thermalState.diagnosticsDescription,
+            "heatPolicy": HeatGovernor.shared.policy.label,
+            "visualizerReasons": AudioVisualizerService.shared.activeReasonNames,
             "lowPowerModeEnabled": ProcessInfo.processInfo.isLowPowerModeEnabled,
             // The system-level gate every background feature in this app
             // depends on (BackgroundRefreshService's subscription/tracked-

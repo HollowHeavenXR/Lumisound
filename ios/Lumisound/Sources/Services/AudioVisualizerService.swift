@@ -35,7 +35,20 @@ final class AudioVisualizerService: ObservableObject {
         case musicHaptics
         case galleryReactiveBackground
     }
-    private var activeReasons: Set<AnalysisReason> = []
+    private var activeReasons: Set<AnalysisReason> = [] {
+        // The core governor sets the analysis rate from who's asking (full
+        // rate only for a visible visualizer) and the device's heat.
+        didSet { HeatGovernor.core.setAnalysisReasons(reasons: activeReasonNames) }
+    }
+
+    var activeReasonNames: [String] { activeReasons.map { "\($0)" }.sorted() }
+
+    /// Per buffer on the audio/tap thread: true when this buffer should be
+    /// analyzed (the core's lock-free rate limit). Everything else is
+    /// dropped before any copying or FFT.
+    nonisolated static func wantsSample() -> Bool {
+        HeatGovernor.core.wantsSample()
+    }
 
     static let barCount = 24
 
@@ -106,6 +119,7 @@ final class AudioVisualizerService: ObservableObject {
     /// needing to hop actors just to start; only the final publish step
     /// hops back to the main actor.
     nonisolated private func process(buffer: AVAudioPCMBuffer) {
+        // Rate-limited by the callers (`wantsSample`) before this is reached.
         guard let channelData = buffer.floatChannelData else { return }
         let available = Int(buffer.frameLength)
         guard available > 0 else { return }

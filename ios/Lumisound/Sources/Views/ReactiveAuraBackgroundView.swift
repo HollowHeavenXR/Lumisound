@@ -18,12 +18,21 @@ struct ReactiveAuraBackgroundView: View {
     @EnvironmentObject private var player: AudioPlayerManager
     @ObservedObject private var analyzer = AudioVisualizerService.shared
     @AppStorage("app_reduce_motion") private var reduceMotion = false
+    @ObservedObject private var governor = HeatGovernor.shared
+    /// Mounted in every tab; only the visible one animates.
+    @State private var visible = false
+
+    /// Frame rate the heat governor allows (1 fps "breathing" when it doesn't).
+    private var frameInterval: Double {
+        guard !reduceMotion, visible, governor.policy.backgroundMotion else { return 1.0 }
+        return 1.0 / max(governor.policy.motionFps, 1)
+    }
 
     @State private var palette: ArtworkPalette?
     @State private var paletteSongID: String?
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: reduceMotion ? 1.0 : 1.0 / 30.0)) { timeline in
+        TimelineView(.periodic(from: .now, by: frameInterval)) { timeline in
             GeometryReader { geo in
                 ZStack {
                     AppTheme.background
@@ -59,10 +68,12 @@ struct ReactiveAuraBackgroundView: View {
         }
         .ignoresSafeArea()
         .onAppear {
+            visible = true
             analyzer.start(for: .galleryReactiveBackground)
             loadPaletteIfNeeded()
         }
         .onDisappear {
+            visible = false
             analyzer.stop(for: .galleryReactiveBackground)
         }
         .onChange(of: player.currentSong?.id) { _ in

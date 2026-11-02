@@ -46,9 +46,16 @@ struct SonicWallpaperView: View {
     private let secondsPerPalette: Double = 14
 
     @State private var palettes: [ArtworkPalette] = []
+    @ObservedObject private var governor = HeatGovernor.shared
+    @State private var visible = false
+
+    private var frameInterval: Double {
+        guard visible, governor.policy.backgroundMotion else { return 2.0 }
+        return 1.0 / max(governor.policy.motionFps, 1)
+    }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 12.0)) { timeline in
+        TimelineView(.periodic(from: .now, by: frameInterval)) { timeline in
             ZStack {
                 AppTheme.background
                 if let palette = currentPalette(at: timeline.date) {
@@ -61,6 +68,8 @@ struct SonicWallpaperView: View {
                 }
             }
         }
+        .onAppear { visible = true }
+        .onDisappear { visible = false }
         .ignoresSafeArea()
         .task { await loadPalettes() }
     }

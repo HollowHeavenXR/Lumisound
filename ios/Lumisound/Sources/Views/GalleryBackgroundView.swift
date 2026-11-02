@@ -140,9 +140,20 @@ struct GalleryBackgroundView: View {
 /// exposes an edge (the image is already `.scaledToFill()` + `.clipped()`).
 private struct KenBurnsModifier: ViewModifier {
     let isActive: Bool
+    /// Heat governor: no motion when hot, in Low Power Mode or backgrounded.
+    @ObservedObject private var governor = HeatGovernor.shared
+    /// Every tab keeps its background mounted; only the visible one moves.
+    @State private var visible = false
 
     func body(content: Content) -> some View {
-        if isActive {
+        moving(content)
+            .onAppear { visible = true }
+            .onDisappear { visible = false }
+    }
+
+    @ViewBuilder
+    private func moving(_ content: Content) -> some View {
+        if isActive && visible && governor.policy.backgroundMotion {
             // `.periodic` at ~12fps instead of `.animation` (which drives at
             // the display's full 60/120Hz) — `GalleryBackgroundView` is
             // instantiated once per tab and `TabView` keeps every tab's
@@ -152,7 +163,7 @@ private struct KenBurnsModifier: ViewModifier {
             // (see `legDuration` below), so a much lower update rate is
             // visually indistinguishable while cutting the redundant-instance
             // cost by roughly an order of magnitude.
-            TimelineView(.periodic(from: .now, by: 1.0 / 12.0)) { timeline in
+            TimelineView(.periodic(from: .now, by: 1.0 / max(governor.policy.motionFps, 1))) { timeline in
                 let phase = CGFloat(ArtworkClock.pingPong(timeline.date, legDuration: 30))
                 let scale: CGFloat = 1.08 + 0.05 * phase
                 let dx: CGFloat = 14 * (phase - 0.5)
@@ -161,6 +172,9 @@ private struct KenBurnsModifier: ViewModifier {
                     .scaleEffect(scale)
                     .offset(x: dx, y: dy)
             }
+        } else if isActive {
+            // Held at the start of the pan so pausing doesn't jump the framing.
+            content.scaleEffect(1.08)
         } else {
             content
         }
