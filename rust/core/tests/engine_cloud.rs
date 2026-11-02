@@ -411,7 +411,10 @@ fn cloud_tracks_through_engine_and_effects() {
         e.play();
         let rate = e.output_rate() as f64;
         let n = (20.0 * rate) as usize / CHUNK;
+        // Position is published by the render itself: take the baseline after one.
+        e.render_offline(CHUNK);
         let p0 = e.position();
+        e.reset_health();
         for _ in 0..n {
             e.render_offline(CHUNK);
         }
