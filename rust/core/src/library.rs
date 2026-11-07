@@ -40,20 +40,44 @@ pub fn groupable_album(song: &Value) -> String {
     trimmed_or(&song["album"], "Unknown Album")
 }
 
-/// Move a file URL that points into an older container's Documents dir
-/// into `docs` (containers change UUID on reinstall/restore).
+/// `file://` URL for `path`, percent-encoded exactly like Foundation's
+/// `URL(fileURLWithPath:).absoluteString` (`.urlPathAllowed`): unreserved
+/// characters, sub-delims, ':' '@' and '/' stay literal; everything else
+/// (space, '|', '[', ']', '^', '%', '?', '#', non-ASCII…) is encoded. The url
+/// crate leaves '|' '[' ']' '^' raw, which Swift can't parse back to the same
+/// path, so songs with those characters in their file names fell out of the
+/// library and were re-added as "new" on the next scan.
+pub fn file_url(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 16);
+    out.push_str("file://");
+    for b in path.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@/".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// Canonical URL for a stored file URL: moved into `docs` when it points into
+/// an older container's Documents dir (containers change UUID on every
+/// reinstall/update), and re-encoded the way Swift reads it (heals URLs an
+/// earlier build wrote with raw '|' '[' ']'). None = already canonical.
 fn reanchor_url(u: &str, docs: &str) -> Option<String> {
-    let parsed = url::Url::parse(u).ok()?;
-    if parsed.scheme() != "file" {
-        return None;
-    }
-    let path = urlencoding::decode(parsed.path()).ok()?.into_owned();
-    if path.starts_with(docs) {
-        return None;
-    }
-    let i = path.find("/Documents/")?;
-    let rest = &path[i + "/Documents/".len()..];
-    url::Url::from_file_path(Path::new(docs).join(rest)).ok().map(|u| u.to_string())
+    let rest = u.strip_prefix("file://")?;
+    // Raw '|', '[' … are not valid URL characters, so decode by hand rather
+    // than through a strict parser.
+    let path = urlencoding::decode(rest.split(['?', '#']).next().unwrap_or(rest)).ok()?.into_owned();
+    let path = if path.starts_with(docs) {
+        path
+    } else if let Some(i) = path.find("/Documents/") {
+        Path::new(docs).join(&path[i + "/Documents/".len()..]).to_string_lossy().into_owned()
+    } else {
+        path
+    };
+    let canonical = file_url(&path);
+    (canonical != u).then_some(canonical)
 }
 
 fn reanchor(songs: &mut Value, docs: &str) -> usize {
@@ -131,6 +155,27 @@ mod tests {
         assert_eq!(l.by_genre[0].key, "Pop");
         let _ = std::fs::remove_dir_all(d);
     }
+
+    #[test]
+    fn file_urls_match_foundation_encoding() {
+        let docs = "/var/mobile/Containers/Data/Application/NEW/Documents";
+        let p = format!("{docs}/Imported Music/Dragon Ball/21. Kakarot Vs Broly | DBS- Broly [OST] ^ブロリー 100%.opus.lms");
+        let u = file_url(&p);
+        assert_eq!(u, "file:///var/mobile/Containers/Data/Application/NEW/Documents/Imported%20Music/Dragon%20Ball/21.%20Kakarot%20Vs%20Broly%20%7C%20DBS-%20Broly%20%5BOST%5D%20%5E%E3%83%96%E3%83%AD%E3%83%AA%E3%83%BC%20100%25.opus.lms");
+        // A URL an earlier build wrote with raw '|' / '[' is healed in place…
+        let broken = format!("file://{}", p.replace(' ', "%20"));
+        assert_eq!(reanchor_url(&broken, docs).as_deref(), Some(u.as_str()));
+        // …a canonical one is left alone, and an old container is moved.
+        assert_eq!(reanchor_url(&u, docs), None);
+        let old = u.replace("/NEW/", "/OLD/");
+        assert_eq!(reanchor_url(&old, docs).as_deref(), Some(u.as_str()));
+        // Swift-written URLs (same encoding) round-trip unchanged.
+        let swift = "file:///var/mobile/Containers/Data/Application/NEW/Documents/a%20b%7Cc.mp3";
+        assert_eq!(reanchor_url(swift, docs), None);
+        if let Ok(out) = std::env::var("LUMI_URL_OUT") {
+            std::fs::write(out, format!("{p}\n{u}\n")).unwrap();
+        }
+    }
 }
 
 // ---- scan cache: path -> (mtime, size, Song) so unchanged files skip tag reads ------------------
@@ -199,10 +244,10 @@ pub fn scan_cache_partition(paths: Vec<String>, documents_dir: String) -> ScanPa
     let mut uncached = Vec::new();
     for p in paths {
         let hit = stamp(&p).and_then(|(t, sz)| c.entries.get(&scan_key(&p, &docs)).filter(|e| e.file_size == sz && (e.mtime - t).abs() < 0.001));
-        match (hit, url::Url::from_file_path(&p)) {
-            (Some(e), Ok(u)) => {
+        match hit {
+            Some(e) if p.starts_with('/') => {
                 let mut s = e.song.clone();
-                s["url"] = Value::String(u.to_string());
+                s["url"] = Value::String(file_url(&p));
                 cached.push(s);
             }
             _ => uncached.push(p),
