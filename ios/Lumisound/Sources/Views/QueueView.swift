@@ -70,7 +70,7 @@ struct QueueView: View {
                                 .foregroundStyle(AppTheme.dynamicAccent)
                         }
 
-                        Menu {
+                        LumiMenu {
                             Button {
                                 saveQueueName = defaultQueueName()
                                 showSaveQueueAlert = true

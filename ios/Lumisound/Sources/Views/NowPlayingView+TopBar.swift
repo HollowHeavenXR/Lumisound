@@ -112,7 +112,7 @@ extension NowPlayingView {
     /// running, via `sleepTimerPill`; this is the only way to *start* one
     /// from Now Playing), style manager, format info, and share.
     var overflowMenu: some View {
-        Menu {
+        LumiMenu {
             Button {
                 navbarDisplayMode = navbarDisplayMode == .miniPlayer ? .tabs : .miniPlayer
             } label: {
@@ -358,7 +358,7 @@ extension NowPlayingView {
                 }
 
                 if player.currentSong != nil, !library.playlists.isEmpty {
-                    Menu {
+                    LumiMenu {
                         ForEach(library.playlists) { playlist in
                             Button(playlist.name) {
                                 if let song = player.currentSong {

@@ -103,7 +103,7 @@ struct StreamSearchView: View {
             // so everything that talks to the bridge/account lives in one tab.
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
+                    LumiMenu {
                         NavigationLink(destination: SubscriptionsView()) {
                             Label("Subscriptions & Tracked Playlists", systemImage: "person.crop.circle.badge.checkmark")
                         }

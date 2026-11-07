@@ -129,7 +129,7 @@ struct ProfileView: View {
                         }
                     } action: {
                         VStack(spacing: 8) {
-                            Menu {
+                            LumiMenu {
                                 Button {
                                     showAvatarPhotosPicker = true
                                 } label: {
@@ -169,7 +169,7 @@ struct ProfileView: View {
                             }
 
                             HStack(spacing: 8) {
-                                Menu {
+                                LumiMenu {
                                     Button {
                                         showBannerPhotosPicker = true
                                     } label: {

@@ -154,7 +154,7 @@ struct PlaylistDetailView: View {
             }
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 if !isEditing {
-                    Menu {
+                    LumiMenu {
                         Button {
                             showOrganizeSheet = true
                         } label: {

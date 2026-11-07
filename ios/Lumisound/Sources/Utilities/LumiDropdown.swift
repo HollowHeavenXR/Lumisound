@@ -124,11 +124,11 @@ struct LumiPicker<SelectionValue: Hashable, Content: View, Label: View>: View {
 
 extension LumiPicker where Label == Text {
     init<S: StringProtocol>(_ title: S, selection: Binding<SelectionValue>, @ViewBuilder content: () -> Content) {
-        self.init(selection: selection, content: content) { Text(title) }
+        self.init(selection: selection, content: content, label: { Text(title) })
     }
 
     init(_ titleKey: LocalizedStringKey, selection: Binding<SelectionValue>, @ViewBuilder content: () -> Content) {
-        self.init(selection: selection, content: content) { Text(titleKey) }
+        self.init(selection: selection, content: content, label: { Text(titleKey) })
     }
 }
 
@@ -153,6 +153,8 @@ final class LumiDropdownPresenter: ObservableObject {
     @Published private(set) var rows: [DropdownRow] = []
     @Published private(set) var layout: DropdownLayout?
     @Published private(set) var query = ""
+    /// Action menu (rows are the content's own buttons) instead of a picker.
+    @Published private(set) var isMenu = false
     private(set) var items: [String: Item] = [:]
 
     private var engine: DropdownEngine?
@@ -171,7 +173,7 @@ final class LumiDropdownPresenter: ObservableObject {
         }
     }
 
-    func present(engine: DropdownEngine, items: [String: Item], anchor: CGRect, onChoose: @escaping (String) -> Void) {
+    func present(engine: DropdownEngine, items: [String: Item], anchor: CGRect, onChoose: ((String) -> Void)?) {
         if isPresented { dismiss() }
         guard let window = ensureWindow() else { return }
         engine.open()
@@ -179,6 +181,7 @@ final class LumiDropdownPresenter: ObservableObject {
         self.items = items
         self.anchor = anchor
         self.onChoose = onChoose
+        isMenu = onChoose == nil
         query = ""
         generation += 1
         rows = engine.rows()
@@ -299,9 +302,17 @@ private struct LumiDropdownPanel: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(p.rows, id: \.id) { row in
-                            rowView(row).id(row.id)
+                            if p.isMenu {
+                                p.items[row.id]?.view
+                                    .buttonStyle(LumiMenuItemStyle())
+                                    .toggleStyle(LumiMenuToggleStyle())
+                                    .environment(\.lumiInPanel, true)
+                                    .id(row.id)
+                            } else {
+                                rowView(row).id(row.id)
+                            }
                         }
-                        if p.rows.isEmpty {
+                        if p.rows.isEmpty && !p.isMenu {
                             Text("No matches")
                                 .font(.subheadline)
                                 .foregroundStyle(AppTheme.textSecondary)
@@ -398,5 +409,149 @@ private struct LumiDropdownRowStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(configuration.isPressed ? Color.white.opacity(0.08) : .clear)
+    }
+}
+
+// MARK: - Menu
+
+extension EnvironmentValues {
+    /// True for views drawn inside a Lumisound dropdown panel.
+    @Entry var lumiInPanel: Bool = false
+}
+
+/// Lumisound's replacement for `Menu`: same call shape (`content` of
+/// Buttons, Toggles, ShareLinks, Dividers, nested `LumiMenu`s, plus a
+/// `label`). Items are the content's own views, drawn as rows; each
+/// button's own action runs, then the panel closes.
+struct LumiMenu<Content: View, Label: View>: View {
+    private let content: Content
+    private let label: Label
+    @State private var engine = DropdownEngine()
+    @State private var frame: CGRect = .zero
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.lumiInPanel) private var inPanel
+
+    init(@ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label) {
+        self.content = content()
+        self.label = label()
+    }
+
+    var body: some View {
+        Group(subviews: content) { subviews in
+            let items = subviews.map { $0 }
+            Button {
+                open(items)
+            } label: {
+                if inPanel {
+                    // A submenu row inside another panel.
+                    HStack(spacing: 10) {
+                        label
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(AppTheme.textSecondary)
+                    }
+                    .lumiMenuRow()
+                } else {
+                    label.contentShape(Rectangle())
+                }
+            }
+            .buttonStyle(.plain)
+            .opacity(isEnabled ? 1 : 0.5)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+        }
+    }
+
+    private func open(_ subviews: [Subview]) {
+        guard isEnabled, !subviews.isEmpty else { return }
+        let ids = subviews.indices.map(String.init)
+        engine.setOptions(options: ids.map { DropdownOption(id: $0, label: "", detail: nil, enabled: true) })
+        engine.setSearchable(searchable: false)
+        engine.setSelected(id: nil)
+        var items: [String: LumiDropdownPresenter.Item] = [:]
+        for (id, v) in zip(ids, subviews) { items[id] = .init(view: AnyView(v), label: nil) }
+        LumiDropdownPresenter.shared.present(engine: engine, items: items, anchor: frame, onChoose: nil)
+    }
+}
+
+extension LumiMenu where Label == Text {
+    init<S: StringProtocol>(_ title: S, @ViewBuilder content: () -> Content) {
+        self.init(content: content, label: { Text(title) })
+    }
+}
+
+private extension View {
+    func lumiMenuRow() -> some View {
+        self
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: LumiDropdownPresenter.rowHeight, alignment: .leading)
+            .contentShape(Rectangle())
+    }
+}
+
+/// Menu rows: runs the button's own action, then closes the panel.
+private struct LumiMenuItemStyle: PrimitiveButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Row(configuration: configuration)
+    }
+
+    private struct Row: View {
+        let configuration: PrimitiveButtonStyleConfiguration
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var pressed = false
+
+        var body: some View {
+            let destructive = configuration.role == .destructive
+            configuration.label
+                .labelStyle(LumiMenuLabelStyle())
+                .foregroundStyle(destructive ? AppTheme.error : AppTheme.textPrimary)
+                .opacity(isEnabled ? 1 : 0.4)
+                .lumiMenuRow()
+                .background(pressed ? Color.white.opacity(0.08) : .clear)
+                .onLongPressGesture(minimumDuration: 0, maximumDistance: 12, perform: {}, onPressingChanged: { pressed = $0 })
+                .simultaneousGesture(TapGesture().onEnded {
+                    guard isEnabled else { return }
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    LumiDropdownPresenter.shared.dismiss()
+                    configuration.trigger()
+                })
+                .accessibilityAddTraits(.isButton)
+        }
+    }
+}
+
+/// Icon column + title, like a system menu row.
+private struct LumiMenuLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.icon
+                .font(.body)
+                .frame(width: 22)
+                .foregroundStyle(AppTheme.dynamicAccent)
+            configuration.title
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// Toggles inside a menu: a row with a checkmark (stays open).
+private struct LumiMenuToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            HStack(spacing: 10) {
+                configuration.label
+                Spacer(minLength: 0)
+                Image(systemName: "checkmark")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(AppTheme.dynamicAccent)
+                    .opacity(configuration.isOn ? 1 : 0)
+            }
+            .lumiMenuRow()
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(AppTheme.textPrimary)
     }
 }

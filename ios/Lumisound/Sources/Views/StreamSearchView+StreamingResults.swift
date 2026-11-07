@@ -204,7 +204,7 @@ extension StreamSearchView {
     /// results (rather than in StreamSearchView's shared navigation toolbar,
     /// which spans every sub-tab, not just streaming search).
     var streamResultsColumnPicker: some View {
-        Menu {
+        LumiMenu {
             Button { searchResultColumns = 1 } label: {
                 Label("List", systemImage: "rectangle.grid.1x2")
             }

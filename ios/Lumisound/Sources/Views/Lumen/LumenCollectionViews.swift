@@ -384,7 +384,7 @@ struct LumenPlaylistDetailView: View {
                 if isEditing {
                     Button("Done") { withAnimation { isEditing = false } }
                 } else {
-                    Menu {
+                    LumiMenu {
                         Button { withAnimation { isEditing = true } } label: { Label("Reorder & Remove", systemImage: "arrow.up.arrow.down") }
                         Button {
                             renameText = playlist.name

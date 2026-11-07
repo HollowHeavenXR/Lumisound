@@ -34,6 +34,11 @@ fn dir() -> PathBuf {
 
 /// 16-bit stereo WAV of a sum of sines (freq, amplitude).
 fn wav(path: &Path, rate: u32, secs: f64, tones: &[(f64, f64)]) {
+    wav_fn(path, rate, secs, |t| tones.iter().map(|(f, a)| a * (TAU * f * t).sin()).sum());
+}
+
+/// 16-bit stereo WAV of `f(t)`.
+fn wav_fn(path: &Path, rate: u32, secs: f64, f: impl Fn(f64) -> f64) {
     let n = (secs * rate as f64) as u32;
     let mut b = Vec::with_capacity(44 + n as usize * 4);
     b.extend_from_slice(b"RIFF");
@@ -50,7 +55,7 @@ fn wav(path: &Path, rate: u32, secs: f64, tones: &[(f64, f64)]) {
     b.extend_from_slice(&(n * 4).to_le_bytes());
     for i in 0..n {
         let t = i as f64 / rate as f64;
-        let v: f64 = tones.iter().map(|(f, a)| a * (TAU * f * t).sin()).sum();
+        let v = f(t);
         let s = (v * 32767.0).round().clamp(-32768.0, 32767.0) as i16;
         b.extend_from_slice(&s.to_le_bytes());
         b.extend_from_slice(&s.to_le_bytes());
@@ -210,14 +215,14 @@ fn engine_quality_report() {
         // name, file, speed, pitch st, freqs (before pitch), THD+N limit dB
         ("plain 48k", &tone48, 1.0, 0.0, &[1000.0], -80.0),
         ("resample 44.1k", &tone44, 1.0, 0.0, &[1000.0], -70.0),
-        ("speed 1.25x", &tone48, 1.25, 0.0, &[1000.0], -25.0),
-        ("speed 0.8x", &tone48, 0.8, 0.0, &[1000.0], -25.0),
-        ("pitch +4", &tone48, 1.0, 4.0, &[1000.0], -25.0),
-        ("pitch -5", &tone48, 1.0, -5.0, &[1000.0], -25.0),
-        ("speed 1.3 pitch +2", &tone48, 1.3, 2.0, &[1000.0], -25.0),
+        ("speed 1.25x", &tone48, 1.25, 0.0, &[1000.0], -55.0),
+        ("speed 0.8x", &tone48, 0.8, 0.0, &[1000.0], -55.0),
+        ("pitch +4", &tone48, 1.0, 4.0, &[1000.0], -50.0),
+        ("pitch -5", &tone48, 1.0, -5.0, &[1000.0], -50.0),
+        ("speed 1.3 pitch +2", &tone48, 1.3, 2.0, &[1000.0], -50.0),
         ("chord plain", &chord, 1.0, 0.0, &[261.63, 329.63, 392.0], -80.0),
-        ("chord speed 1.25x", &chord, 1.25, 0.0, &[261.63, 329.63, 392.0], -20.0),
-        ("chord pitch +3", &chord, 1.0, 3.0, &[261.63, 329.63, 392.0], -20.0),
+        ("chord speed 1.25x", &chord, 1.25, 0.0, &[261.63, 329.63, 392.0], -65.0),
+        ("chord pitch +3", &chord, 1.0, 3.0, &[261.63, 329.63, 392.0], -65.0),
     ];
     for (name, file, speed, st, freqs, limit) in paths {
         let (e, _) = engine();
@@ -317,6 +322,85 @@ fn engine_quality_report() {
         e.play();
         let x = left(&pump(&e, 1.8));
         check(&mut rows, "click at gapless handover", "click score", click_score(&x[(rate * 0.2) as usize..], rate, 200.0, 0.5), 8.0, true);
+    }
+
+    // --- Transients under time-stretch: drum-like hits must stay sharp ---
+    // (a longer analysis window resolves chords better but can smear an
+    // attack backwards in time: "pre-echo"). Hits every 0.4 s over a quiet
+    // pad; after stretching, the energy in the 25 ms before each detected
+    // hit, relative to the 25 ms after it, must stay low.
+    {
+        let hits = d.join("hits.wav");
+        wav_fn(&hits, 48_000, 8.0, |t| {
+            let k = (t / 0.4).floor();
+            let dt = t - k * 0.4 - 0.2;
+            let pad = 0.03 * (TAU * 220.0 * t).sin();
+            if dt < 0.0 { return pad; }
+            // Deterministic "noise" burst decaying over ~15 ms.
+            let n = ((t * 48_000.0).round() * 12.9898).sin() * 43758.5453;
+            pad + 0.6 * (-dt / 0.015).exp() * (n - n.floor() - 0.5) * 2.0
+        });
+        for (name, speed) in [("hits speed 1.25x", 1.25), ("hits speed 0.8x", 0.8)] {
+            let (e, _) = engine();
+            e.set_speed_pitch(speed, 0.0).unwrap();
+            e.load(hits.to_string_lossy().into(), 0.0, 0.0).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+            e.play();
+            let x = left(&pump(&e, 6.0 / speed));
+            let w = (rate * 0.025) as usize;
+            let env: Vec<f64> = x.chunks(w / 5).map(|c| c.iter().map(|v| v * v).sum::<f64>()).collect();
+            // Onsets: frames whose energy jumps 10x over the previous frame.
+            let mut worst = f64::MIN;
+            let mut count = 0;
+            let mut i = 10;
+            while i + 10 < env.len() {
+                if env[i] > 10.0 * env[i - 1] && env[i] > 1e-3 {
+                    let before: f64 = env[i - 5..i].iter().sum();
+                    let after: f64 = env[i..i + 5].iter().sum();
+                    worst = worst.max(10.0 * (before / after.max(1e-12)).log10());
+                    count += 1;
+                    i += 20;
+                } else {
+                    i += 1;
+                }
+            }
+            assert!(count >= 8, "{name}: only {count} hits found");
+            check(&mut rows, name, "pre-echo dB", worst, -18.0, true);
+        }
+    }
+
+    // --- Vibrato: no click switching it on/off; the swing it was asked for ---
+    {
+        let tone = d.join("vib.wav");
+        wav(&tone, 48_000, 6.0, &[(200.0, 0.5)]);
+        let (e, _) = engine();
+        e.load(tone.to_string_lossy().into(), 0.0, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        e.play();
+        let mut x = left(&pump(&e, 0.4));
+        e.set_modulation(0.0, 0.0, 0.0, 5.0, 0.5);
+        let on = left(&pump(&e, 1.6));
+        e.set_modulation(0.0, 0.0, 0.0, 0.0, 0.0);
+        let off = left(&pump(&e, 0.5));
+        // Pitch swing from zero crossings in the settled part (0.4-1.6 s in).
+        let settled = on[(rate * 0.4) as usize..].to_vec();
+        let settled = &settled[..];
+        let zc: Vec<f64> = settled.windows(2).enumerate().filter(|(_, w)| w[0] < 0.0 && w[1] >= 0.0).map(|(i, w)| i as f64 + w[0] / (w[0] - w[1])).collect();
+        let freqs: Vec<f64> = zc.windows(2).map(|w| rate / (w[1] - w[0])).collect();
+        let (fmin, fmax) = freqs.iter().fold((f64::MAX, 0f64), |(a, b), v| (a.min(*v), b.max(*v)));
+        let swing_st = 12.0 * (fmax / fmin).log2();
+        x.extend(on);
+        x.extend(off);
+        // A ±0.5 st swing raises a 200 Hz sine's curvature by up to ~6%.
+        check(&mut rows, "vibrato on/off", "click score", click_score(&x, rate, 200.0 * 1.06, 0.5), 8.0, true);
+        check(&mut rows, "vibrato 5 Hz ±0.5 st", "swing st (p-p)", (swing_st - 1.0).abs(), 0.35, true);
+        // Ultrasonic junk check: a clean ~200 Hz tone's second difference has
+        // power x²·ω⁴; anything above that is high-frequency content the
+        // effect added (0 dB = clean).
+        let w4 = (TAU * 200.0 / rate).powi(4);
+        let d2: f64 = settled.windows(3).map(|w| (w[2] - 2.0 * w[1] + w[0]).powi(2)).sum::<f64>() / settled.len() as f64;
+        let p2: f64 = settled.iter().map(|v| v * v).sum::<f64>() / settled.len() as f64;
+        check(&mut rows, "vibrato 5 Hz ±0.5 st", "HF excess dB", 10.0 * (d2 / (p2 * w4)).log10(), 1.0, true);
     }
 
     // --- 8D: loudness should stay steady while the sound rotates ---

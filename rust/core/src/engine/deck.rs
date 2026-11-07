@@ -349,6 +349,10 @@ fn decode_loop(
             }
             Some(r) => {
                 while pending[0].len() >= CHUNK || (last && !pending[0].is_empty()) {
+                    // The final partial chunk is zero-padded to CHUNK; keep
+                    // only the output its real frames account for (the
+                    // padding was a short silence at the end of the track).
+                    let real = pending[0].len().min(CHUNK);
                     if pending[0].len() < CHUNK {
                         pending[0].resize(CHUNK, 0.0);
                         pending[1].resize(CHUNK, 0.0);
@@ -356,7 +360,8 @@ fn decode_loop(
                     let input = [&pending[0][..CHUNK], &pending[1][..CHUNK]];
                     let Ok(out) = r.process(&input, None) else { return false };
                     inter.clear();
-                    for i in 0..out[0].len() {
+                    let keep = if real < CHUNK { ((real as f64 * out[0].len() as f64 / CHUNK as f64).round() as usize).min(out[0].len()) } else { out[0].len() };
+                    for i in 0..keep {
                         inter.push(out[0][i]);
                         inter.push(out[1][i]);
                     }
@@ -418,5 +423,14 @@ fn decode_loop(
         }
     }
     flush(&mut pending, &mut resampler, &mut prod, &mut inter, true);
+    // The stretcher still holds the last analysis window: without this the
+    // final ~85 ms of every track went missing at any speed/pitch but 1.
+    if !wsola.can_bypass() {
+        stretched.clear();
+        wsola.finish(&mut stretched);
+        let n = tempo.nudge.map_or(1.0, |n| n.at(out_frames));
+        let step = tempo.speed * n / tempo.out_rate as f64;
+        let _ = push_seg(&mut segs, stretched.len() / 2, step, sh) && push_all(&mut prod, &stretched, sh);
+    }
     Ok(())
 }

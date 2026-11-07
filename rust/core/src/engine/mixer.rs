@@ -114,7 +114,12 @@ pub struct Mixer {
     trem_depth: f32,
     trem_phase: f32,
     vib_hz: f32,
+    /// Delay swing (s): `vib_amp` glides to `vib_target` (~30 ms) so depth
+    /// changes never jump; `vib_wet` crossfades the effect in/out (10 ms).
     vib_amp: f32,
+    vib_coef: f32,
+    vib_target: f32,
+    vib_wet: f32,
     vib_phase: f32,
     vib_buf: Vec<[f32; 2]>,
     vib_w: usize,
@@ -141,7 +146,7 @@ struct Monitor {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
+        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_coef: 1.0 - (-1.0 / (0.03 * rate as f32)).exp(), vib_target: 0.0, vib_wet: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -214,7 +219,7 @@ impl Mixer {
                 // Delay-line vibrato: peak pitch ratio 2^(st/12) ≈ 1 + A·2πf,
                 // so the delay swing A (seconds) = (2^(st/12) - 1) / (2πf).
                 self.vib_hz = vibrato_hz.clamp(0.0, 20.0);
-                self.vib_amp = if self.vib_hz > 0.0 {
+                self.vib_target = if self.vib_hz > 0.0 {
                     ((2f32.powf(vibrato_semitones.abs().min(3.0) / 12.0) - 1.0) / (std::f32::consts::TAU * self.vib_hz)).min(0.02)
                 } else {
                     0.0
@@ -444,21 +449,40 @@ impl Mixer {
                 l *= (1.0 - x).sqrt();
                 r *= (1.0 + x).sqrt();
             }
-            if self.vib_amp > 0.0 {
-                let n = self.vib_buf.len();
-                self.vib_buf[self.vib_w] = [l, r];
-                self.vib_phase = (self.vib_phase + tau * self.vib_hz / self.rate as f32) % tau;
+            // The delay line always records (one store per frame), so turning
+            // vibrato on never reads stale audio from the last time it ran.
+            let n = self.vib_buf.len();
+            self.vib_buf[self.vib_w] = [l, r];
+            if self.vib_target > 0.0 || self.vib_wet > 0.0 {
+                let rate = self.rate as f32;
+                self.vib_amp += (self.vib_target - self.vib_amp) * self.vib_coef;
+                let wet_to = if self.vib_target > 0.0 || self.vib_amp > 1e-6 { 1.0 } else { 0.0 };
+                let step = 1.0 / (0.01 * rate);
+                // Ramp toward the target and stay there (no flip-flopping around it).
+                self.vib_wet = if wet_to > self.vib_wet { (self.vib_wet + step).min(wet_to) } else { (self.vib_wet - step).max(wet_to) };
+                self.vib_phase = (self.vib_phase + tau * self.vib_hz / rate) % tau;
                 // Centre delay = swing + 1 ms so the read point never passes the write point.
-                let delay = (self.vib_amp * (1.0 + self.vib_phase.sin()) + 0.001) * self.rate as f32;
+                let delay = (self.vib_amp * (1.0 + self.vib_phase.sin()) + 0.001) * rate;
                 let rp = self.vib_w as f32 - delay;
                 let rp = if rp < 0.0 { rp + n as f32 } else { rp };
                 let i0 = rp as usize % n;
-                let i1 = (i0 + 1) % n;
                 let f = rp.fract();
-                l = self.vib_buf[i0][0] * (1.0 - f) + self.vib_buf[i1][0] * f;
-                r = self.vib_buf[i0][1] * (1.0 - f) + self.vib_buf[i1][1] * f;
-                self.vib_w = (self.vib_w + 1) % n;
+                // 4-point cubic Hermite: linear interpolation dulls the highs
+                // by a varying amount as the delay moves (a faint flutter).
+                let at = |k: usize| self.vib_buf[(i0 + n + k - 1) % n];
+                let (xm1, x0, x1, x2) = (at(0), at(1), at(2), at(3));
+                let mut y = [0.0f32; 2];
+                for c in 0..2 {
+                    let c1 = 0.5 * (x1[c] - xm1[c]);
+                    let c2 = xm1[c] - 2.5 * x0[c] + 2.0 * x1[c] - 0.5 * x2[c];
+                    let c3 = 0.5 * (x2[c] - xm1[c]) + 1.5 * (x0[c] - x1[c]);
+                    y[c] = ((c3 * f + c2) * f + c1) * f + x0[c];
+                }
+                let w = self.vib_wet;
+                l = y[0] * w + l * (1.0 - w);
+                r = y[1] * w + r * (1.0 - w);
             }
+            self.vib_w = (self.vib_w + 1) % n;
             if self.trem_hz > 0.0 && self.trem_depth > 0.0 {
                 self.trem_phase = (self.trem_phase + tau * self.trem_hz / self.rate as f32) % tau;
                 let lfo = 1.0 - self.trem_depth / 2.0 + self.trem_depth / 2.0 * self.trem_phase.sin();

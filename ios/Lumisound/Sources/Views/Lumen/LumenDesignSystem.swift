@@ -669,7 +669,7 @@ struct LumenTrackRow: View {
             }
             .buttonStyle(LumenPressStyle(scale: 0.98))
 
-            Menu {
+            LumiMenu {
                 SongContextMenuContent(song: song)
             } label: {
                 Image(systemName: "ellipsis")

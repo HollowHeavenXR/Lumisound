@@ -66,7 +66,7 @@ struct PodcastsView: View {
                 }
             }
             ToolbarItem(placement: .navigationBarLeading) {
-                Menu {
+                LumiMenu {
                     Button {
                         exportOPML()
                     } label: {

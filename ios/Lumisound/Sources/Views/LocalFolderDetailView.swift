@@ -437,7 +437,7 @@ struct LocalFolderDetailView: View {
             }
 
             ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
+                LumiMenu {
                     Button {
                         showCreatePlaylistSheet = true
                     } label: {
@@ -545,7 +545,7 @@ struct LocalFolderDetailView: View {
     /// items (five in all, three of them bare layout icons).
     private var controlsRow: some View {
         HStack {
-            Menu {
+            LumiMenu {
                 ForEach(FolderSortOrder.allCases, id: \.self) { order in
                     Button {
                         sortOrderRaw = order.rawValue
@@ -906,7 +906,7 @@ private struct FolderSelectionActionBar: View {
             }
             .disabled(selectedCount == 0)
 
-            Menu {
+            LumiMenu {
                 if library.playlists.isEmpty {
                     Text("No playlists yet")
                 } else {

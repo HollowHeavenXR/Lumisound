@@ -66,7 +66,7 @@ struct GenresTab: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
+                LumiMenu {
                     Button {
                         genreColumns = 1
                     } label: {
