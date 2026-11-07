@@ -189,6 +189,8 @@ extension AudioPlayerManager {
     /// pitch algorithm — see `applyAudioSettings`). EQ, pitch shift, ReplayGain,
     /// 8D, crossfade, gapless, and reverb need the AVAudioEngine graph and do not apply.
     func scheduleWithOpusPlayer(url: URL, startTime: TimeInterval) {
+        // AVPlayer is the system engine too: count it, so no fallback is silent.
+        if Self.rustEngineEnabled { reportEngineFallback(reason: "avplayer", url: url) }
         tearDownOpusPlayer()
         MusicHapticsService.shared.updatePlayback(
             enabled: false,
