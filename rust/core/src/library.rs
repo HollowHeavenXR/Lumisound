@@ -415,3 +415,11 @@ pub fn artwork_embedded(path: String, cache_dir: String) -> Option<Vec<u8>> {
 pub fn artwork_process(image_data: Vec<u8>, max_dim: u32) -> Option<Vec<u8>> {
     lumisound_media::artwork::process(&image_data, max_dim.max(16))
 }
+
+/// The whole picture: trim letterbox bars, keep the aspect (capped 2.5:1),
+/// short side at most `max_short`, JPEG. The app pans across what doesn't
+/// fit its square frames instead of cropping it away.
+#[uniffi::export]
+pub fn artwork_process_full(image_data: Vec<u8>, max_short: u32) -> Option<Vec<u8>> {
+    lumisound_media::artwork::process_full(&image_data, max_short.max(16))
+}

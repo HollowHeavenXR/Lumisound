@@ -117,12 +117,15 @@ struct CustomLibraryRowView: View {
 
     private var textStack: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(song.displayName)
-                .foregroundStyle(titleColor)
-                .font(.system(size: CGFloat(config.titleFontSize)))
-                .fontWeight(config.titleWeight.fontWeight)
-                .kerning(CGFloat(config.titleLetterSpacing))
-                .lineLimit(1)
+            HStack(spacing: 5) {
+                Text(song.displayName)
+                    .foregroundStyle(titleColor)
+                    .font(.system(size: CGFloat(config.titleFontSize)))
+                    .fontWeight(config.titleWeight.fontWeight)
+                    .kerning(CGFloat(config.titleLetterSpacing))
+                    .lineLimit(1)
+                SongFormatBadge(song: song)
+            }
             if config.showSubtitle {
                 Text(resolvedSubtitle)
                     .font(.system(size: CGFloat(config.subtitleFontSize)))
