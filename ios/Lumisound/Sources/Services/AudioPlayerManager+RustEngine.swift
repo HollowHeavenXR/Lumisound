@@ -101,7 +101,13 @@ extension AudioPlayerManager {
         primaryNode.stop()
         secondaryNode.stop()
         if engine.isRunning { engine.stop() }
-        guard ensureRustOutput() else { return false }
+        // Only open the audio output when playback actually starts (`rustPlay`).
+        // Preparing a track while paused — notably restoring the last track
+        // when iOS relaunches the app in the background — used to start it
+        // here, where iOS refuses (no active session in the background):
+        // the track was handed to the system engine and played there later.
+        // The engine loads and decodes without a running output.
+        if isPlaying { guard ensureRustOutput() else { return false } }
         Self.rustRelay.player = self
         // Speed/pitch apply to every deck the engine opens.
         _ = try? Self.rust.setSpeedPitch(speed: Double(audioSettings.speed), pitchSemitones: Double(audioSettings.pitchSemitones))
@@ -200,7 +206,18 @@ extension AudioPlayerManager {
 
     func rustPlay() {
         let wasStarted = rustOutputStarted
-        guard ensureRustOutput() else { return }
+        guard ensureRustOutput() else {
+            // No output even after retries: never sit there silently "playing".
+            if let song = currentSong, EngineExclusiveService.shared.isExclusive(song) {
+                refuseSystemEngine(for: song, reason: "output_start_failed")
+            } else {
+                tearDownRustEngine()
+                rustBypassOnce = true
+                playCurrent(from: position)
+                rustBypassOnce = false
+            }
+            return
+        }
         // Play on a stream iOS has stopped does nothing audible: restart it.
         // (A stream started just now hasn't called back yet — skip that one.)
         if wasStarted, !Self.rust.outputAlive(maxAgeMs: 1500) { restartRustOutput(reason: "play", force: true) }

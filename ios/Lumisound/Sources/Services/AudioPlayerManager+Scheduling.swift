@@ -792,6 +792,26 @@ extension AudioPlayerManager {
                     let refinedURL = tempURL.deletingPathExtension().appendingPathExtension(refinedExt)
                     try? FileManager.default.removeItem(at: refinedURL)
                     try FileManager.default.moveItem(at: downloaded, to: refinedURL)
+                    // The Lumisound engine first, as for every other stream.
+                    // (This branch went straight to AVAudioFile, so roughly
+                    // half of all streams — every response carrying a
+                    // Content-Type — played on the system engine without ever
+                    // being offered to the Lumisound engine or counted as a
+                    // fallback; the ones AVAudioFile then rejected ended up on
+                    // AVPlayer.)
+                    if rustEligible(for: refinedURL), scheduleWithRustEngine(url: refinedURL, startTime: startTime) {
+                        if isPlaying {
+                            pendingSeekRampTarget = nil
+                            activeNode.volume = audioSettings.volume
+                            rustPlay()
+                            startTimer()
+                            startSmartCrossfadeAnalysisIfNeeded()
+                        }
+                        updateNowPlaying()
+                        appLog("downloadAndSchedule: Rust engine playback (content-type \(refinedExt)) in \(String(format: "%.2f", Date().timeIntervalSince(playbackStartedAt)))s", category: "audio")
+                        return
+                    }
+                    if Self.rustEngineEnabled { reportEngineFallback(reason: "stream_system_engine", url: refinedURL) }
                     // Re-enter with the corrected URL
                     let file2 = try AVAudioFile(forReading: refinedURL)
                     audioFile = file2
