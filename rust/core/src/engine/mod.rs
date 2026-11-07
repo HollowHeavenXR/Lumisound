@@ -670,6 +670,10 @@ mod tests {
     }
 
     #[test]
+    // The 256-tap sinc resampler is far too slow unoptimised to keep a deck
+    // fed in real time; tests/engine_quality.rs measures pitch (and decode
+    // speed) in release builds.
+    #[cfg_attr(debug_assertions, ignore)]
     fn pitch_shift_raises_pitch_and_keeps_length() {
         let d = std::env::temp_dir().join(format!("engine-pitch-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&d).unwrap();
