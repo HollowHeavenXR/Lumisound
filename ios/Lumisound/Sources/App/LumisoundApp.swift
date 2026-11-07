@@ -269,6 +269,7 @@ struct LumisoundApp: App {
                     // beat-aware crossfades.
                     player.libraryManager = libraryManager
                     LyricsSyncLockService.shared.start(library: libraryManager, player: player)
+                    EngineExclusiveService.shared.startBackgroundConversion(library: libraryManager, player: player)
 
                     // Wire SharePlay up to live app state, same reason App
                     // Intents use weak `.shared` singletons — this needs to

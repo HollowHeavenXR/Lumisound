@@ -135,7 +135,9 @@ final class ArtworkService {
     // wrote 3600×3600 files on @3x devices — 9× the intended pixels on disk and
     // ~52 MB per decoded image in memory. Purge so entries regenerate at the
     // true capped size.
-    private static let cacheFormatVersion = 4
+    // v5: artwork keeps its whole picture (aspect up to 2.5:1, panned in
+    // the UI) instead of a center square crop — the old squares can't pan.
+    private static let cacheFormatVersion = 5
     private static let cacheVersionFileName = ".cache_format_version"
 
     private init() {
@@ -592,11 +594,11 @@ final class ArtworkService {
         //    keep the result for next time.
         let thumb = await Task.detached(priority: .utility) { () -> UIImage? in
             if let p = blobCachePath(namespace: thumbNS, key: key),
-               let t = ImageDownsampler.downsampled(at: URL(fileURLWithPath: p), maxPixelSize: bucket) {
+               let t = ImageDownsampler.downsampled(at: URL(fileURLWithPath: p), fillingSide: bucket) {
                 return t
             }
             let full = blobCachePath(namespace: Self.artNS, key: key).map(URL.init(fileURLWithPath:)) ?? legacyPath
-            guard let t = ImageDownsampler.downsampled(at: full, maxPixelSize: bucket) else { return nil }
+            guard let t = ImageDownsampler.downsampled(at: full, fillingSide: bucket) else { return nil }
             Self.storeThumbnail(t, ns: thumbNS, key: key)
             return t
         }.value
@@ -608,7 +610,7 @@ final class ArtworkService {
         // No disk entry yet — run the full pipeline (which seeds the disk
         // cache), then scale its result down to the bucket.
         guard let full = await loadArtwork(for: song) else { return nil }
-        let thumb2 = ImageDownsampler.downscaled(full, maxPixelSize: bucket)
+        let thumb2 = ImageDownsampler.downscaled(full, fillingSide: bucket)
         setThumbnailCache(thumb2, forKey: thumbnailCacheKey(key, bucket: bucket))
         Task.detached(priority: .utility) { Self.storeThumbnail(thumb2, ns: thumbNS, key: key) }
         return thumb2
@@ -621,7 +623,7 @@ final class ArtworkService {
         let tKey = thumbnailCacheKey(key, bucket: bucket)
         if let cached = thumbnailCache.object(forKey: tKey) { return cached }
         guard let full = memoryCache.object(forKey: key as NSString) else { return nil }
-        let thumb = ImageDownsampler.downscaled(full, maxPixelSize: bucket)
+        let thumb = ImageDownsampler.downscaled(full, fillingSide: bucket)
         setThumbnailCache(thumb, forKey: tKey)
         return thumb
     }
@@ -663,8 +665,11 @@ final class ArtworkService {
     /// is purged whenever storage runs low, which made artwork "reload"
     /// after relaunches), and each namespace is size-capped with
     /// least-recently-used eviction so it can't grow without bound.
-    static let artNS = "artwork"
-    static func thumbNS(_ bucket: CGFloat) -> String { "thumb\(Int(bucket))" }
+    // "v2": whole-picture artwork (see cacheFormatVersion); the square-cropped
+    // v1 namespaces are emptied once at launch.
+    static let artNS = "artwork-v2"
+    static func thumbNS(_ bucket: CGFloat) -> String { "thumb-v2-\(Int(bucket))" }
+    private static let retiredNamespaces = ["artwork", "thumb192", "thumb384", "thumb768"]
 
     private static func configureBlobCache() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -676,6 +681,11 @@ final class ArtworkService {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try? r.setResourceValues(values)
         blobCacheConfigure(rootDir: root.path)
+        let retiredKey = "artwork_store_v1_retired"
+        if !UserDefaults.standard.bool(forKey: retiredKey) {
+            for ns in retiredNamespaces { blobCacheClear(namespace: ns) }
+            UserDefaults.standard.set(true, forKey: retiredKey)
+        }
         blobCacheSetCap(namespace: artNS, maxBytes: 512 * 1024 * 1024)
         for b in thumbnailBuckets { blobCacheSetCap(namespace: thumbNS(b), maxBytes: 96 * 1024 * 1024) }
     }
@@ -748,7 +758,7 @@ final class ArtworkService {
         // Letterbox trim, square crop, downscale + JPEG in the Rust core
         // (same rules as below, which remain the fallback).
         if let data = image.jpegData(compressionQuality: 0.95) ?? image.pngData(),
-           let out = artworkProcess(imageData: data, maxDim: UInt32(max(16, maxDimension))),
+           let out = artworkProcessFull(imageData: data, maxShort: UInt32(max(16, maxDimension))),
            let processed = UIImage(data: out) {
             return processed
         }
@@ -758,35 +768,14 @@ final class ArtworkService {
         //    bars" symptom). 2) center-crop the remaining content to a square so
         //    it fills the square frames used everywhere. Already-square art with
         //    no bars passes through both steps unchanged.
+        // Whole picture: no square crop (the UI pans across what doesn't fit).
         let trimmed = trimmedLetterbox(image)
-        let squared = squareCropped(trimmed)
         // `ImageDownsampler.downscaled` works in real pixels (size × scale)
         // and renders at scale 1 — `UIImage.size` alone is in points, so a
         // scale-3 image measured against a pixel cap without this would slip
         // through at 3× the intended pixel count (e.g. MPMediaItemArtwork
         // returns screen-scale images).
-        return ImageDownsampler.downscaled(squared, maxPixelSize: maxDimension)
-    }
-
-    /// Returns the largest centered square crop of `image`. A no-op for images
-    /// that are already square. Operates in the image's own pixel space and
-    /// preserves orientation by rendering through `UIGraphicsImageRenderer`.
-    private func squareCropped(_ image: UIImage) -> UIImage {
-        let w = image.size.width
-        let h = image.size.height
-        guard w > 0, h > 0, abs(w - h) > 0.5 else { return image }
-        let side = min(w, h)
-        // Preserve the source's scale so cropping never *increases* pixel count
-        // (the default renderer format would re-render at screen scale).
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = image.scale
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
-        return renderer.image { _ in
-            // Center the source so equal amounts are cropped from both edges of
-            // the longer dimension.
-            let origin = CGPoint(x: (side - w) / 2, y: (side - h) / 2)
-            image.draw(in: CGRect(origin: origin, size: CGSize(width: w, height: h)))
-        }
+        return ImageDownsampler.downscaled(trimmed, fillingSide: maxDimension)
     }
 
     /// Detects and crops away near-uniform horizontal (letterbox) and vertical

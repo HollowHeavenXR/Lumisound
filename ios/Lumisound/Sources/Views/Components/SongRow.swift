@@ -269,8 +269,20 @@ struct SongRow: View {
 /// identical to any other track whenever the library was viewed as a grid.
 struct SongFormatBadge: View {
     let song: Song
+    @ObservedObject private var engine = EngineExclusiveService.shared
 
     var body: some View {
+        HStack(spacing: 3) {
+            // Engine-exclusive (plays only on the Lumisound Audio Engine).
+            if engine.exclusiveIDs.contains(song.id) {
+                EngineLockBadge()
+            }
+            formatTag
+        }
+    }
+
+    @ViewBuilder
+    private var formatTag: some View {
         if song.isKnownLosslessContainer || song.isHiResSampleRate {
             Text(song.isHiResLossless ? "HI-RES LOSSLESS" : song.isKnownLosslessContainer ? (song.formatTag ?? "LOSSLESS") : "HI-RES")
                 .font(.system(size: 9, weight: .bold))

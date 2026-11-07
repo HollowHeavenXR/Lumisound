@@ -34,11 +34,10 @@ struct ArtworkThumbnail: View {
             placeholder
 
             if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
+                // The whole picture: non-square art slides across the frame
+                // instead of being cropped (see `PanningArtwork`).
+                PanningArtwork(image: image)
                     .frame(width: size, height: size)
-                    .clipped()
                     .transition(.opacity)
 
                 if showsScrim {

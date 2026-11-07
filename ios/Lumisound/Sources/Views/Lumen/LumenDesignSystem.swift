@@ -649,6 +649,7 @@ struct LumenTrackRow: View {
                             .foregroundStyle(isCurrent ? LumenPalette.accent : LumenPalette.textPrimary)
                             .lineLimit(1)
                         HStack(spacing: 5) {
+                            SongFormatBadge(song: song)
                             if library.isFavorite(songID: song.id) {
                                 Image(systemName: "heart.fill")
                                     .font(.system(size: 9, weight: .bold))

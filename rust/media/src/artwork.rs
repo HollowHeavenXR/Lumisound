@@ -82,9 +82,62 @@ pub fn process(bytes: &[u8], max_dim: u32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Longest aspect kept by `process_full`; wider (or taller) art is
+/// center-cropped to this so a panorama doesn't become a thin sliver.
+pub const MAX_ASPECT: f64 = 2.5;
+
+/// Like `process`, but keeps the whole picture: trims letterbox bars, then
+/// keeps the image's own aspect (capped at `MAX_ASPECT`) instead of
+/// squaring it. Sized so the *short* side is at most `max_short`, since the
+/// app shows art filling square frames and pans across the rest.
+pub fn process_full(bytes: &[u8], max_short: u32) -> Option<Vec<u8>> {
+    let mut img = image::load_from_memory(bytes).ok()?;
+    if let Some((x, y, w, h)) = letterbox(&img) {
+        img = img.crop_imm(x, y, w, h);
+    }
+    let (w, h) = img.dimensions();
+    let (long, short) = (w.max(h) as f64, w.min(h).max(1) as f64);
+    if long / short > MAX_ASPECT {
+        let keep = (short * MAX_ASPECT).round() as u32;
+        img = if w > h { img.crop_imm((w - keep) / 2, 0, keep, h) } else { img.crop_imm(0, (h - keep) / 2, w, keep) };
+    }
+    let (w, h) = img.dimensions();
+    let short = w.min(h);
+    if short > max_short {
+        let s = max_short as f64 / short as f64;
+        img = img.resize_exact(((w as f64 * s).round() as u32).max(1), ((h as f64 * s).round() as u32).max(1), FilterType::Lanczos3);
+    }
+    let mut out = Vec::new();
+    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 88);
+    img.to_rgb8().write_with_encoder(enc).ok()?;
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_keeps_aspect_and_caps_it() {
+        let enc = |w: u32, h: u32| {
+            let mut im = image::RgbImage::new(w, h);
+            for (x, y, p) in im.enumerate_pixels_mut() {
+                *p = image::Rgb([(x % 251) as u8, (y % 241) as u8, ((x + y) % 239) as u8]);
+            }
+            let mut png = Vec::new();
+            DynamicImage::ImageRgb8(im).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+            png
+        };
+        // 16:9 stays 16:9, short side capped.
+        let r = image::load_from_memory(&process_full(&enc(1920, 1080), 600).unwrap()).unwrap();
+        assert_eq!((r.width(), r.height()), (1067, 600));
+        // A 4:1 strip is cropped to 2.5:1.
+        let r = image::load_from_memory(&process_full(&enc(800, 200), 600).unwrap()).unwrap();
+        assert_eq!((r.width(), r.height()), (500, 200));
+        // Small square art passes through unscaled.
+        let r = image::load_from_memory(&process_full(&enc(300, 300), 600).unwrap()).unwrap();
+        assert_eq!((r.width(), r.height()), (300, 300));
+    }
     #[test]
     fn trims_letterbox_and_squares() {
         // 300x200 image: black bars 40 px top/bottom around a 300x120 red band.

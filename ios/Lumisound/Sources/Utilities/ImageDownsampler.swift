@@ -53,6 +53,34 @@ enum ImageDownsampler {
         return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
     }
 
+    /// Widest aspect the artwork pipeline keeps (matches the Rust core's
+    /// `artwork::MAX_ASPECT`); art is shown filling square frames and panned.
+    static let maxArtworkAspect: CGFloat = 2.5
+
+    /// Downsample so the image's *short* side is `side` pixels — for art that
+    /// fills a square frame (and pans across the rest): sizing by the long
+    /// side would leave a 16:9 cover blurry once scaled up to fill.
+    static func downsampled(at url: URL, fillingSide side: CGFloat) -> UIImage? {
+        let sourceOpts = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, sourceOpts) else { return nil }
+        var aspect: CGFloat = 1
+        if let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+           let w = props[kCGImagePropertyPixelWidth] as? CGFloat, let h = props[kCGImagePropertyPixelHeight] as? CGFloat,
+           w > 0, h > 0 {
+            aspect = min(max(w, h) / min(w, h), maxArtworkAspect)
+        }
+        return thumbnail(from: src, maxPixelSize: (side * aspect).rounded(.up))
+    }
+
+    /// `downscaled` keeping the short side at `side` pixels (see above).
+    static func downscaled(_ image: UIImage, fillingSide side: CGFloat) -> UIImage {
+        let pw = image.size.width * image.scale
+        let ph = image.size.height * image.scale
+        guard pw > 0, ph > 0 else { return image }
+        let aspect = min(max(pw, ph) / min(pw, ph), maxArtworkAspect)
+        return downscaled(image, maxPixelSize: (side * aspect).rounded(.up))
+    }
+
     /// `downscaled` + JPEG encode, for handoff payloads (widget App Group
     /// file, watch application context).
     static func jpegData(_ image: UIImage, maxPixelSize: CGFloat, compressionQuality: CGFloat) -> Data? {
