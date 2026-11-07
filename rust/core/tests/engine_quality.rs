@@ -390,6 +390,23 @@ fn engine_quality_report() {
         check(&mut rows, "reverb on/off/preset", "click score", click_score(&x, rate, 200.0, peak), 8.0, true);
     }
 
+    // --- Night mode: switching it on/off glides, no level jump ---
+    {
+        let tone = d.join("night.wav");
+        wav(&tone, 48_000, 4.0, &[(200.0, 0.3)]);
+        let (e, _) = engine();
+        e.load(tone.to_string_lossy().into(), 0.0, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        e.play();
+        let mut x = left(&pump(&e, 0.4));
+        e.set_effects(0.0, "mediumRoom".into(), false, true);
+        x.extend(left(&pump(&e, 1.0)));
+        e.set_effects(0.0, "mediumRoom".into(), false, false);
+        x.extend(left(&pump(&e, 0.6)));
+        let peak = x.iter().fold(0f64, |m, v| m.max(v.abs()));
+        check(&mut rows, "night mode on/off", "click score", click_score(&x, rate, 200.0, peak), 8.0, true);
+    }
+
     // --- Vibrato: no click switching it on/off; the swing it was asked for ---
     {
         let tone = d.join("vib.wav");

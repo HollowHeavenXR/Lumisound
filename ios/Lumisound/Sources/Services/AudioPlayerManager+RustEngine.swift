@@ -19,11 +19,13 @@ final class RustEngineRelay: EngineListener, @unchecked Sendable {
     }
 }
 
-/// Playback through the Rust audio engine (rust/core/src/engine): decoding,
-/// gapless hand-over, EQ, reverb, mono, night mode and volume run in Rust;
-/// this file only maps the player's state onto it. Tracks or settings the
-/// engine doesn't cover yet (streams still downloading, Opus/WebM, speed/
-/// pitch, crossfade, spatial/8D/special effects) keep the AVAudioEngine path.
+/// Playback through the Rust audio engine (rust/core/src/engine): decoding
+/// (locked `.lms` files in place), gapless hand-over, crossfades, speed/pitch,
+/// EQ, reverb, 8D/tremolo/vibrato, spatial, mono, night mode and volume all
+/// run in Rust; this file only maps the player's state onto it. The engine is
+/// on by default; the system engine is used only when the listener turns it
+/// off in Settings, or for a file the core genuinely can't open (reported as
+/// `engine_fallback`). Engine-exclusive tracks never use the system engine.
 extension AudioPlayerManager {
     static let rustRelay = RustEngineRelay()
     static let rust = AudioEngine(listener: rustRelay)

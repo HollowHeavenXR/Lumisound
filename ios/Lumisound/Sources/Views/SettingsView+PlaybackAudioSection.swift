@@ -614,7 +614,7 @@ private struct EightDSpeedControl: View {
     }
 }
 
-/// Lumisound's own audio engine (Rust) for local tracks; off = AVAudioEngine.
+/// Lumisound's own audio engine (Rust), on by default; off = Apple's engine.
 private struct RustEngineToggleRow: View {
     @ObservedObject var player: AudioPlayerManager
     @AppStorage(AudioPlayerManager.rustEngineKey) private var enabled = true
@@ -633,7 +633,7 @@ private struct RustEngineToggleRow: View {
             player.tearDownRustEngine()
             if wasPlaying { player.playCurrent(from: at) }
         }
-        Text("Decodes and mixes local tracks in Lumisound's own engine (gapless, EQ, reverb, night mode). Turn off to use Apple's engine.")
+        Text("Plays every track — library, downloads and streams — in Lumisound's own engine: gapless, crossfade, speed and pitch, EQ, reverb, 8D, spatial and night mode. Tracks re-encoded for the Lumisound engine always play on it. Turn off to use Apple's engine for everything else.")
             .font(.caption)
             .foregroundStyle(AppTheme.textSecondary)
             .padding(.leading, 16)

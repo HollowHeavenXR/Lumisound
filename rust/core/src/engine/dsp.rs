@@ -449,27 +449,34 @@ pub struct Compressor {
     attack: f32,
     release: f32,
     pub enabled: bool,
+    /// 0..1 blend of the compressor's gain, glided over ~50 ms: switching
+    /// night mode used to jump the level (up to +6 dB) in one sample.
+    mix: f32,
+    mix_step: f32,
 }
 
 impl Compressor {
     pub fn new(rate: f32) -> Self {
         let coef = |ms: f32| (-1.0 / (ms * 0.001 * rate)).exp();
-        Self { env: 0.0, attack: coef(10.0), release: coef(200.0), enabled: false }
+        Self { env: 0.0, attack: coef(10.0), release: coef(200.0), enabled: false, mix: 0.0, mix_step: 1.0 / (0.05 * rate) }
     }
 
     #[inline]
     pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
-        if !self.enabled {
-            return (l, r);
-        }
+        // The level detector always runs (cheap), so switching on starts
+        // from the music's real level rather than from silence.
         let x = l.abs().max(r.abs());
         let c = if x > self.env { self.attack } else { self.release };
         self.env = c * self.env + (1.0 - c) * x;
+        self.mix = if self.enabled { (self.mix + self.mix_step).min(1.0) } else { (self.mix - self.mix_step).max(0.0) };
+        if self.mix <= 0.0 {
+            return (l, r);
+        }
         let db = 20.0 * self.env.max(1e-6).log10();
         // Threshold -24 dBFS, ratio 3:1, +6 dB make-up.
         let over = (db + 24.0).max(0.0);
         let gain_db = -over * (1.0 - 1.0 / 3.0) + 6.0;
-        let g = 10f32.powf(gain_db / 20.0);
+        let g = 1.0 + (10f32.powf(gain_db / 20.0) - 1.0) * self.mix;
         (l * g, r * g)
     }
 }
