@@ -3,6 +3,7 @@
 pub mod analysis;
 pub mod artwork;
 pub mod decode;
+pub mod gallery;
 pub mod lock;
 pub mod opus;
 pub mod tags;

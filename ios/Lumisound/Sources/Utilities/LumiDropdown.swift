@@ -148,6 +148,8 @@ final class LumiDropdownPresenter: ObservableObject {
     static let rowHeight: CGFloat = 44
     static let maxRows: UInt32 = 7
     static let minWidth: CGFloat = 220
+    /// Action menus: wide enough for a full label on one line.
+    static let menuMinWidth: CGFloat = 290
 
     @Published private(set) var isPresented = false
     @Published private(set) var rows: [DropdownRow] = []
@@ -173,7 +175,10 @@ final class LumiDropdownPresenter: ObservableObject {
         }
     }
 
-    func present(engine: DropdownEngine, items: [String: Item], anchor: CGRect, onChoose: ((String) -> Void)?) {
+    private var panelMinWidth: CGFloat = 220
+
+    func present(engine: DropdownEngine, items: [String: Item], anchor: CGRect, onChoose: ((String) -> Void)?, minWidth: CGFloat = LumiDropdownPresenter.minWidth) {
+        panelMinWidth = minWidth
         if isPresented { dismiss() }
         guard let window = ensureWindow() else { return }
         engine.open()
@@ -240,7 +245,7 @@ final class LumiDropdownPresenter: ObservableObject {
             anchor: DropRect(x: anchor.minX, y: anchor.minY, width: anchor.width, height: anchor.height),
             viewport: DropRect(x: b.minX, y: b.minY, width: b.width, height: b.height),
             insetTop: insets.top, insetBottom: insets.bottom,
-            rowHeight: Self.rowHeight, maxRows: Self.maxRows, minWidth: Self.minWidth
+            rowHeight: Self.rowHeight, maxRows: isMenu ? 9 : Self.maxRows, minWidth: panelMinWidth
         )
     }
 
@@ -304,9 +309,7 @@ private struct LumiDropdownPanel: View {
                         ForEach(p.rows, id: \.id) { row in
                             if p.isMenu {
                                 p.items[row.id]?.view
-                                    .buttonStyle(LumiMenuItemStyle())
-                                    .toggleStyle(LumiMenuToggleStyle())
-                                    .environment(\.lumiInPanel, true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                     .id(row.id)
                             } else {
                                 rowView(row).id(row.id)
@@ -437,7 +440,14 @@ struct LumiMenu<Content: View, Label: View>: View {
     }
 
     var body: some View {
-        Group(subviews: content) { subviews in
+        // Styles go on the content *here*: a Subview keeps the environment of
+        // the place it was declared, so styling it later inside the panel had
+        // no effect (rows came out as bare, centered, wrapping text).
+        Group(subviews: content
+            .buttonStyle(LumiMenuItemStyle())
+            .toggleStyle(LumiMenuToggleStyle())
+            .labelStyle(LumiMenuLabelStyle())
+            .environment(\.lumiInPanel, true)) { subviews in
             let items = subviews.map { $0 }
             Button {
                 open(items)
@@ -470,7 +480,7 @@ struct LumiMenu<Content: View, Label: View>: View {
         engine.setSelected(id: nil)
         var items: [String: LumiDropdownPresenter.Item] = [:]
         for (id, v) in zip(ids, subviews) { items[id] = .init(view: AnyView(v), label: nil) }
-        LumiDropdownPresenter.shared.present(engine: engine, items: items, anchor: frame, onChoose: nil)
+        LumiDropdownPresenter.shared.present(engine: engine, items: items, anchor: frame, onChoose: nil, minWidth: LumiDropdownPresenter.menuMinWidth)
     }
 }
 
@@ -484,6 +494,8 @@ private extension View {
     func lumiMenuRow() -> some View {
         self
             .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .multilineTextAlignment(.leading)
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, minHeight: LumiDropdownPresenter.rowHeight, alignment: .leading)
             .contentShape(Rectangle())

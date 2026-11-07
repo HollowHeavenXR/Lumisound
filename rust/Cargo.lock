@@ -2033,6 +2033,7 @@ dependencies = [
  "cpal",
  "futures-util",
  "hex",
+ "image",
  "libc",
  "lumisound-media",
  "mlua",

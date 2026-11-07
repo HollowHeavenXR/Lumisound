@@ -12,7 +12,7 @@ struct BackgroundSettingsView: View {
     @State private var isLoadingPhotos = false
 
     @State private var cloudError: String?
-    @State private var uploadingIndices: Set<Int> = []
+    @State private var uploadingIDs: Set<String> = []
     @AppStorage(GalleryBackgroundSource.storageKey) private var backgroundSource = GalleryBackgroundSource.photos.rawValue
 
     var body: some View {
@@ -49,27 +49,20 @@ struct BackgroundSettingsView: View {
             Section {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(bg.isEnabled && bg.isActive ? "Gallery Running" : bg.images.isEmpty ? "No images added" : "Gallery Paused")
+                        Text(bg.isEnabled && bg.isActive ? "Gallery Running" : !bg.hasImages ? "No images added" : "Gallery Paused")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(bg.isEnabled && bg.isActive ? AppTheme.dynamicAccent : AppTheme.textPrimary)
-                        if !bg.images.isEmpty {
-                            Text("\(bg.images.count) image\(bg.images.count == 1 ? "" : "s") loaded")
+                        if bg.hasImages {
+                            Text("\(bg.imageCount) image\(bg.imageCount == 1 ? "" : "s")")
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.textSecondary)
                         }
                     }
                     Spacer()
-                    if !bg.images.isEmpty {
+                    if bg.hasImages {
                         Button {
-                            if bg.isEnabled && bg.isActive {
-                                bg.isEnabled = false
-                                bg.stopShuffling()
-                                bg.saveSettings()
-                            } else {
-                                bg.isEnabled = true
-                                bg.saveSettings()
-                                bg.startShuffling()
-                            }
+                            // isEnabled starts/stops the slideshow itself.
+                            bg.isEnabled = !(bg.isEnabled && bg.isActive)
                         } label: {
                             Text(bg.isEnabled && bg.isActive ? "Stop" : "Start")
                                 .font(.subheadline.weight(.semibold))
@@ -85,8 +78,8 @@ struct BackgroundSettingsView: View {
                 .padding(.vertical, 4)
 
                 // Preview current background image
-                if bg.isEnabled, !bg.images.isEmpty {
-                    AnimatedImageView(image: bg.images[bg.currentIndex % bg.images.count], contentMode: .scaleAspectFill)
+                if bg.isEnabled, let current = bg.currentImage {
+                    AnimatedImageView(image: current, contentMode: .scaleAspectFill)
                         .frame(maxWidth: .infinity)
                         .frame(height: 120)
                         .clipped()
@@ -101,7 +94,7 @@ struct BackgroundSettingsView: View {
             }
 
             // MARK: Image Picker Section
-            Section("Images (\(bg.images.count) saved)") {
+            Section("Images (\(bg.imageCount) saved)") {
                 PhotosPicker(
                     selection: $selectedItems,
                     maxSelectionCount: 150,
@@ -111,7 +104,7 @@ struct BackgroundSettingsView: View {
                         Label("Add from Photo Library", systemImage: "photo.on.rectangle.angled")
                             .foregroundStyle(AppTheme.dynamicAccent)
                         Spacer()
-                        if isLoadingPhotos {
+                        if isLoadingPhotos || bg.isImporting {
                             ProgressView()
                                 .tint(AppTheme.dynamicAccent)
                         }
@@ -121,64 +114,37 @@ struct BackgroundSettingsView: View {
                     guard !items.isEmpty else { return }
                     isLoadingPhotos = true
                     Task {
-                        var loadedImages: [UIImage] = []
-                        var loadedIDs: [String?] = []
-                        var loadedGIFData: [Data?] = []
+                        // Raw bytes go to the gallery engine (Rust), which
+                        // validates, de-duplicates and normalizes them; GIFs
+                        // stay animated.
+                        var newImages: [BackgroundService.NewImage] = []
                         var duplicateCount = 0
                         for item in items {
-                            // Skip photos already in the gallery rather than
-                            // re-adding a duplicate — the system picker itself
-                            // can't be told which assets to hide, so this is a
-                            // post-selection filter instead.
                             if let identifier = item.itemIdentifier, bg.isAssetAlreadyAdded(identifier) {
                                 duplicateCount += 1
                                 continue
                             }
                             guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-                            if isGIFData(data), let animated = UIImage.gifImage(data: data, maxDimension: 1280) {
-                                // Keep GIFs animated (unlike the downsample
-                                // path below, which flattens to a single
-                                // static frame) but still cap each frame to
-                                // the same 1280px used for static photos —
-                                // an un-downsampled multi-frame GIF from the
-                                // real Photos library can be many MB of fully
-                                // decoded bitmaps per image, and with a
-                                // gallery holding 100+ of these the continuous
-                                // animate+blur compositing of even just the
-                                // one currently-displayed image was enough to
-                                // saturate the main thread and make the rest
-                                // of this screen appear to never render.
-                                loadedImages.append(animated)
-                                loadedIDs.append(item.itemIdentifier)
-                                loadedGIFData.append(data)
-                            } else if let image = BackgroundService.downsampledImage(from: data, maxDimension: 1280) {
-                                loadedImages.append(image)
-                                loadedIDs.append(item.itemIdentifier)
-                                loadedGIFData.append(nil)
-                            } else if let image = UIImage(data: data) {
-                                loadedImages.append(image)
-                                loadedIDs.append(item.itemIdentifier)
-                                loadedGIFData.append(nil)
-                            }
+                            newImages.append(.init(data: data, assetID: item.itemIdentifier))
                         }
-                        await MainActor.run {
-                            if !loadedImages.isEmpty {
-                                bg.addImages(loadedImages, assetIDs: loadedIDs, gifDataList: loadedGIFData)
-                            }
-                            if duplicateCount > 0 {
-                                ToastCenter.shared.show(
-                                    "Skipped \(duplicateCount) photo\(duplicateCount == 1 ? "" : "s") already in your gallery",
-                                    category: .info,
-                                    icon: "photo.badge.checkmark"
-                                )
-                            }
-                            selectedItems = []
-                            isLoadingPhotos = false
+                        let result = await bg.addImages(newImages)
+                        duplicateCount += result.duplicates
+                        if duplicateCount > 0 {
+                            ToastCenter.shared.show(
+                                "Skipped \(duplicateCount) photo\(duplicateCount == 1 ? "" : "s") already in your gallery",
+                                category: .info, icon: "photo.badge.checkmark")
                         }
+                        if result.rejected > 0 {
+                            ToastCenter.shared.show(
+                                "\(result.rejected) image\(result.rejected == 1 ? "" : "s") couldn't be used (unreadable or too small)",
+                                category: .warning, icon: "exclamationmark.triangle")
+                        }
+                        selectedItems = []
+                        isLoadingPhotos = false
                     }
                 }
 
-                if !bg.images.isEmpty {
+                if bg.hasImages {
                     Button(role: .destructive) {
                         bg.clearAll()
                     } label: {
@@ -192,15 +158,13 @@ struct BackgroundSettingsView: View {
                         // in a plain HStack is what made this screen grind to
                         // a halt well before any hard limit was ever reached.
                         LazyHStack(spacing: 8) {
-                            ForEach(bg.images.indices, id: \.self) { i in
-                                Image(uiImage: bg.thumbnails.indices.contains(i) ? bg.thumbnails[i] : bg.images[i])
-                                    .resizable()
-                                    .scaledToFill()
+                            ForEach(bg.entries, id: \.id) { entry in
+                                GalleryThumbnail(entry: entry)
                                     .frame(width: 60, height: 60)
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
                                     .overlay(alignment: .topTrailing) {
                                         Button {
-                                            bg.removeImage(at: i)
+                                            bg.removeImage(id: entry.id)
                                         } label: {
                                             Image(systemName: "xmark.circle.fill")
                                                 .foregroundStyle(.white)
@@ -209,7 +173,7 @@ struct BackgroundSettingsView: View {
                                         }
                                     }
                                     .overlay(alignment: .bottomLeading) {
-                                        if i == bg.currentIndex && bg.isEnabled {
+                                        if entry.id == bg.currentEntryID && bg.isEnabled {
                                             Image(systemName: "checkmark.circle.fill")
                                                 .foregroundStyle(AppTheme.dynamicAccent)
                                                 .background(Color.black.opacity(0.5), in: Circle())
@@ -220,9 +184,9 @@ struct BackgroundSettingsView: View {
                                     .overlay(alignment: .bottomTrailing) {
                                         if account.isLoggedIn, let token = account.token {
                                             Button {
-                                                uploadToCloud(bg.images[i], index: i, token: token)
+                                                uploadToCloud(entry, token: token)
                                             } label: {
-                                                if uploadingIndices.contains(i) {
+                                                if uploadingIDs.contains(entry.id) {
                                                     ProgressView()
                                                         .tint(.white)
                                                         .scaleEffect(0.6)
@@ -235,7 +199,7 @@ struct BackgroundSettingsView: View {
                                                         .font(.caption)
                                                 }
                                             }
-                                            .disabled(uploadingIndices.contains(i))
+                                            .disabled(uploadingIDs.contains(entry.id))
                                             .padding(3)
                                         }
                                     }
@@ -300,7 +264,8 @@ struct BackgroundSettingsView: View {
                             HStack(spacing: 8) {
                                 ForEach(streaming.galleryImages) { cloudImage in
                                     CloudGalleryThumbnail(image: cloudImage, token: token) { downloaded in
-                                        bg.addImages([downloaded])
+                                        guard let data = downloaded.jpegData(compressionQuality: 0.92) else { return }
+                                        Task { await bg.addImages([.init(data: data, assetID: nil)], uploadToCloud: false) }
                                     }
                                 }
                             }
@@ -321,7 +286,7 @@ struct BackgroundSettingsView: View {
             }
 
             // Show settings as soon as images exist (not just when enabled)
-            if !bg.images.isEmpty {
+            if bg.hasImages {
 
                 // MARK: Shuffle Interval Section
                 Section("Shuffle Interval") {
@@ -332,10 +297,10 @@ struct BackgroundSettingsView: View {
                     }
                     .pickerStyle(.segmented)
                     .tint(AppTheme.dynamicAccent)
-                    .onChange(of: bg.shuffleIntervalSeconds) { _ in
-                        bg.saveSettings()
-                        bg.startShuffling()
+                    Toggle(isOn: $bg.shuffleOrder) {
+                        Label("Shuffle Order", systemImage: "shuffle")
                     }
+                    .tint(AppTheme.dynamicAccent)
                 }
 
                 // MARK: Animation Section
@@ -362,7 +327,6 @@ struct BackgroundSettingsView: View {
                             }
                             .onTapGesture {
                                 bg.animation = anim
-                                bg.saveSettings()
                             }
                         }
                     }
@@ -377,7 +341,7 @@ struct BackgroundSettingsView: View {
                         Label("Preview Next Image", systemImage: "photo.on.rectangle")
                             .foregroundStyle(AppTheme.dynamicAccent)
                     }
-                    .disabled(bg.images.count < 2)
+                    .disabled(bg.imageCount < 2)
                 }
 
                 // MARK: Appearance Section
@@ -391,7 +355,7 @@ struct BackgroundSettingsView: View {
                         }
                         Slider(value: $bg.opacity, in: 0.05...0.8)
                             .tint(AppTheme.dynamicAccent)
-                            .onChange(of: bg.opacity) { _ in bg.saveSettings() }
+
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
@@ -403,7 +367,7 @@ struct BackgroundSettingsView: View {
                         }
                         Slider(value: $bg.blurRadius, in: 0...40)
                             .tint(AppTheme.dynamicAccent)
-                            .onChange(of: bg.blurRadius) { _ in bg.saveSettings() }
+
                     }
 
                     Toggle(isOn: $bg.kenBurnsEnabled) {
@@ -444,16 +408,18 @@ struct BackgroundSettingsView: View {
         }
     }
 
-    private func uploadToCloud(_ image: UIImage, index: Int, token: String) {
-        uploadingIndices.insert(index)
+    private func uploadToCloud(_ entry: GalleryEntry, token: String) {
+        guard let image = UIImage(contentsOfFile: entry.path) else { return }
+        let order = bg.entries.firstIndex(where: { $0.id == entry.id }) ?? 0
+        uploadingIDs.insert(entry.id)
         cloudError = nil
         Task {
             do {
-                _ = try await streaming.uploadGalleryImage(image, token: token, displayOrder: index)
+                _ = try await streaming.uploadGalleryImage(image, token: token, displayOrder: order)
             } catch {
                 await MainActor.run { cloudError = "Upload failed: \(error.localizedDescription)" }
             }
-            await MainActor.run { uploadingIndices.remove(index) }
+            await MainActor.run { _ = uploadingIDs.remove(entry.id) }
         }
     }
 }
@@ -530,6 +496,28 @@ private struct CloudGalleryThumbnail: View {
                     deleteFailed = true
                 }
             }
+        }
+    }
+}
+
+// MARK: - GalleryThumbnail
+
+/// Grid preview, read lazily from the small thumbnail file the gallery
+/// engine writes for every image.
+private struct GalleryThumbnail: View {
+    let entry: GalleryEntry
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(AppTheme.surface)
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            }
+        }
+        .task(id: entry.id) {
+            let e = entry
+            image = await Task.detached(priority: .utility) { BackgroundService.thumbnail(for: e) }.value
         }
     }
 }
