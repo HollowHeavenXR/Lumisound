@@ -545,7 +545,9 @@ mod tests {
         let n = (secs * e.output_rate() as f64) as usize / chunk;
         for _ in 0..n {
             all.extend(e.render_offline(chunk));
-            std::thread::sleep(Duration::from_millis(1));
+            // ~5x real time: decks (slow in debug builds) keep their buffers
+            // full, so timing-based asserts don't flake under load.
+            std::thread::sleep(Duration::from_millis(4));
         }
         all
     }
@@ -680,7 +682,14 @@ mod tests {
             e.load(a.to_string_lossy().into(), 0.0, 0.0).unwrap();
             std::thread::sleep(Duration::from_millis(200));
             e.play();
-            let out = pump(&e, 1.0);
+            // Paced like real playback (time-stretch is slow in debug builds;
+            // pumping flat out would starve the deck and skew the count).
+            let mut out = Vec::new();
+            for _ in 0..(48_000 / 1024) {
+                out.extend(e.render_offline(1024));
+                std::thread::sleep(Duration::from_millis(8));
+            }
+            assert_eq!(e.health().underrun_events, 0, "{st:+} st: deck starved: {:?}", e.incidents());
             let left: Vec<f32> = out.iter().step_by(2).copied().collect();
             let mid = &left[4_800..40_000];
             let zc = mid.windows(2).filter(|p| (p[0] >= 0.0) != (p[1] >= 0.0)).count();
