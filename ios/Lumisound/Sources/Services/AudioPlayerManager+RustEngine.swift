@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import UIKit
 
 /// Bridges Rust engine callbacks (any thread) onto the main actor.
 final class RustEngineRelay: EngineListener, @unchecked Sendable {
@@ -49,18 +50,44 @@ extension AudioPlayerManager {
 
     private func ensureRustOutput() -> Bool {
         if rustOutputStarted { return true }
-        try? AVAudioSession.sharedInstance().setActive(true)
-        do {
-            try Self.rust.startOutput()
-            rustOutputStarted = true
-            startEngineTelemetry()
-            startEngineGuard()
-            return true
-        } catch {
-            appWarn("Rust audio output failed to start: \(error.localizedDescription)", category: "audio")
-            reportEngineFallback(reason: "output_start_failed", url: currentSong?.url, error: error.localizedDescription)
-            return false
+        // Starting the output from the background (resume from the lock
+        // screen / headphones after the output was released while paused)
+        // fails with a CoreAudio error unless the session is (re)claimed
+        // first — every "output_start_failed" in telemetry was backgrounded.
+        // Re-assert the playback category, activate, and retry a few times
+        // with a short pause before giving up.
+        let session = AVAudioSession.sharedInstance()
+        var lastError: Error?
+        for attempt in 0..<4 {
+            if attempt > 0 {
+                configureAudioSession()
+                usleep(UInt32(40_000 * attempt))
+            }
+            do {
+                try session.setActive(true)
+            } catch {
+                lastError = error
+            }
+            do {
+                try Self.rust.startOutput()
+                rustOutputStarted = true
+                startEngineTelemetry()
+                startEngineGuard()
+                if attempt > 0 {
+                    appLog("Rust audio output started on attempt \(attempt + 1)", category: "audio")
+                    RemoteLogger.log(category: "audio_engine", event: "output_start_retried", level: "info",
+                                     message: "attempt \(attempt + 1)",
+                                     detail: ["background": UIApplication.shared.applicationState != .active])
+                }
+                return true
+            } catch {
+                lastError = error
+            }
         }
+        let message = lastError?.localizedDescription ?? "unknown"
+        appWarn("Rust audio output failed to start: \(message)", category: "audio")
+        reportEngineFallback(reason: "output_start_failed", url: currentSong?.url, error: message)
+        return false
     }
 
     /// Takes over the current track; false = caller uses the AVAudioEngine path.

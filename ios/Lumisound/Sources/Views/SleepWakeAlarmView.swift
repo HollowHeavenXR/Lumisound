@@ -46,10 +46,10 @@ struct SleepWakeAlarmView: View {
         Section {
             DatePicker("Wake Time", selection: $pickerTime, displayedComponents: .hourAndMinute)
 
-            Picker("Play", selection: $selectedPlaylistID) {
-                Text("Favorites").tag(UUID?.none)
+            LumiPicker("Play", selection: $selectedPlaylistID) {
+                Text("Favorites").lumiOptionLabel("Favorites").tag(UUID?.none)
                 ForEach(library.playlists) { playlist in
-                    Text(playlist.name).tag(UUID?.some(playlist.id))
+                    Text(playlist.name).lumiOptionLabel(String(describing: playlist.name)).tag(UUID?.some(playlist.id))
                 }
             }
 

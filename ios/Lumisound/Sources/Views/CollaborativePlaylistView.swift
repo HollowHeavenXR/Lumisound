@@ -327,11 +327,10 @@ private struct CollaboratorsSection: View {
                     .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .foregroundStyle(AppTheme.textPrimary)
 
-                Picker("Role", selection: $role) {
-                    Text("Editor").tag("editor")
-                    Text("Viewer").tag("viewer")
+                LumiPicker("Role", selection: $role) {
+                    Text("Editor").lumiOptionLabel("Editor").tag("editor")
+                    Text("Viewer").lumiOptionLabel("Viewer").tag("viewer")
                 }
-                .pickerStyle(.menu)
                 .tint(AppTheme.dynamicAccent)
 
                 Button {

@@ -10,7 +10,8 @@
 //!
 //! Layout: `<root>/<namespace>/<sha256(key)>.bin` + `<root>/<namespace>/index.json`
 //! (key -> size, last access). Writes are atomic (temp + rename). The index
-//! is saved after writes and at most every 30 s of reads.
+//! is saved at most every 5 s (writes) / 30 s (reads) and on `blob_cache_flush`;
+//! files a crash left out of the index are deleted on the next load.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -70,6 +71,16 @@ impl Store {
                     // Drop entries whose file vanished.
                     sp.entries = e.into_iter().filter(|(k, _)| dir.join(file_name(k)).exists()).collect();
                     sp.bytes = sp.entries.values().map(|e| e.size).sum();
+                }
+            }
+            // Orphans: written after the last index save (crash/kill).
+            let known: std::collections::HashSet<String> = sp.entries.keys().map(|k| file_name(k)).collect();
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for f in rd.flatten() {
+                    let n = f.file_name().to_string_lossy().into_owned();
+                    if (n.ends_with(".bin") && !known.contains(&n)) || n.ends_with(".tmp") {
+                        let _ = std::fs::remove_file(f.path());
+                    }
                 }
             }
         }
@@ -149,7 +160,9 @@ pub fn blob_cache_put(namespace: String, key: String, data: Vec<u8>) -> bool {
     sp.bytes += size;
     sp.dirty = true;
     evict(&dir, sp);
-    save_index(&dir, sp);
+    if now() - sp.last_save > 5.0 {
+        save_index(&dir, sp);
+    }
     true
 }
 

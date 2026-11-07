@@ -80,11 +80,18 @@ pub struct Eq10 {
     gains: [f32; 10],
     pub enabled: bool,
     rate: f32,
+    /// Auto-headroom: boosts are paid for by lowering the input first (half
+    /// the largest boost), so a hot master isn't driven into the limiter and
+    /// the tone change stays audible instead of being squashed. Smoothed.
+    pre: f32,
+    pre_target: f32,
+    pre_coef: f32,
 }
 
 impl Eq10 {
     pub fn new(rate: f32) -> Self {
-        let mut e = Self { bands: [Biquad::default(); 10], gains: [0.0; 10], enabled: false, rate };
+        let pre_coef = 1.0 - (-1.0 / (0.05 * rate)).exp(); // ~50 ms glide
+        let mut e = Self { bands: [Biquad::default(); 10], gains: [0.0; 10], enabled: false, rate, pre: 1.0, pre_target: 1.0, pre_coef };
         e.set_gains(&[0.0; 10]);
         e
     }
@@ -105,6 +112,13 @@ impl Eq10 {
             let d = Self::design(i, g, self.rate);
             self.bands[i].retune(&d);
         }
+        let boost = self.gains.iter().fold(0f32, |m, g| m.max(*g));
+        self.pre_target = 10f32.powf(-0.5 * boost / 20.0);
+    }
+
+    /// Current headroom gain (1 = none).
+    pub fn pre_gain(&self) -> f32 {
+        self.pre_target
     }
 
     pub fn is_flat(&self) -> bool {
@@ -116,6 +130,10 @@ impl Eq10 {
         if !self.enabled || self.is_flat() {
             return x;
         }
+        if ch == 0 {
+            self.pre += (self.pre_target - self.pre) * self.pre_coef;
+        }
+        x *= self.pre;
         for b in self.bands.iter_mut() {
             x = b.process(ch, x);
         }
@@ -194,7 +212,10 @@ mod tests {
         eq.set_gains(&g);
         let boosted = rms_after(&mut eq, 1000.0, rate);
         let db = 20.0 * (boosted / base).log10();
-        assert!((db - 6.0).abs() < 0.6, "got {db} dB");
+        // +6 dB band, minus the 3 dB auto-headroom.
+        assert!((db - 3.0).abs() < 0.6, "got {db} dB");
+        let off = 20.0 * (rms_after(&mut eq, 8000.0, rate) / rms_after(&mut flat, 8000.0, rate)).log10();
+        assert!((db - off - 6.0).abs() < 0.8, "tone change {}", db - off);
     }
     #[test]
     fn ramp_reaches_target() {

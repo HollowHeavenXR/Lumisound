@@ -40,16 +40,16 @@ struct PlaylistMergeToolView: View {
     var body: some View {
         List {
             Section("Compare") {
-                Picker("Playlist A", selection: $playlistAID) {
-                    Text("Choose one").tag(UUID?.none)
+                LumiPicker("Playlist A", selection: $playlistAID) {
+                    Text("Choose one").lumiOptionLabel("Choose one").tag(UUID?.none)
                     ForEach(library.playlists) { playlist in
-                        Text(playlist.name).tag(Optional(playlist.id))
+                        Text(playlist.name).lumiOptionLabel(String(describing: playlist.name)).tag(Optional(playlist.id))
                     }
                 }
-                Picker("Playlist B", selection: $playlistBID) {
-                    Text("Choose one").tag(UUID?.none)
+                LumiPicker("Playlist B", selection: $playlistBID) {
+                    Text("Choose one").lumiOptionLabel("Choose one").tag(UUID?.none)
                     ForEach(library.playlists) { playlist in
-                        Text(playlist.name).tag(Optional(playlist.id))
+                        Text(playlist.name).lumiOptionLabel(String(describing: playlist.name)).tag(Optional(playlist.id))
                     }
                 }
             }

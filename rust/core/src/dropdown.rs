@@ -57,6 +57,7 @@ struct State {
     query: String,
     highlighted: Option<String>,
     open: bool,
+    searchable: bool,
 }
 
 /// One dropdown's state machine.
@@ -113,7 +114,7 @@ impl State {
 impl DropdownEngine {
     #[uniffi::constructor]
     pub fn new() -> std::sync::Arc<Self> {
-        std::sync::Arc::new(Self { st: Mutex::new(State { options: vec![], selected: None, query: String::new(), highlighted: None, open: false }) })
+        std::sync::Arc::new(Self { st: Mutex::new(State { options: vec![], selected: None, query: String::new(), highlighted: None, open: false, searchable: true }) })
     }
 
     pub fn set_options(&self, options: Vec<DropdownOption>) {
@@ -122,6 +123,12 @@ impl DropdownEngine {
         if s.highlighted.as_ref().is_some_and(|h| !s.options.iter().any(|o| &o.id == h)) {
             s.highlighted = None;
         }
+    }
+
+    /// Whether the options carry searchable labels (search field shown for
+    /// long lists only when true).
+    pub fn set_searchable(&self, searchable: bool) {
+        self.st.lock().unwrap().searchable = searchable;
     }
 
     pub fn set_selected(&self, id: Option<String>) {
@@ -238,7 +245,7 @@ impl DropdownEngine {
     pub fn layout(&self, anchor: DropRect, viewport: DropRect, inset_top: f64, inset_bottom: f64, row_height: f64, max_rows: u32, min_width: f64) -> DropdownLayout {
         let s = self.st.lock().unwrap();
         let rows = s.visible().len().max(1);
-        let show_search = s.options.len() > SEARCH_THRESHOLD;
+        let show_search = s.searchable && s.options.len() > SEARCH_THRESHOLD;
         let header = if show_search { row_height + 8.0 } else { 0.0 };
         let wanted_rows = rows.min(max_rows.max(1) as usize);
         let top_limit = viewport.y + inset_top + MARGIN;
@@ -315,5 +322,7 @@ mod tests {
         e.set_selected(Some("10".into()));
         let l = e.layout(DropRect { x: 20.0, y: 100.0, width: 150.0, height: 44.0 }, vp, 47.0, 34.0, 44.0, 6, 0.0);
         assert!(l.show_search && l.visible_rows == 6 && l.scroll_to == Some(10));
+        e.set_searchable(false);
+        assert!(!e.layout(DropRect { x: 20.0, y: 100.0, width: 150.0, height: 44.0 }, vp, 47.0, 34.0, 44.0, 6, 0.0).show_search);
     }
 }

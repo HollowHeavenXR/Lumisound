@@ -13,12 +13,11 @@ extension SettingsView {
                     ToastCenter.shared.show("Sleep timer cancelled", category: .info, icon: "moon.zzz")
                 }
             } else {
-                Picker("Duration", selection: $sleepTimer.selectedDuration) {
+                LumiPicker("Duration", selection: $sleepTimer.selectedDuration) {
                     ForEach(SleepTimerService.presets, id: \.seconds) { preset in
-                        Text(preset.label).tag(preset.seconds)
+                        Text(preset.label).lumiOptionLabel(String(describing: preset.label)).tag(preset.seconds)
                     }
                 }
-                .pickerStyle(.menu)
                 .tint(.indigo)
                 .foregroundStyle(AppTheme.textPrimary)
 

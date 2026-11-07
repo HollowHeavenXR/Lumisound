@@ -182,6 +182,12 @@ fn tone_strength(series: &[f64], fs: f64, hz: f64) -> f64 {
 }
 
 /// Goertzel power at `hz`, summed over a few neighbouring bins (band energy).
+/// Tone change of band lo..hi relative to the untouched mids (500-1500 Hz):
+/// what the listener hears, independent of the EQ's auto-headroom.
+fn tilt(out: &[f32], base: &[f32], rate: f64, lo: f64, hi: f64) -> f64 {
+    (band_db(out, rate, lo, hi) - band_db(out, rate, 500.0, 1500.0)) - (band_db(base, rate, lo, hi) - band_db(base, rate, 500.0, 1500.0))
+}
+
 fn band_db(x: &[f32], rate: f64, lo: f64, hi: f64) -> f64 {
     let n = 8192.min(x.len());
     let mut total = 0.0;
@@ -318,13 +324,13 @@ fn cloud_tracks_through_engine_and_effects() {
                 }
                 n if n.starts_with("eq bass") => {
                     let b = &baseline.as_ref().unwrap().out;
-                    let d = band_db(&l, r.rate, 40.0, 90.0) - band_db(&channels(b).0, r.rate, 40.0, 90.0);
+                    let d = tilt(&l, &channels(b).0, r.rate, 40.0, 90.0);
                     check = format!("40-90 Hz {d:+.1} dB");
                     pass &= d > 4.0;
                 }
                 n if n.starts_with("eq treble") => {
                     let b = &baseline.as_ref().unwrap().out;
-                    let d = band_db(&l, r.rate, 9000.0, 14000.0) - band_db(&channels(b).0, r.rate, 9000.0, 14000.0);
+                    let d = tilt(&l, &channels(b).0, r.rate, 9000.0, 14000.0);
                     check = format!("9-14 kHz {d:+.1} dB");
                     pass &= d > 3.0;
                 }

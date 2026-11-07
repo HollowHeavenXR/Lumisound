@@ -198,9 +198,9 @@ struct AppearanceView: View {
             Section {
                 panelOpacityRow
 
-                Picker(selection: $panelMaterialRaw) {
+                LumiPicker(selection: $panelMaterialRaw) {
                     ForEach(PanelMaterialStyle.allCases) { style in
-                        Text(style.displayName).tag(style.rawValue)
+                        Text(style.displayName).lumiOptionLabel(String(describing: style.displayName)).tag(style.rawValue)
                     }
                 } label: {
                     Label("Panel Style", systemImage: "square.on.square")

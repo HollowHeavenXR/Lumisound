@@ -485,15 +485,14 @@ private struct FadeCurvePickerRow: View {
                 .foregroundStyle(AppTheme.textSecondary)
                 .font(AppTheme.bodyFont(size: 14))
             Spacer()
-            Picker("", selection: Binding(
+            LumiPicker("", selection: Binding(
                 get: { player.audioSettings.crossfadeCurve ?? .equalPower },
                 set: { player.audioSettings.crossfadeCurve = $0 }
             )) {
                 ForEach(CrossfadeCurve.allCases) { curve in
-                    Text(curve.displayName).tag(curve)
+                    Text(curve.displayName).lumiOptionLabel(String(describing: curve.displayName)).tag(curve)
                 }
             }
-            .pickerStyle(.menu)
             .tint(.teal)
         }
         .padding(.leading, 16)
@@ -509,13 +508,12 @@ private struct EQPresetPickerRow: View {
             Label("EQ Preset", systemImage: "waveform")
                 .foregroundStyle(AppTheme.textPrimary)
             Spacer()
-            Picker("", selection: $player.audioSettings.eqPreset) {
+            LumiPicker("", selection: $player.audioSettings.eqPreset) {
                 ForEach(EQPreset.allCases) { preset in
                     Text(preset.displayName)
                         .tag(preset)
                 }
             }
-            .pickerStyle(.menu)
             .tint(.teal)
             .onChange(of: player.audioSettings.eqPreset) { newPreset in
                 player.applyEQPreset(newPreset)
@@ -534,13 +532,12 @@ private struct ReverbPresetPickerRow: View {
                 .foregroundStyle(AppTheme.textSecondary)
                 .font(AppTheme.bodyFont(size: 14))
             Spacer()
-            Picker("", selection: $player.audioSettings.reverbPreset) {
+            LumiPicker("", selection: $player.audioSettings.reverbPreset) {
                 ForEach(ReverbRoomPreset.allCases) { preset in
                     Text(preset.displayName)
                         .tag(preset)
                 }
             }
-            .pickerStyle(.menu)
             .tint(.teal)
         }
         .padding(.leading, 16)

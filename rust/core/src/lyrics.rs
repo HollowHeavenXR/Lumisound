@@ -37,16 +37,30 @@ pub struct LyricsSync {
 
 /// Rough syllable count (vowel groups), at least 1 for any non-empty line.
 pub fn syllables(line: &str) -> usize {
-    let mut n = 0;
-    let mut prev = false;
-    for c in line.chars().flat_map(|c| c.to_lowercase()) {
-        let v = matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y' | 'à'..='ÿ') || (!c.is_ascii() && c.is_alphabetic());
-        if v && !prev {
-            n += 1;
+    let is_v = |c: char| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y' | 'à'..='ÿ') || (!c.is_ascii() && c.is_alphabetic());
+    let mut total = 0;
+    for word in line.split(|c: char| !c.is_alphanumeric() && c != '\'') {
+        let w: Vec<char> = word.chars().flat_map(|c| c.to_lowercase()).collect();
+        if w.is_empty() {
+            continue;
         }
-        prev = v;
+        let mut n = 0;
+        let mut prev = false;
+        for &c in &w {
+            let v = is_v(c);
+            if v && !prev {
+                n += 1;
+            }
+            prev = v;
+        }
+        // Silent final "e" ("there", "time"), but not "-le" ("little").
+        let l = w.len();
+        if n > 1 && w[l - 1] == 'e' && l >= 2 && !is_v(w[l - 2]) && !(w[l - 2] == 'l' && l >= 3 && !is_v(w[l - 3])) {
+            n -= 1;
+        }
+        total += n.max(1);
     }
-    n.max(if line.trim().is_empty() { 0 } else { 1 })
+    total
 }
 
 /// `[mm:ss.xx]` timestamps at line start (LRC). Returns (time, text) pairs.
@@ -126,7 +140,9 @@ fn vocal_activity(feat: &[(f32, f32)]) -> (Vec<bool>, Vec<f32>) {
     }
     let mut rms: Vec<f32> = feat.iter().map(|f| f.1).collect();
     rms.sort_by(|a, b| a.total_cmp(b));
-    let loud = rms[rms.len() * 35 / 100].max(1e-4); // above the quieter third
+    // Loud enough: above the quieter third AND within 12 dB of the loud parts
+    // (so a quiet bed or room noise never counts as singing).
+    let loud = rms[rms.len() * 35 / 100].max(rms[rms.len() * 90 / 100] * 0.25).max(1e-4);
     let raw: Vec<f32> = feat.iter().map(|&(share, r)| if r >= loud { share } else { 0.0 }).collect();
     // ~0.5 s moving average of the voice share.
     let w = 10;

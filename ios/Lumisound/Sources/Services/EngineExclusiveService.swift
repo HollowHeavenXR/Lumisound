@@ -28,7 +28,23 @@ final class EngineExclusiveService: ObservableObject {
 
     private init() {}
 
+    /// What the lock overlay says for a song that's locked right now.
+    @Published private(set) var lockLabels: [String: String] = [:]
+
     func isConverting(_ songID: String) -> Bool { converting.contains(songID) }
+
+    /// Locks `songID` (overlay + not playable) for other re-encode jobs
+    /// (e.g. lyrics force-sync). False when it's already locked.
+    func beginLock(_ songID: String, label: String) -> Bool {
+        guard converting.insert(songID).inserted else { return false }
+        lockLabels[songID] = label
+        return true
+    }
+
+    func endLock(_ songID: String) {
+        converting.remove(songID)
+        lockLabels[songID] = nil
+    }
 
     /// Whether `song` carries the engine-exclusive flag (reads its header once).
     func isExclusive(_ song: Song) -> Bool {
@@ -70,7 +86,7 @@ final class EngineExclusiveService: ObservableObject {
     }
 
     private func convert(songID: String, url: URL) async {
-        guard converting.insert(songID).inserted else { return }
+        guard beginLock(songID, label: "Re-encoding") else { return }
         let started = Date()
         let tmp = FileManager.default.temporaryDirectory.path
         let ok = await Task.detached(priority: .utility) {
@@ -78,7 +94,7 @@ final class EngineExclusiveService: ObservableObject {
                         verifier: AVFoundationAudioVerifier.shared)
         }.value
         // The playable cache refreshes itself: the re-encoded file is newer.
-        converting.remove(songID)
+        endLock(songID)
         if ok { exclusiveIDs.insert(songID) }
         infoChecked.insert(songID)
         let secs = Date().timeIntervalSince(started)
@@ -103,7 +119,7 @@ struct EngineConvertingOverlay: ViewModifier {
                     VStack(spacing: 4) {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 18, weight: .semibold))
-                        Text("Re-encoding")
+                        Text(service.lockLabels[songID] ?? "Re-encoding")
                             .font(.caption2.weight(.semibold))
                     }
                     .foregroundStyle(AppTheme.textPrimary)

@@ -140,12 +140,12 @@ struct AudioFormatPickerRow: View {
     }
 
     private var picker: some View {
-        Picker("Audio Format", selection: Binding(
+        LumiPicker("Audio Format", selection: Binding(
             get: { streaming.preferredFormat },
             set: { streaming.preferredFormat = $0 }
         )) {
             ForEach(StreamingService.availableFormats, id: \.value) { fmt in
-                Text(fmt.label).tag(fmt.value)
+                Text(fmt.label).lumiOptionLabel(String(describing: fmt.label)).tag(fmt.value)
             }
         }
     }

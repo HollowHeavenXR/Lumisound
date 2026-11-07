@@ -92,12 +92,11 @@ struct LibraryStyleEditorView: View {
     private var nameSection: some View {
         Section("Name") {
             TextField("Style name", text: $draft.name)
-            Picker("Icon", selection: $draft.iconName) {
+            LumiPicker("Icon", selection: $draft.iconName) {
                 ForEach(Self.icons, id: \.self) { icon in
                     Image(systemName: icon).tag(icon)
                 }
             }
-            .pickerStyle(.menu)
         }
     }
 
@@ -106,14 +105,14 @@ struct LibraryStyleEditorView: View {
     @ViewBuilder
     private var layoutSection: some View {
         Section("Layout") {
-            Picker("Form", selection: $draft.layout) {
+            LumiPicker("Form", selection: $draft.layout) {
                 ForEach(CustomLibraryRowStyle.Layout.allCases) { layout in
-                    Text(layout.label).tag(layout)
+                    Text(layout.label).lumiOptionLabel(String(describing: layout.label)).tag(layout)
                 }
             }
-            Picker("Density", selection: $draft.density) {
+            LumiPicker("Density", selection: $draft.density) {
                 ForEach(CustomLibraryRowStyle.Density.allCases) { density in
-                    Text(density.label).tag(density)
+                    Text(density.label).lumiOptionLabel(String(describing: density.label)).tag(density)
                 }
             }
         }
@@ -124,9 +123,9 @@ struct LibraryStyleEditorView: View {
     @ViewBuilder
     private var artworkSection: some View {
         Section("Artwork") {
-            Picker("Shape", selection: $draft.artworkShape) {
+            LumiPicker("Shape", selection: $draft.artworkShape) {
                 ForEach(CustomLibraryRowStyle.ArtworkShape.allCases) { shape in
-                    Text(shape.label).tag(shape)
+                    Text(shape.label).lumiOptionLabel(String(describing: shape.label)).tag(shape)
                 }
             }
             if draft.artworkShape == .rounded {
@@ -149,9 +148,9 @@ struct LibraryStyleEditorView: View {
     @ViewBuilder
     private var contentSection: some View {
         Section("Content") {
-            Picker("Title Weight", selection: $draft.titleWeight) {
+            LumiPicker("Title Weight", selection: $draft.titleWeight) {
                 ForEach(CustomLibraryRowStyle.TitleWeight.allCases) { weight in
-                    Text(weight.label).tag(weight)
+                    Text(weight.label).lumiOptionLabel(String(describing: weight.label)).tag(weight)
                 }
             }
             Toggle("Show Subtitle", isOn: $draft.showSubtitle)
@@ -167,9 +166,9 @@ struct LibraryStyleEditorView: View {
     @ViewBuilder
     private var accentSection: some View {
         Section {
-            Picker("Usage", selection: $draft.accentUsage) {
+            LumiPicker("Usage", selection: $draft.accentUsage) {
                 ForEach(CustomLibraryRowStyle.AccentUsage.allCases) { usage in
-                    Text(usage.label).tag(usage)
+                    Text(usage.label).lumiOptionLabel(String(describing: usage.label)).tag(usage)
                 }
             }
         } header: {
@@ -186,9 +185,9 @@ struct LibraryStyleEditorView: View {
     @ViewBuilder
     private var backgroundSection: some View {
         Section {
-            Picker("Treatment", selection: $draft.backgroundTreatment) {
+            LumiPicker("Treatment", selection: $draft.backgroundTreatment) {
                 ForEach(CustomLibraryRowStyle.BackgroundTreatment.allCases) { treatment in
-                    Text(treatment.label).tag(treatment)
+                    Text(treatment.label).lumiOptionLabel(String(describing: treatment.label)).tag(treatment)
                 }
             }
             VStack(alignment: .leading) {

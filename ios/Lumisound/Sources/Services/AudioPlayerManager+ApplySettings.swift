@@ -62,8 +62,14 @@ extension AudioPlayerManager {
         // takes effect immediately instead of silently doing nothing.
         if isUsingRustEngine {
             applyRustSettings()
-            // Settings the engine doesn't cover move playback back to AVAudioEngine.
-            if let url = currentSong?.url, !rustEligible(for: url) {
+            // Every setting runs on the engine, so the only reason to leave it
+            // mid-track is the listener turning it off in Settings. (This used
+            // to re-check the *song's* URL, which for a stream is the remote
+            // address, not the downloaded file the engine is playing: any
+            // settings change kicked streams over to the system engine,
+            // logged as "unsupported_format".)
+            let exclusive = currentSong.map { EngineExclusiveService.shared.isExclusive($0) } ?? false
+            if !Self.rustEngineEnabled && !exclusive {
                 let at = position
                 let wasPlaying = isPlaying
                 tearDownRustEngine()
