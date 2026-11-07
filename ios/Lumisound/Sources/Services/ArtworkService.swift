@@ -148,6 +148,7 @@ final class ArtworkService {
         diskCacheURL = caches.appendingPathComponent("Artwork", isDirectory: true)
         try? FileManager.default.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
         purgeStaleArtworkCacheIfNeeded()
+        Self.configureBlobCache()
 
         // LRU eviction: cap at 200 images. NSCache evicts least-recently-used entries
         // automatically under memory pressure and when countLimit is exceeded.
@@ -204,6 +205,7 @@ final class ArtworkService {
         center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in
             self?.memoryCache.removeAllObjects()
             self?.mediaQueryCache.removeAllObjects()
+            Task.detached(priority: .utility) { blobCacheFlush() }
         }
     }
 
@@ -260,6 +262,7 @@ final class ArtworkService {
     func hasCachedArtwork(for song: Song) -> Bool {
         let key = cacheKey(for: song)
         if memoryCache.object(forKey: key as NSString) != nil { return true }
+        if blobCachePath(namespace: Self.artNS, key: key) != nil { return true }
         let path = diskPath(key: key)
         guard let size = try? FileManager.default.attributesOfItem(atPath: path.path)[.size] as? Int
         else { return false }
@@ -357,10 +360,16 @@ final class ArtworkService {
             // track that had gone through the exclusive-lock pipeline —
             // this was the "metadata and artwork data is bugged, nothing
             // is showing" report. A no-op for anything not `.lms`-marked.
+            // The Rust reader takes locked `.lms` files as they are (unmasked
+            // on the fly), so embedded art no longer waits on a full decrypt
+            // to a temp copy (which iOS also purges, so it kept recurring —
+            // the "thumbnail never shows up" report). The decrypted copy is
+            // only made for the AVFoundation fallbacks below, and only if
+            // they're reached.
             let readableURL = LumisoundExclusiveExtensionService.playableURL(for: url)
 
             // Try embedded asset artwork (works for m4a, mp3, flac with embedded tags).
-            if let image = await fetchAssetArtwork(url: readableURL) {
+            if let image = await fetchAssetArtwork(url: url, fallbackURL: readableURL) {
                 appLog("Artwork: embedded tag found for \"\(song.displayName)\"", category: "artwork")
                 return persistFullArtwork(image, forKey: key)
             }
@@ -371,7 +380,7 @@ final class ArtworkService {
             // --embed-thumbnail isn't available. If the disk cache entry seeded
             // at download time was ever cleared, recover the same thumbnail here
             // instead of falling through to a guess-based iTunes Search lookup.
-            if let thumbnailURL = await fetchEmbeddedThumbnailURL(url: readableURL),
+            if let thumbnailURL = await fetchEmbeddedThumbnailURL(url: readableURL, original: url),
                let image = await fetchRemoteImage(url: thumbnailURL) {
                 appLog("Artwork: recovered embedded LUMISOUND_THUMBNAIL for \"\(song.displayName)\"", category: "artwork")
                 return persistFullArtwork(image, forKey: key)
@@ -576,9 +585,20 @@ final class ArtworkService {
         // scheduled at.
         await thumbnailDecodeLimiter.acquire()
         defer { Task { await thumbnailDecodeLimiter.release() } }
-        let path = diskPath(key: key)
-        let thumb = await Task.detached(priority: .utility) {
-            ImageDownsampler.downsampled(at: path, maxPixelSize: bucket)
+        let thumbNS = Self.thumbNS(bucket)
+        let legacyPath = diskPath(key: key)
+        // 1. Ready-made bucket thumbnail from the persistent store (tiny file,
+        //    no full-size decode); 2. downsample the stored full artwork and
+        //    keep the result for next time.
+        let thumb = await Task.detached(priority: .utility) { () -> UIImage? in
+            if let p = blobCachePath(namespace: thumbNS, key: key),
+               let t = ImageDownsampler.downsampled(at: URL(fileURLWithPath: p), maxPixelSize: bucket) {
+                return t
+            }
+            let full = blobCachePath(namespace: Self.artNS, key: key).map(URL.init(fileURLWithPath:)) ?? legacyPath
+            guard let t = ImageDownsampler.downsampled(at: full, maxPixelSize: bucket) else { return nil }
+            Self.storeThumbnail(t, ns: thumbNS, key: key)
+            return t
         }.value
         if let thumb {
             setThumbnailCache(thumb, forKey: thumbnailCacheKey(key, bucket: bucket))
@@ -590,6 +610,7 @@ final class ArtworkService {
         guard let full = await loadArtwork(for: song) else { return nil }
         let thumb2 = ImageDownsampler.downscaled(full, maxPixelSize: bucket)
         setThumbnailCache(thumb2, forKey: thumbnailCacheKey(key, bucket: bucket))
+        Task.detached(priority: .utility) { Self.storeThumbnail(thumb2, ns: thumbNS, key: key) }
         return thumb2
     }
 
@@ -616,6 +637,7 @@ final class ArtworkService {
     private func invalidateThumbnails(forKey key: String) {
         for bucket in Self.thumbnailBuckets {
             thumbnailCache.removeObject(forKey: thumbnailCacheKey(key, bucket: bucket))
+            blobCacheRemove(namespace: Self.thumbNS(bucket), key: key)
         }
     }
 
@@ -634,12 +656,66 @@ final class ArtworkService {
         diskCacheURL.appendingPathComponent("\(sanitizedKey(key)).jpg")
     }
 
+    // MARK: - Persistent store (rust/core/src/blobcache.rs)
+
+    /// Full-size artwork and per-bucket thumbnails live in Lumisound's own
+    /// cache store under Application Support: iOS never purges it (Caches
+    /// is purged whenever storage runs low, which made artwork "reload"
+    /// after relaunches), and each namespace is size-capped with
+    /// least-recently-used eviction so it can't grow without bound.
+    static let artNS = "artwork"
+    static func thumbNS(_ bucket: CGFloat) -> String { "thumb\(Int(bucket))" }
+
+    private static func configureBlobCache() {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let root = support.appendingPathComponent("LumiCache", isDirectory: true)
+        var r = root
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try? r.setResourceValues(values)
+        blobCacheConfigure(rootDir: root.path)
+        blobCacheSetCap(namespace: artNS, maxBytes: 512 * 1024 * 1024)
+        for b in thumbnailBuckets { blobCacheSetCap(namespace: thumbNS(b), maxBytes: 96 * 1024 * 1024) }
+    }
+
+    /// Every namespace this service keeps in the store.
+    static var storeNamespaces: [String] { [artNS] + thumbnailBuckets.map(thumbNS) }
+
+    /// (files, bytes) held in the persistent store (Cache Manager).
+    static func storeStats() -> (files: Int, bytes: Int64) {
+        _ = shared // configures the store
+        return storeNamespaces.map { blobCacheStats(namespace: $0) }
+            .reduce((0, 0)) { ($0.0 + Int($1.entries), $0.1 + Int64($1.bytes)) }
+    }
+
+    /// Empties the persistent artwork + thumbnail store.
+    static func clearStore() {
+        _ = shared
+        for ns in storeNamespaces { blobCacheClear(namespace: ns) }
+    }
+
+    private static func storeThumbnail(_ image: UIImage, ns: String, key: String) {
+        guard let data = image.jpegData(compressionQuality: 0.85) else { return }
+        _ = blobCachePut(namespace: ns, key: key, data: data)
+    }
+
     private func loadFromDisk(key: String) -> UIImage? {
+        if let p = blobCachePath(namespace: Self.artNS, key: key),
+           let data = FileManager.default.contents(atPath: p),
+           let image = UIImage(data: data) {
+            return image
+        }
+        // Older builds kept artwork in Caches: move a hit into the store.
         let path = diskPath(key: key)
         guard FileManager.default.fileExists(atPath: path.path),
               let data = try? Data(contentsOf: path),
               let image = UIImage(data: data)
         else { return nil }
+        if blobCachePut(namespace: Self.artNS, key: key, data: data) {
+            try? FileManager.default.removeItem(at: path)
+        }
         return image
     }
 
@@ -647,6 +723,10 @@ final class ArtworkService {
         let path = diskPath(key: key)
         guard let data = image.jpegData(compressionQuality: 0.92) else {
             appWarn("Artwork: saveToDisk encode failed for key \(key)", category: "artwork")
+            return
+        }
+        if blobCachePut(namespace: Self.artNS, key: key, data: data) {
+            try? FileManager.default.removeItem(at: path)
             return
         }
         do {
@@ -838,15 +918,17 @@ final class ArtworkService {
 
     /// Reads embedded artwork from the file's metadata — checks both commonMetadata
     /// and all format-specific metadata items to maximise coverage across m4a, mp3, flac, etc.
-    private func fetchAssetArtwork(url: URL) async -> UIImage? {
-        // Embedded pictures via the Rust core (lofty, every container).
+    private func fetchAssetArtwork(url: URL, fallbackURL: URL? = nil) async -> UIImage? {
+        // Embedded pictures via the Rust core (lofty, every container; locked
+        // files read in place).
         if url.isFileURL,
            let data = await Task.detached(priority: .utility, operation: { artworkEmbedded(path: url.path, cacheDir: CoreAudio.unlockDir) }).value,
            let image = UIImage(data: data) {
             return image
         }
+        let avURL = fallbackURL ?? url
         return await Task.detached(priority: .utility) {
-            let asset = AVURLAsset(url: url)
+            let asset = AVURLAsset(url: avURL)
 
             // Pass 1: commonMetadata (works for most formats, fastest path)
             if let commonMetadata = try? await asset.load(.commonMetadata) {
@@ -881,7 +963,12 @@ final class ArtworkService {
 
     /// Reads the `LUMISOUND_THUMBNAIL` metadata tag (embedded by the bridge at
     /// download time — see `_do_download_job`'s `tag_cmd`) and returns it as a URL.
-    private func fetchEmbeddedThumbnailURL(url: URL) async -> URL? {
+    private func fetchEmbeddedThumbnailURL(url: URL, original: URL? = nil) async -> URL? {
+        if let original, original.isFileURL,
+           let s = await Task.detached(priority: .utility, operation: { tagsReadLumisound(path: original.path).thumbnailUrl }).value,
+           let u = URL(string: s) {
+            return u
+        }
         return await Task.detached(priority: .utility) {
             let asset = AVURLAsset(url: url)
             guard let allMeta = try? await asset.load(.metadata) else { return nil as URL? }

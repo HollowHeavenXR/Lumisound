@@ -268,6 +268,7 @@ struct LumisoundApp: App {
                     // Wire player to library so it can resolve track BPM for
                     // beat-aware crossfades.
                     player.libraryManager = libraryManager
+                    LyricsSyncLockService.shared.start(library: libraryManager, player: player)
 
                     // Wire SharePlay up to live app state, same reason App
                     // Intents use weak `.shared` singletons — this needs to

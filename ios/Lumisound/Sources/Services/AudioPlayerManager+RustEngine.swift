@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import UIKit
 
 /// Bridges Rust engine callbacks (any thread) onto the main actor.
 final class RustEngineRelay: EngineListener, @unchecked Sendable {
@@ -18,11 +19,13 @@ final class RustEngineRelay: EngineListener, @unchecked Sendable {
     }
 }
 
-/// Playback through the Rust audio engine (rust/core/src/engine): decoding,
-/// gapless hand-over, EQ, reverb, mono, night mode and volume run in Rust;
-/// this file only maps the player's state onto it. Tracks or settings the
-/// engine doesn't cover yet (streams still downloading, Opus/WebM, speed/
-/// pitch, crossfade, spatial/8D/special effects) keep the AVAudioEngine path.
+/// Playback through the Rust audio engine (rust/core/src/engine): decoding
+/// (locked `.lms` files in place), gapless hand-over, crossfades, speed/pitch,
+/// EQ, reverb, 8D/tremolo/vibrato, spatial, mono, night mode and volume all
+/// run in Rust; this file only maps the player's state onto it. The engine is
+/// on by default; the system engine is used only when the listener turns it
+/// off in Settings, or for a file the core genuinely can't open (reported as
+/// `engine_fallback`). Engine-exclusive tracks never use the system engine.
 extension AudioPlayerManager {
     static let rustRelay = RustEngineRelay()
     static let rust = AudioEngine(listener: rustRelay)
@@ -35,32 +38,65 @@ extension AudioPlayerManager {
     }
 
     func rustEligible(for url: URL) -> Bool {
-        guard Self.rustEngineEnabled, !rustBypassOnce else { return false }
+        // Engine-exclusive tracks always use the Lumisound engine, whatever
+        // the Settings toggle says.
+        let exclusive = currentSong.map { EngineExclusiveService.shared.isExclusive($0) } ?? false
+        guard (Self.rustEngineEnabled && !rustBypassOnce) || exclusive else { return false }
         // Effects map onto settings + a modulation (8D, tremolo, vibrato),
         // all of which the engine does.
-        let ok = CoreAudio.canDecode(path: LumisoundExclusiveExtensionService.playableURL(for: url).path)
+        // The core decodes locked `.lms` files in place — no unlocked copy.
+        let ok = CoreAudio.canDecode(path: url.path)
         if !ok { reportEngineFallback(reason: "unsupported_format", url: url) }
         return ok
     }
 
     private func ensureRustOutput() -> Bool {
         if rustOutputStarted { return true }
-        try? AVAudioSession.sharedInstance().setActive(true)
-        do {
-            try Self.rust.startOutput()
-            rustOutputStarted = true
-            startEngineTelemetry()
-            return true
-        } catch {
-            appWarn("Rust audio output failed to start: \(error.localizedDescription)", category: "audio")
-            reportEngineFallback(reason: "output_start_failed", url: currentSong?.url, error: error.localizedDescription)
-            return false
+        // Starting the output from the background (resume from the lock
+        // screen / headphones after the output was released while paused)
+        // fails with a CoreAudio error unless the session is (re)claimed
+        // first — every "output_start_failed" in telemetry was backgrounded.
+        // Re-assert the playback category, activate, and retry a few times
+        // with a short pause before giving up.
+        let session = AVAudioSession.sharedInstance()
+        var lastError: Error?
+        for attempt in 0..<4 {
+            if attempt > 0 {
+                configureAudioSession()
+                usleep(UInt32(40_000 * attempt))
+            }
+            do {
+                try session.setActive(true)
+            } catch {
+                lastError = error
+            }
+            do {
+                try Self.rust.startOutput()
+                rustOutputStarted = true
+                startEngineTelemetry()
+                startEngineGuard()
+                if attempt > 0 {
+                    appLog("Rust audio output started on attempt \(attempt + 1)", category: "audio")
+                    RemoteLogger.log(category: "audio_engine", event: "output_start_retried", level: "info",
+                                     message: "attempt \(attempt + 1)",
+                                     detail: ["background": UIApplication.shared.applicationState != .active])
+                }
+                return true
+            } catch {
+                lastError = error
+            }
         }
+        let message = lastError?.localizedDescription ?? "unknown"
+        appWarn("Rust audio output failed to start: \(message)", category: "audio")
+        reportEngineFallback(reason: "output_start_failed", url: currentSong?.url, error: message)
+        return false
     }
 
     /// Takes over the current track; false = caller uses the AVAudioEngine path.
     func scheduleWithRustEngine(url: URL, startTime: TimeInterval) -> Bool {
-        let playable = LumisoundExclusiveExtensionService.playableURL(for: url)
+        // Locked tracks play straight from the `.lms` file (unmasked on the
+        // fly by the core): no whole-file unlock before a cold start.
+        let playable = url
         // One backend at a time.
         primaryNode.stop()
         secondaryNode.stop()
@@ -91,8 +127,8 @@ extension AudioPlayerManager {
         applyRustSettings()
         prewarmBPM(for: currentSong)
         prewarmBPM(for: peekNextSong())
-        prewarmPlayableCache(for: peekNextSong())
         queueRustGaplessNext()
+        if let song = currentSong { EngineExclusiveService.shared.trackStartedOnEngine(song) }
         appLog("Rust engine: loaded \(currentSong?.displayName ?? "?") at \(String(format: "%.1f", startTime))s", category: "audio")
         return true
     }
@@ -100,15 +136,8 @@ extension AudioPlayerManager {
     func queueRustGaplessNext() {
         guard isUsingRustEngine, audioSettings.gaplessEnabled, !audioSettings.crossfadeActive, rustNextDeckID == nil,
               let next = peekNextSong(), let url = next.url, url.isFileURL else { return }
-        if LumisoundExclusiveExtensionService.isConverted(url),
-           !LumisoundExclusiveExtensionService.hasWarmPlayableCache(for: url) {
-            Task { [weak self] in
-                await LumisoundExclusiveExtensionService.prewarmPlayableURL(for: url)
-                self?.queueRustGaplessNext()
-            }
-            return
-        }
-        let path = LumisoundExclusiveExtensionService.playableURL(for: url).path
+        // Locked tracks are read in place by the core: nothing to prewarm.
+        let path = url.path
         guard CoreAudio.canDecode(path: path), let id = try? Self.rust.queueNext(path: path, gainDb: 0) else { return }
         rustNextDeckID = id
         rustNextPath = path
@@ -170,7 +199,11 @@ extension AudioPlayerManager {
     }
 
     func rustPlay() {
+        let wasStarted = rustOutputStarted
         guard ensureRustOutput() else { return }
+        // Play on a stream iOS has stopped does nothing audible: restart it.
+        // (A stream started just now hasn't called back yet — skip that one.)
+        if wasStarted, !Self.rust.outputAlive(maxAgeMs: 1500) { restartRustOutput(reason: "play", force: true) }
         Self.rust.play()
     }
 
@@ -222,7 +255,7 @@ extension AudioPlayerManager {
         guard let nextSong = peekNextSong(), let nextURL = nextSong.url, nextURL.isFileURL else {
             skipToNext(); return
         }
-        let path = LumisoundExclusiveExtensionService.playableURL(for: nextURL).path
+        let path = nextURL.path
         guard CoreAudio.canDecode(path: path) else { skipToNext(); return }
         let plan = audioSettings.smartCrossfadeEnabled ? transitionPlan(into: nextSong) : nil
         let fade = max(0.1, plan?.duration ?? audioSettings.crossfadeDuration)
@@ -253,7 +286,6 @@ extension AudioPlayerManager {
         updateNowPlaying()
         applyAutoEQIfNeeded(bpm: bpmCache[nextSong.id] ?? nextSong.bpm)
         prewarmBPM(for: peekNextSong())
-        prewarmPlayableCache(for: peekNextSong())
         let nextTrigger = duration - fade
         crossfadeTriggerPosition = nextTrigger > 0 ? nextTrigger : nil
         let gen = scheduleGeneration
@@ -281,7 +313,6 @@ extension AudioPlayerManager {
         position = 0
         updateNowPlaying()
         prewarmBPM(for: peekNextSong())
-        prewarmPlayableCache(for: peekNextSong())
         queueRustGaplessNext()
         appLog("Rust engine: gapless → \(currentSong?.displayName ?? "?")", category: "audio")
     }
@@ -293,6 +324,10 @@ extension AudioPlayerManager {
 
     func rustTrackFailed(id: UInt64) {
         guard id == rustDeckID else { return }
+        if let song = currentSong, EngineExclusiveService.shared.isExclusive(song) {
+            refuseSystemEngine(for: song, reason: "decode_failed")
+            return
+        }
         appWarn("Rust engine failed to decode \(currentSong?.displayName ?? "?") — using AVAudioEngine", category: "audio")
         reportEngineFallback(reason: "decode_failed", url: currentSong?.url,
                              error: Self.rust.incidents().last(where: { $0.kind == .deckFailed })?.message)
@@ -300,5 +335,20 @@ extension AudioPlayerManager {
         rustBypassOnce = true
         playCurrent(from: position)
         rustBypassOnce = false
+    }
+
+    /// An engine-exclusive track couldn't start on the Lumisound engine: it
+    /// is never handed to the system engine. Tell the listener, report it,
+    /// and move on.
+    func refuseSystemEngine(for song: Song, reason: String) {
+        appWarn("Engine-exclusive \(song.displayName): \(reason) — not falling back to the system engine", category: "audio")
+        reportEngineFallback(reason: "exclusive_refused_\(reason)", url: song.url)
+        ToastCenter.shared.show("\"\(song.displayName)\" plays only on the Lumisound engine and couldn't start", category: .warning)
+        tearDownRustEngine()
+        isPlaying = false
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            self?.skipToNext()
+        }
     }
 }

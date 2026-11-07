@@ -63,10 +63,10 @@ struct FocusSessionView: View {
                             .font(.caption)
                             .foregroundStyle(AppTheme.textSecondary)
                     } else {
-                        Picker("Playlist", selection: $selectedPlaylistID) {
-                            Text("Choose one").tag(UUID?.none)
+                        LumiPicker("Playlist", selection: $selectedPlaylistID) {
+                            Text("Choose one").lumiOptionLabel("Choose one").tag(UUID?.none)
                             ForEach(library.playlists) { playlist in
-                                Text(playlist.name).tag(Optional(playlist.id))
+                                Text(playlist.name).lumiOptionLabel(String(describing: playlist.name)).tag(Optional(playlist.id))
                             }
                         }
                     }

@@ -105,12 +105,11 @@ struct SmartPlaylistEditorView: View {
             Form {
                 Section("Name") {
                     TextField("Smart playlist name", text: $draft.name)
-                    Picker("Icon", selection: $draft.icon) {
+                    LumiPicker("Icon", selection: $draft.icon) {
                         ForEach(Self.icons, id: \.self) { icon in
                             Image(systemName: icon).tag(icon)
                         }
                     }
-                    .pickerStyle(.menu)
                 }
 
                 Section("Matching") {
@@ -134,8 +133,8 @@ struct SmartPlaylistEditorView: View {
                 }
 
                 Section("Order & Limit") {
-                    Picker("Sort by", selection: $draft.sort) {
-                        ForEach(SmartSort.allCases) { Text($0.label).tag($0) }
+                    LumiPicker("Sort by", selection: $draft.sort) {
+                        ForEach(SmartSort.allCases) { Text($0.label).lumiOptionLabel(String(describing: $0.label)).tag($0) }
                     }
                     Stepper(draft.limit == 0 ? "Limit: Unlimited" : "Limit: \(draft.limit)",
                             value: $draft.limit, in: 0...1000, step: 10)
@@ -190,8 +189,8 @@ struct SmartPlaylistEditorView: View {
     @ViewBuilder
     private func ruleEditor(_ i: Int) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Picker("Field", selection: $draft.rules[i].field) {
-                ForEach(SmartField.allCases) { Text($0.label).tag($0) }
+            LumiPicker("Field", selection: $draft.rules[i].field) {
+                ForEach(SmartField.allCases) { Text($0.label).lumiOptionLabel(String(describing: $0.label)).tag($0) }
             }
             .onChange(of: draft.rules[i].field) { newField in
                 // Reset the operator to one valid for the new field kind.
@@ -201,8 +200,8 @@ struct SmartPlaylistEditorView: View {
                 }
             }
 
-            Picker("Condition", selection: $draft.rules[i].op) {
-                ForEach(SmartOp.available(for: draft.rules[i].field.kind)) { Text($0.label).tag($0) }
+            LumiPicker("Condition", selection: $draft.rules[i].op) {
+                ForEach(SmartOp.available(for: draft.rules[i].field.kind)) { Text($0.label).lumiOptionLabel(String(describing: $0.label)).tag($0) }
             }
 
             valueEditor(i)
@@ -230,8 +229,8 @@ struct SmartPlaylistEditorView: View {
         case .boolean:
             EmptyView()
         case .source:
-            Picker("Source", selection: $draft.rules[i].source) {
-                ForEach(SmartSource.allCases) { Text($0.label).tag($0) }
+            LumiPicker("Source", selection: $draft.rules[i].source) {
+                ForEach(SmartSource.allCases) { Text($0.label).lumiOptionLabel(String(describing: $0.label)).tag($0) }
             }
         }
     }

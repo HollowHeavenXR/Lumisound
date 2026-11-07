@@ -89,7 +89,7 @@ struct SongContextMenuContent: View {
 
         // MARK: Add to Playlist submenu
         if !library.playlists.isEmpty {
-            Menu {
+            LumiMenu {
                 ForEach(library.playlists) { playlist in
                     Button {
                         library.addSong(id: song.id, toPlaylistID: playlist.id)

@@ -78,8 +78,9 @@ final class CacheManagerService: ObservableObject {
              artist.map { cacheDirStats(dir: $0) } ?? DirStats(files: 0, bytes: 0),
              cacheDirStats(dir: transcode))
         }.value
-        artworkCacheCount     = Int(stats.0.files)
-        artworkCacheSize      = Int64(stats.0.bytes)
+        let store = await Task.detached(priority: .background) { ArtworkService.storeStats() }.value
+        artworkCacheCount     = Int(stats.0.files) + store.files
+        artworkCacheSize      = Int64(stats.0.bytes) + store.bytes
         tempFilesSize         = Int64(stats.1.bytes)
         downloadedMusicSize   = Int64(stats.2.bytes)
         artistImageCacheCount = Int(stats.3.files)
@@ -93,6 +94,7 @@ final class CacheManagerService: ObservableObject {
     /// Clears the artwork memory cache and removes all files from the disk cache directory.
     func clearArtworkCache() {
         ArtworkService.shared.clearCache()
+        ArtworkService.clearStore()
         if let url = artworkCacheURL {
             removeContents(of: url)
         }

@@ -30,8 +30,7 @@ fn any(text: &str, words: &[&str]) -> bool {
 pub fn mood_classify(song: MoodSong, cache_dir: String) -> Mood {
     let bpm = song.bpm.or_else(|| {
         let p = song.path.as_ref()?;
-        let readable = crate::lock::lms_playable_path(p.clone(), cache_dir.clone());
-        lumisound_media::tags::read_bpm(std::path::Path::new(&readable)).or_else(|| crate::analysis::bpm_cached(p.clone()))
+        crate::lock::read_tags_with(p, &cache_dir, lumisound_media::tags::read_bpm).or_else(|| crate::analysis::bpm_cached(p.clone()))
     });
     if let Some(b) = bpm {
         return if b < 60.0 { Mood::Sleep } else if b < 90.0 { Mood::Chill } else if b < 120.0 { Mood::Focus } else { Mood::Energetic };
@@ -80,6 +79,5 @@ pub fn mood_classify(song: MoodSong, cache_dir: String) -> Mood {
 /// BPM from the file's tags or an earlier on-device analysis.
 #[uniffi::export]
 pub fn known_bpm(path: String, cache_dir: String) -> Option<f64> {
-    let readable = crate::lock::lms_playable_path(path.clone(), cache_dir);
-    lumisound_media::tags::read_bpm(std::path::Path::new(&readable)).or_else(|| crate::analysis::bpm_cached(path))
+    crate::lock::read_tags_with(&path, &cache_dir, lumisound_media::tags::read_bpm).or_else(|| crate::analysis::bpm_cached(path))
 }

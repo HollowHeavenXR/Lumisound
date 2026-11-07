@@ -47,9 +47,9 @@ struct BugReportView: View {
     var body: some View {
         List {
             Section {
-                Picker("Category", selection: $category) {
+                LumiPicker("Category", selection: $category) {
                     ForEach(BugReportCategory.allCases) { cat in
-                        Text(cat.displayName).tag(cat)
+                        Text(cat.displayName).lumiOptionLabel(String(describing: cat.displayName)).tag(cat)
                     }
                 }
                 .tint(AppTheme.dynamicAccent)

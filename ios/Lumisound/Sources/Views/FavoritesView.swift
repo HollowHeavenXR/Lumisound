@@ -400,13 +400,11 @@ struct FavoritesView: View {
 
     private var controlsRow: some View {
         HStack(spacing: 8) {
-            Menu {
-                Picker("Sort", selection: $sortRaw) {
-                    ForEach(FavoritesSortOrder.allCases) { order in
-                        Label(order.label, systemImage: order.icon).tag(order.rawValue)
-                    }
+            LumiPicker(selection: $sortRaw) {
+                ForEach(FavoritesSortOrder.allCases) { order in
+                    Label(order.label, systemImage: order.icon).lumiOptionLabel(order.label).tag(order.rawValue)
                 }
-            } label: {
+            } trigger: {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.up.arrow.down")
                     Text(sortOrder.label)

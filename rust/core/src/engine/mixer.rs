@@ -4,7 +4,7 @@
 
 use super::deck::Deck;
 use super::binaural::Binaural;
-use super::dsp::{Compressor, Eq10, Ramp, Reverb};
+use super::dsp::{Compressor, Eq10, Limiter, Ramp, Reverb};
 use super::health::{EngineIncident, Health, IncidentKind, PlaybackPhase, SLOW_START_MS, atomic_max};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -104,7 +104,11 @@ pub struct Mixer {
     pausing: bool,
     eq: Eq10,
     reverb: Reverb,
+    /// Last settings, to rebuild the rate-dependent processors (`set_rate`).
+    reverb_preset: String,
+    spatial_yaw: f32,
     comp: Compressor,
+    limiter: Limiter,
     mono: bool,
     spatial: Binaural,
     pan_hz: f32,
@@ -113,7 +117,12 @@ pub struct Mixer {
     trem_depth: f32,
     trem_phase: f32,
     vib_hz: f32,
+    /// Delay swing (s): `vib_amp` glides to `vib_target` (~30 ms) so depth
+    /// changes never jump; `vib_wet` crossfades the effect in/out (10 ms).
     vib_amp: f32,
+    vib_coef: f32,
+    vib_target: f32,
+    vib_wet: f32,
     vib_phase: f32,
     vib_buf: Vec<[f32; 2]>,
     vib_w: usize,
@@ -140,7 +149,7 @@ struct Monitor {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
+        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), reverb_preset: String::new(), spatial_yaw: 0.0, comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_coef: 1.0 - (-1.0 / (0.03 * rate as f32)).exp(), vib_target: 0.0, vib_wet: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -200,20 +209,22 @@ impl Mixer {
                 self.eq.set_gains(&gains);
             }
             Cmd::Effects { reverb_wet, reverb_preset, mono, night } => {
-                self.reverb.wet = reverb_wet.clamp(0.0, 1.0);
+                self.reverb.set_wet(reverb_wet);
                 self.reverb.set_preset(&reverb_preset);
+                self.reverb_preset = reverb_preset;
                 self.mono = mono;
                 self.comp.enabled = night;
             }
             Cmd::Spatial { enabled, yaw_deg } => {
                 self.spatial.enabled = enabled;
                 self.spatial.set_yaw(yaw_deg);
+                self.spatial_yaw = yaw_deg;
             }
             Cmd::Modulation { pan_hz, tremolo_hz, tremolo_depth, vibrato_hz, vibrato_semitones } => {
                 // Delay-line vibrato: peak pitch ratio 2^(st/12) ≈ 1 + A·2πf,
                 // so the delay swing A (seconds) = (2^(st/12) - 1) / (2πf).
                 self.vib_hz = vibrato_hz.clamp(0.0, 20.0);
-                self.vib_amp = if self.vib_hz > 0.0 {
+                self.vib_target = if self.vib_hz > 0.0 {
                     ((2f32.powf(vibrato_semitones.abs().min(3.0) / 12.0) - 1.0) / (std::f32::consts::TAU * self.vib_hz)).min(0.02)
                 } else {
                     0.0
@@ -227,13 +238,28 @@ impl Mixer {
                     self.end_cur_starve(o.0, o.1);
                 }
                 self.mon.fade_starve = 0;
-                if let Some(old) = self.cur.replace(d) {
-                    self.retire(old);
-                }
                 if let Some((f, _)) = self.fading.take() {
                     self.retire(f);
                 }
-                self.fade_in = Ramp::new(1.0);
+                // Seek / load: a 10 ms micro-crossfade from the old position to
+                // the new one instead of a hard cut (which clicks on any
+                // waveform that isn't at a zero crossing).
+                let xf = self.short_fade();
+                match self.cur.replace(d) {
+                    Some(old) if self.playing && old.frames_played > 0 => {
+                        let mut down = Ramp::new(1.0);
+                        down.to(0.0, xf);
+                        self.fading = Some((old, down));
+                        self.equal_power = true;
+                        self.fade_in = Ramp::new(0.0);
+                        self.fade_in.to(1.0, xf);
+                    }
+                    Some(old) => {
+                        self.retire(old);
+                        self.fade_in = Ramp::new(1.0);
+                    }
+                    None => self.fade_in = Ramp::new(1.0),
+                }
                 let id = self.cur.as_ref().unwrap().id;
                 self.tele.deck_id.store(id, Ordering::Relaxed);
             }
@@ -286,8 +312,57 @@ impl Mixer {
     }
 
     /// Fill `out` (interleaved stereo f32).
+    /// Apply queued commands without rendering: used by the control side
+    /// when the output callback isn't running (interrupted session, dead
+    /// route), so play/pause/seek still take effect instead of piling up.
+    /// Follow the output device to a new sample rate: rebuild every
+    /// rate-dependent processor with its current settings. The decks are
+    /// reopened at the new rate by the engine (see `AudioEngine::adopt_device_rate`).
+    pub fn set_rate(&mut self, rate: u32) {
+        if rate == self.rate || rate == 0 {
+            return;
+        }
+        self.rate = rate;
+        let r = rate as f32;
+        let (eq_on, gains) = (self.eq.enabled, self.eq.gains());
+        self.eq = Eq10::new(r);
+        self.eq.enabled = eq_on;
+        self.eq.set_gains(&gains);
+        let wet = self.reverb.wet_target();
+        self.reverb = Reverb::new(r);
+        if !self.reverb_preset.is_empty() {
+            self.reverb.set_preset(&self.reverb_preset);
+        }
+        self.reverb.set_wet(wet);
+        let night = self.comp.enabled;
+        self.comp = Compressor::new(r);
+        self.comp.enabled = night;
+        self.limiter = Limiter::new(r);
+        let spatial_on = self.spatial.enabled;
+        self.spatial = Binaural::new(r);
+        self.spatial.enabled = spatial_on;
+        self.spatial.set_yaw(self.spatial_yaw);
+        self.vib_coef = 1.0 - (-1.0 / (0.03 * r)).exp();
+    }
+
+    /// (id, path, gain, position) of the playing deck and (id, path, gain)
+    /// of the queued one, for reopening at a new rate.
+    pub fn reopen_targets(&self) -> (Option<(u64, String, f32, f64)>, Option<(u64, String, f32)>) {
+        (
+            self.cur.as_ref().map(|d| (d.id, d.path.clone(), d.gain, d.position())),
+            self.next.as_ref().map(|d| (d.id, d.path.clone(), d.gain)),
+        )
+    }
+
+    pub fn drain_commands(&mut self) {
+        while let Ok(c) = self.cmds.pop() {
+            self.apply(c);
+        }
+    }
+
     pub fn render(&mut self, out: &mut [f32]) {
         let t_start = std::time::Instant::now();
+        self.tele.health.last_callback_ns.store(super::health::mono_ns(), Ordering::Relaxed);
         while let Ok(c) = self.cmds.pop() {
             self.apply(c);
         }
@@ -300,8 +375,11 @@ impl Mixer {
                 self.pausing = false;
             }
             if !self.playing {
-                frame[0] = 0.0;
-                frame[1] = 0.0;
+                // Keep the limiter's look-ahead line draining (silence in),
+                // or its last 1.5 ms would be cut off: a click on pause.
+                let (l, r) = self.limiter.process(0.0, 0.0);
+                frame[0] = l;
+                frame[1] = r;
                 continue;
             }
             playing_frames += 1;
@@ -406,26 +484,49 @@ impl Mixer {
             (l, r) = self.spatial.process(l, r);
             let tau = std::f32::consts::TAU;
             if self.pan_hz > 0.0 {
-                // Balance swing like AVAudioMixerNode.pan = sin(phase) * 0.5.
+                // Constant-power balance swing: gains sqrt(1±x) keep L²+R²
+                // steady as the sound circles (the old linear attenuation
+                // dipped ~2 dB at each side). x = 0.6 gives the same 2:1
+                // (6 dB) side-to-side ratio as before.
                 self.pan_phase = (self.pan_phase + tau * self.pan_hz / self.rate as f32) % tau;
-                let p = self.pan_phase.sin() * 0.5;
-                if p > 0.0 { l *= 1.0 - p } else { r *= 1.0 + p }
+                let x = self.pan_phase.sin() * 0.6;
+                l *= (1.0 - x).sqrt();
+                r *= (1.0 + x).sqrt();
             }
-            if self.vib_amp > 0.0 {
-                let n = self.vib_buf.len();
-                self.vib_buf[self.vib_w] = [l, r];
-                self.vib_phase = (self.vib_phase + tau * self.vib_hz / self.rate as f32) % tau;
+            // The delay line always records (one store per frame), so turning
+            // vibrato on never reads stale audio from the last time it ran.
+            let n = self.vib_buf.len();
+            self.vib_buf[self.vib_w] = [l, r];
+            if self.vib_target > 0.0 || self.vib_wet > 0.0 {
+                let rate = self.rate as f32;
+                self.vib_amp += (self.vib_target - self.vib_amp) * self.vib_coef;
+                let wet_to = if self.vib_target > 0.0 || self.vib_amp > 1e-6 { 1.0 } else { 0.0 };
+                let step = 1.0 / (0.01 * rate);
+                // Ramp toward the target and stay there (no flip-flopping around it).
+                self.vib_wet = if wet_to > self.vib_wet { (self.vib_wet + step).min(wet_to) } else { (self.vib_wet - step).max(wet_to) };
+                self.vib_phase = (self.vib_phase + tau * self.vib_hz / rate) % tau;
                 // Centre delay = swing + 1 ms so the read point never passes the write point.
-                let delay = (self.vib_amp * (1.0 + self.vib_phase.sin()) + 0.001) * self.rate as f32;
+                let delay = (self.vib_amp * (1.0 + self.vib_phase.sin()) + 0.001) * rate;
                 let rp = self.vib_w as f32 - delay;
                 let rp = if rp < 0.0 { rp + n as f32 } else { rp };
                 let i0 = rp as usize % n;
-                let i1 = (i0 + 1) % n;
                 let f = rp.fract();
-                l = self.vib_buf[i0][0] * (1.0 - f) + self.vib_buf[i1][0] * f;
-                r = self.vib_buf[i0][1] * (1.0 - f) + self.vib_buf[i1][1] * f;
-                self.vib_w = (self.vib_w + 1) % n;
+                // 4-point cubic Hermite: linear interpolation dulls the highs
+                // by a varying amount as the delay moves (a faint flutter).
+                let at = |k: usize| self.vib_buf[(i0 + n + k - 1) % n];
+                let (xm1, x0, x1, x2) = (at(0), at(1), at(2), at(3));
+                let mut y = [0.0f32; 2];
+                for c in 0..2 {
+                    let c1 = 0.5 * (x1[c] - xm1[c]);
+                    let c2 = xm1[c] - 2.5 * x0[c] + 2.0 * x1[c] - 0.5 * x2[c];
+                    let c3 = 0.5 * (x2[c] - xm1[c]) + 1.5 * (x0[c] - x1[c]);
+                    y[c] = ((c3 * f + c2) * f + c1) * f + x0[c];
+                }
+                let w = self.vib_wet;
+                l = y[0] * w + l * (1.0 - w);
+                r = y[1] * w + r * (1.0 - w);
             }
+            self.vib_w = (self.vib_w + 1) % n;
             if self.trem_hz > 0.0 && self.trem_depth > 0.0 {
                 self.trem_phase = (self.trem_phase + tau * self.trem_hz / self.rate as f32) % tau;
                 let lfo = 1.0 - self.trem_depth / 2.0 + self.trem_depth / 2.0 * self.trem_phase.sin();
@@ -443,7 +544,10 @@ impl Mixer {
             if l.abs() > 1.0 || r.abs() > 1.0 {
                 clipped += 1;
             }
-            // Soft safety clip (EQ boosts + crossfade overlap can exceed 0 dBFS).
+            // Look-ahead limiter instead of a hard clip: EQ boosts, crossfade
+            // overlap or reverb pushing past full scale are turned down
+            // smoothly rather than squared off (harsh distortion).
+            (l, r) = self.limiter.process(l, r);
             frame[0] = l.clamp(-1.0, 1.0);
             frame[1] = r.clamp(-1.0, 1.0);
             self.tele.tap.push((frame[0] + frame[1]) * 0.5);

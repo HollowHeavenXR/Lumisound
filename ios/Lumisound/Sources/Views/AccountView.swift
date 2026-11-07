@@ -707,10 +707,10 @@ struct AccountView: View {
                     .tint(AppTheme.dynamicAccent)
 
                     if aiDJ.isEnabled {
-                        Picker(selection: $aiDJ.voiceIdentifier) {
-                            Text("System Default").tag(nil as String?)
+                        LumiPicker(selection: $aiDJ.voiceIdentifier) {
+                            Text("System Default").lumiOptionLabel("System Default").tag(nil as String?)
                             ForEach(AIDJVoiceOption.available) { option in
-                                Text(option.displayName).tag(option.identifier as String?)
+                                Text(option.displayName).lumiOptionLabel(String(describing: option.displayName)).tag(option.identifier as String?)
                             }
                         } label: {
                             Label("Voice", systemImage: "waveform")

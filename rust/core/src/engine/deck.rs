@@ -2,7 +2,7 @@
 //! buffer of interleaved stereo f32 at the output rate. The mixer (audio
 //! callback) only ever pops from the ring.
 
-use rubato::{FftFixedIn, Resampler};
+use rubato::{FftFixedIn, Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -10,9 +10,7 @@ use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::errors::Error;
 use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
-use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 
 /// ~1.5 s of stereo audio at 48 kHz.
@@ -117,20 +115,15 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f6
     let speed = speed.clamp(0.25, 4.0);
     let pitch = 2f64.powf(pitch_semitones.clamp(-24.0, 24.0) / 12.0);
     // Pitch: resample to out_rate/p and play at out_rate (p times faster and
-    // higher), then WSOLA by s/p so the tempo comes out at s. The resample
-    // target is rounded to 50 Hz: the FFT resampler garbles rates that share
-    // only a tiny common factor with the source (48000 -> 38097 for +4 st),
-    // and 50 Hz steps are at most ~1 cent off. The tempo uses the rounded
-    // ratio so speed stays exact.
-    let target_rate = if (pitch - 1.0).abs() < 1e-9 { out_rate } else { ((out_rate as f64 / pitch / 50.0).round() * 50.0).max(4000.0) as u32 };
-    let pitch = out_rate as f64 / target_rate as f64;
+    // higher), then time-stretch by s/p so the tempo comes out at s. Exact
+    // ratio (no rounding): pitch shifts use a band-limited sinc resampler,
+    // which handles any ratio cleanly (the FFT resampler only suits ratios
+    // of "nice" rates and measured -37 dB THD+N on pitch shifts).
+    let target = out_rate as f64 / pitch;
     let stretch_ratio = speed / pitch;
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut hint = Hint::new();
-    if let Some(e) = Path::new(path).extension().and_then(|e| e.to_str()) {
-        hint.with_extension(e);
-    }
+    // Locked `.lms` tracks decode in place (unmasked on the fly): no unlocked
+    // copy, so a cold start never waits on decrypting the whole file.
+    let (mss, hint) = lumisound_media::decode::media_source(Path::new(path)).map_err(|e| e.to_string())?;
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
         .map_err(|e| format!("unsupported file: {e}"))?;
@@ -167,7 +160,7 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f6
         .name("lumisound-deck".into())
         .spawn(move || {
             let mut stats = DecodeStats::default();
-            let r = decode_loop(&mut *fmt, &mut *dec, tid, src_rate, target_rate, tempo, prod, seg_prod, &sh, &mut stats);
+            let r = decode_loop(&mut *fmt, &mut *dec, tid, src_rate, target, out_rate, tempo, prod, seg_prod, &sh, &mut stats);
             report_decode(&tele, id, actual_start, duration, src_rate, &stats, r.as_ref().err());
             if r.is_err() {
                 sh.failed.store(true, Ordering::Release);
@@ -274,11 +267,42 @@ fn push_seg(segs: &mut rtrb::Producer<(u64, f64)>, frames: usize, step: f64, sh:
     }
 }
 
+/// The deck's resampler (rubato's trait isn't object-safe).
+enum Rs {
+    Fft(FftFixedIn<f32>),
+    Sinc(SincFixedIn<f32>),
+}
+
+impl Rs {
+    fn process(&mut self, input: &[&[f32]; 2], active: Option<&[bool]>) -> rubato::ResampleResult<Vec<Vec<f32>>> {
+        match self {
+            Rs::Fft(r) => r.process(input, active),
+            Rs::Sinc(r) => r.process(input, active),
+        }
+    }
+}
+
+/// No resampling when the source already matches; the FFT resampler for a
+/// plain rate change (e.g. 44.1 -> 48 kHz: exact, efficient); a 256-tap
+/// windowed-sinc resampler for pitch shifts (arbitrary ratio, no rounding).
+fn make_resampler(src_rate: u32, target: f64, out_rate: u32) -> Result<Option<Rs>, String> {
+    let pitched = (target - out_rate as f64).abs() > 1e-6;
+    if !pitched {
+        if src_rate == out_rate {
+            return Ok(None);
+        }
+        return FftFixedIn::<f32>::new(src_rate as usize, out_rate as usize, CHUNK, 2, 2).map(|r| Some(Rs::Fft(r))).map_err(|e| e.to_string());
+    }
+    let params = SincInterpolationParameters { sinc_len: 256, f_cutoff: 0.95, interpolation: SincInterpolationType::Cubic, oversampling_factor: 256, window: WindowFunction::BlackmanHarris2 };
+    SincFixedIn::<f32>::new(target / src_rate as f64, 1.0, params, CHUNK, 2).map(|r| Some(Rs::Sinc(r))).map_err(|e| e.to_string())
+}
+
 fn decode_loop(
     fmt: &mut dyn symphonia::core::formats::FormatReader,
     dec: &mut dyn symphonia::core::codecs::Decoder,
     track_id: u32,
     src_rate: u32,
+    target: f64,
     out_rate: u32,
     tempo: Tempo,
     mut prod: rtrb::Producer<f32>,
@@ -289,7 +313,7 @@ fn decode_loop(
     let mut wsola = super::stretch::Wsola::new(tempo.stretch_ratio * tempo.nudge.map_or(1.0, |n| n.start));
     let mut out_frames: u64 = 0;
     let mut stretched: Vec<f32> = Vec::with_capacity(CHUNK * 8);
-    let mut resampler = if src_rate != out_rate { Some(FftFixedIn::<f32>::new(src_rate as usize, out_rate as usize, CHUNK, 2, 2).map_err(|e| e.to_string())?) } else { None };
+    let mut resampler = make_resampler(src_rate, target, out_rate)?;
     let mut pending: [Vec<f32>; 2] = [Vec::with_capacity(CHUNK * 2), Vec::with_capacity(CHUNK * 2)];
     let mut sbuf: Option<SampleBuffer<f32>> = None;
     let mut inter = Vec::with_capacity(CHUNK * 4);
@@ -310,7 +334,7 @@ fn decode_loop(
         out_frames += (out.len() / 2) as u64;
         push_seg(&mut segs, out.len() / 2, step, sh) && push_all(prod, out, sh)
     };
-    let mut flush = |pending: &mut [Vec<f32>; 2], rs: &mut Option<FftFixedIn<f32>>, prod: &mut rtrb::Producer<f32>, inter: &mut Vec<f32>, last: bool| -> bool {
+    let mut flush = |pending: &mut [Vec<f32>; 2], rs: &mut Option<Rs>, prod: &mut rtrb::Producer<f32>, inter: &mut Vec<f32>, last: bool| -> bool {
         match rs {
             None => {
                 let n = pending[0].len();
@@ -325,6 +349,10 @@ fn decode_loop(
             }
             Some(r) => {
                 while pending[0].len() >= CHUNK || (last && !pending[0].is_empty()) {
+                    // The final partial chunk is zero-padded to CHUNK; keep
+                    // only the output its real frames account for (the
+                    // padding was a short silence at the end of the track).
+                    let real = pending[0].len().min(CHUNK);
                     if pending[0].len() < CHUNK {
                         pending[0].resize(CHUNK, 0.0);
                         pending[1].resize(CHUNK, 0.0);
@@ -332,7 +360,8 @@ fn decode_loop(
                     let input = [&pending[0][..CHUNK], &pending[1][..CHUNK]];
                     let Ok(out) = r.process(&input, None) else { return false };
                     inter.clear();
-                    for i in 0..out[0].len() {
+                    let keep = if real < CHUNK { ((real as f64 * out[0].len() as f64 / CHUNK as f64).round() as usize).min(out[0].len()) } else { out[0].len() };
+                    for i in 0..keep {
                         inter.push(out[0][i]);
                         inter.push(out[1][i]);
                     }
@@ -394,5 +423,14 @@ fn decode_loop(
         }
     }
     flush(&mut pending, &mut resampler, &mut prod, &mut inter, true);
+    // The stretcher still holds the last analysis window: without this the
+    // final ~85 ms of every track went missing at any speed/pitch but 1.
+    if !wsola.can_bypass() {
+        stretched.clear();
+        wsola.finish(&mut stretched);
+        let n = tempo.nudge.map_or(1.0, |n| n.at(out_frames));
+        let step = tempo.speed * n / tempo.out_rate as f64;
+        let _ = push_seg(&mut segs, stretched.len() / 2, step, sh) && push_all(&mut prod, &stretched, sh);
+    }
     Ok(())
 }

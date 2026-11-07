@@ -91,12 +91,11 @@ struct CustomStyleEditorView: View {
     private var nameSection: some View {
         Section("Name") {
             TextField("Style name", text: $draft.name)
-            Picker("Icon", selection: $draft.iconName) {
+            LumiPicker("Icon", selection: $draft.iconName) {
                 ForEach(Self.icons, id: \.self) { icon in
                     Image(systemName: icon).tag(icon)
                 }
             }
-            .pickerStyle(.menu)
         }
     }
 
@@ -105,9 +104,9 @@ struct CustomStyleEditorView: View {
     @ViewBuilder
     private var backgroundSection: some View {
         Section("Background") {
-            Picker("Type", selection: $draft.backgroundKind) {
+            LumiPicker("Type", selection: $draft.backgroundKind) {
                 ForEach(CustomNowPlayingStyle.BackgroundKind.allCases) { kind in
-                    Text(kind.label).tag(kind)
+                    Text(kind.label).lumiOptionLabel(String(describing: kind.label)).tag(kind)
                 }
             }
             if draft.backgroundKind == .solid {
@@ -133,9 +132,9 @@ struct CustomStyleEditorView: View {
     @ViewBuilder
     private var coverSection: some View {
         Section("Cover") {
-            Picker("Shape", selection: $draft.coverShape) {
+            LumiPicker("Shape", selection: $draft.coverShape) {
                 ForEach(CustomNowPlayingStyle.CoverShape.allCases) { shape in
-                    Text(shape.label).tag(shape)
+                    Text(shape.label).lumiOptionLabel(String(describing: shape.label)).tag(shape)
                 }
             }
             if draft.coverShape == .rounded {
@@ -158,9 +157,9 @@ struct CustomStyleEditorView: View {
     @ViewBuilder
     private var borderSection: some View {
         Section("Border") {
-            Picker("Style", selection: $draft.borderStyle) {
+            LumiPicker("Style", selection: $draft.borderStyle) {
                 ForEach(CustomNowPlayingStyle.BorderStyle.allCases) { style in
-                    Text(style.label).tag(style)
+                    Text(style.label).lumiOptionLabel(String(describing: style.label)).tag(style)
                 }
             }
             if draft.borderStyle != .none {
@@ -180,9 +179,9 @@ struct CustomStyleEditorView: View {
     @ViewBuilder
     private var shadowSection: some View {
         Section("Shadow") {
-            Picker("Style", selection: $draft.shadowStyle) {
+            LumiPicker("Style", selection: $draft.shadowStyle) {
                 ForEach(CustomNowPlayingStyle.ShadowStyle.allCases) { style in
-                    Text(style.label).tag(style)
+                    Text(style.label).lumiOptionLabel(String(describing: style.label)).tag(style)
                 }
             }
         }
@@ -193,7 +192,7 @@ struct CustomStyleEditorView: View {
     @ViewBuilder
     private var decorationSection: some View {
         Section {
-            Picker("Effect", selection: $draft.decoration) {
+            LumiPicker("Effect", selection: $draft.decoration) {
                 ForEach(CustomNowPlayingStyle.Decoration.allCases) { deco in
                     Label(deco.label, systemImage: deco.iconName).tag(deco)
                 }
@@ -214,9 +213,9 @@ struct CustomStyleEditorView: View {
     @ViewBuilder
     private var animationSection: some View {
         Section("Cover Animation") {
-            Picker("Animation", selection: $draft.coverAnimation) {
+            LumiPicker("Animation", selection: $draft.coverAnimation) {
                 ForEach(CustomNowPlayingStyle.CoverAnimation.allCases) { anim in
-                    Text(anim.label).tag(anim)
+                    Text(anim.label).lumiOptionLabel(String(describing: anim.label)).tag(anim)
                 }
             }
             if draft.coverAnimation != .none {
@@ -234,9 +233,9 @@ struct CustomStyleEditorView: View {
     @ViewBuilder
     private var accentSection: some View {
         Section("Accent Color") {
-            Picker("Source", selection: $draft.accentSource) {
+            LumiPicker("Source", selection: $draft.accentSource) {
                 ForEach(CustomNowPlayingStyle.AccentSource.allCases) { source in
-                    Text(source.label).tag(source)
+                    Text(source.label).lumiOptionLabel(String(describing: source.label)).tag(source)
                 }
             }
             if draft.accentSource == .custom {
@@ -266,9 +265,9 @@ struct CustomStyleEditorView: View {
             Toggle("Animated Mesh Gradient", isOn: $draft.useMeshGradient)
             Toggle("Use Colors From Artwork", isOn: $draft.dynamicColorExtraction)
 
-            Picker("Custom Media", selection: $draft.customBackgroundMedia) {
+            LumiPicker("Custom Media", selection: $draft.customBackgroundMedia) {
                 ForEach(CustomNowPlayingStyle.CustomBackgroundMedia.allCases) { media in
-                    Text(media.label).tag(media)
+                    Text(media.label).lumiOptionLabel(String(describing: media.label)).tag(media)
                 }
             }
 
@@ -340,14 +339,14 @@ struct CustomStyleEditorView: View {
     @ViewBuilder
     private var typographySection: some View {
         Section("Typography") {
-            Picker("Title Font", selection: $draft.titleFontChoice) {
+            LumiPicker("Title Font", selection: $draft.titleFontChoice) {
                 ForEach(CustomNowPlayingStyle.FontChoice.allCases) { choice in
-                    Text(choice.label).tag(choice)
+                    Text(choice.label).lumiOptionLabel(String(describing: choice.label)).tag(choice)
                 }
             }
-            Picker("Title Weight", selection: $draft.titleFontWeight) {
+            LumiPicker("Title Weight", selection: $draft.titleFontWeight) {
                 ForEach(CustomNowPlayingStyle.FontWeightOption.allCases) { weight in
-                    Text(weight.label).tag(weight)
+                    Text(weight.label).lumiOptionLabel(String(describing: weight.label)).tag(weight)
                 }
             }
             VStack(alignment: .leading) {
@@ -363,14 +362,14 @@ struct CustomStyleEditorView: View {
                 ))
             }
 
-            Picker("Artist Font", selection: $draft.artistFontChoice) {
+            LumiPicker("Artist Font", selection: $draft.artistFontChoice) {
                 ForEach(CustomNowPlayingStyle.FontChoice.allCases) { choice in
-                    Text(choice.label).tag(choice)
+                    Text(choice.label).lumiOptionLabel(String(describing: choice.label)).tag(choice)
                 }
             }
-            Picker("Artist Weight", selection: $draft.artistFontWeight) {
+            LumiPicker("Artist Weight", selection: $draft.artistFontWeight) {
                 ForEach(CustomNowPlayingStyle.FontWeightOption.allCases) { weight in
-                    Text(weight.label).tag(weight)
+                    Text(weight.label).lumiOptionLabel(String(describing: weight.label)).tag(weight)
                 }
             }
             VStack(alignment: .leading) {
@@ -461,9 +460,9 @@ struct CustomStyleEditorView: View {
     @ViewBuilder
     private var layoutSection: some View {
         Section("Layout & Spacing") {
-            Picker("Section Spacing", selection: $draft.sectionSpacingDensity) {
+            LumiPicker("Section Spacing", selection: $draft.sectionSpacingDensity) {
                 ForEach(CustomNowPlayingStyle.SpacingDensity.allCases) { density in
-                    Text(density.label).tag(density)
+                    Text(density.label).lumiOptionLabel(String(describing: density.label)).tag(density)
                 }
             }
             VStack(alignment: .leading) {

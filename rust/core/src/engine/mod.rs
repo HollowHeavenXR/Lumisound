@@ -102,6 +102,7 @@ impl AudioEngine {
     pub fn start_output(&self) -> Result<(), EngineError> {
         let mut o = self.output.lock().unwrap();
         *o = None;
+        self.adopt_device_rate(output::preferred_rate());
         let out = output::Output::start(self.mixer.clone(), self.tele.clone()).map_err(|m| {
             use std::sync::atomic::Ordering::Relaxed;
             self.tele.health.output_errors.fetch_add(1, Relaxed);
@@ -346,27 +347,93 @@ impl AudioEngine {
         deck::open(id, path, start, self.output_rate(), db_to_lin(gain_db), speed, pitch, nudge, self.tele.clone()).map_err(|m| EngineError::Open { message: m })
     }
 
+    /// The device now runs at `dev_rate` (Bluetooth A2DP at 44.1 kHz, a
+    /// hi-res session at 96 kHz...). Opening the stream at the device rate
+    /// while the mixer kept rendering at the old one played everything
+    /// ~9% fast or slow (pitch shifted with it) after a route change. Rebuild
+    /// the mixer's processors at the new rate and reopen the playing and
+    /// queued decks under their same ids (the app's bookkeeping is by id),
+    /// the playing one at its current position. Applied before the stream
+    /// starts, so the first callback already renders at the right rate.
+    fn adopt_device_rate(&self, dev_rate: u32) {
+        let old = self.output_rate();
+        if dev_rate == old || dev_rate == 0 {
+            return;
+        }
+        self.rate.store(dev_rate as u64, Ordering::Relaxed);
+        let (cur, next) = {
+            let mut m = self.mixer.lock().unwrap();
+            m.set_rate(dev_rate);
+            m.reopen_targets()
+        };
+        let (speed, pitch) = *self.tempo.lock().unwrap();
+        if let Some((id, path, gain, pos)) = cur {
+            if let Ok(d) = deck::open(id, &path, pos.max(0.0), dev_rate, gain, speed, pitch, None, self.tele.clone()) {
+                self.send(Cmd::Replace(Box::new(d)));
+            }
+        }
+        if let Some((id, path, gain)) = next {
+            if let Ok(d) = deck::open(id, &path, 0.0, dev_rate, gain, speed, pitch, None, self.tele.clone()) {
+                self.send(Cmd::QueueNext(Box::new(d)));
+            }
+        }
+        self.tele.health.rate_switches.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Queue a command for the audio callback. Never blocks the caller (the
+    /// main thread): if the queue is full because the callback isn't running
+    /// — another app took the audio session, the route died — the commands
+    /// are applied to the mixer directly. (This used to wait forever, which
+    /// froze play/pause/seek after an interruption.)
     fn send(&self, c: Cmd) {
         let mut q = self.cmds.lock().unwrap();
         let mut c = c;
-        // The callback drains every buffer; if it is stalled (no output yet),
-        // render inline so commands still take effect.
-        loop {
+        for attempt in 0..5 {
             match q.push(c) {
                 Ok(()) => return,
                 Err(rtrb::PushError::Full(back)) => {
                     c = back;
-                    std::thread::sleep(Duration::from_millis(2));
+                    if attempt < 4 {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
                 }
             }
         }
+        // Callback stalled: apply what's queued ourselves, then enqueue.
+        if let Ok(mut m) = self.mixer.lock() {
+            m.drain_commands();
+        }
+        let _ = q.push(c);
     }
+
 
     /// Offline render (tests / export): pull `frames` stereo frames.
     pub fn render_offline(&self, frames: usize) -> Vec<f32> {
         let mut buf = vec![0f32; frames * 2];
         self.mixer.lock().unwrap().render(&mut buf);
         buf
+    }
+}
+
+#[uniffi::export]
+impl AudioEngine {
+    /// True when the output callback ran within the last `max_age_ms`.
+    /// (False before output starts or while iOS has it stopped.)
+    pub fn output_alive(&self, max_age_ms: u32) -> bool {
+        let last = self.tele.health.last_callback_ns.load(Ordering::Relaxed);
+        last != 0 && health::mono_ns().saturating_sub(last) <= max_age_ms as u64 * 1_000_000
+    }
+
+    /// Tear down and reopen the output stream on the current route (after an
+    /// interruption, a Bluetooth reconnect, or a stalled callback). The
+    /// mixer, decks and position are untouched; queued commands are applied.
+    pub fn restart_output(&self) -> Result<(), EngineError> {
+        *self.output.lock().unwrap() = None;
+        if let Ok(mut m) = self.mixer.lock() {
+            m.drain_commands();
+        }
+        self.tele.health.output_restarts.fetch_add(1, Ordering::Relaxed);
+        self.start_output()
     }
 }
 
@@ -649,6 +716,37 @@ mod tests {
     }
 
     #[test]
+    fn follows_device_rate_change_without_pitch_shift() {
+        let d = std::env::temp_dir().join(format!("engine-rate-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&d).unwrap();
+        let a = d.join("a.wav");
+        wav(&a, 6.0, 440.0, 48_000);
+        let l = Arc::new(L(Mutex::new(vec![])));
+        let e = AudioEngine::new(l.clone());
+        assert_eq!(e.output_rate(), 48_000);
+        let id = e.load(a.to_string_lossy().into(), 0.0, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        e.play();
+        let _ = pump(&e, 1.0);
+        let before = e.position();
+        // The route moves to a 44.1 kHz device (Bluetooth A2DP).
+        e.adopt_device_rate(44_100);
+        assert_eq!(e.output_rate(), 44_100);
+        std::thread::sleep(Duration::from_millis(200));
+        let out = pump(&e, 1.5);
+        assert_eq!(e.current_id(), id, "same deck id after the switch");
+        // Measure the tone from zero crossings after the 10 ms hand-over.
+        let left: Vec<f32> = out.chunks(2).map(|c| c[0]).skip(4410).collect();
+        let zc: Vec<f64> = left.windows(2).enumerate().filter(|(_, w)| w[0] < 0.0 && w[1] >= 0.0).map(|(i, w)| i as f64 + (w[0] / (w[0] - w[1])) as f64).collect();
+        let hz = 44_100.0 * (zc.len() - 1) as f64 / (zc[zc.len() - 1] - zc[0]);
+        assert!((hz - 440.0).abs() < 1.0, "tone at {hz:.1} Hz after the rate switch");
+        let moved = e.position() - before;
+        assert!((moved - 1.5).abs() < 0.15, "position advanced {moved:.2}s over 1.5 s");
+        assert_eq!(e.health().rate_switches, 1);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
     fn double_speed_halves_duration() {
         let d = std::env::temp_dir().join(format!("engine-sp-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&d).unwrap();
@@ -670,6 +768,10 @@ mod tests {
     }
 
     #[test]
+    // The 256-tap sinc resampler is far too slow unoptimised to keep a deck
+    // fed in real time; tests/engine_quality.rs measures pitch (and decode
+    // speed) in release builds.
+    #[cfg_attr(debug_assertions, ignore)]
     fn pitch_shift_raises_pitch_and_keeps_length() {
         let d = std::env::temp_dir().join(format!("engine-pitch-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&d).unwrap();
@@ -742,5 +844,25 @@ mod tests {
         assert_eq!(j["groups"][0]["kind"], "underrun");
         assert!(e.incidents().is_empty(), "report drains the log");
         let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn commands_never_block_when_output_is_stalled() {
+        // No output callback at all (as after another app takes the session):
+        // 2,000 commands must not hang the caller, and they must take effect.
+        let l = Arc::new(L(Mutex::new(vec![])));
+        let e = AudioEngine::new(l);
+        assert!(!e.output_alive(1000), "no callback yet");
+        let t = std::time::Instant::now();
+        for i in 0..2000 {
+            e.set_volume((i % 10) as f32 / 10.0);
+            e.play();
+            e.pause(0.0);
+        }
+        assert!(t.elapsed() < Duration::from_secs(2), "send blocked: {:?}", t.elapsed());
+        e.play();
+        e.render_offline(256);
+        assert!(e.output_alive(1000), "a render counts as a callback");
+        assert!(e.is_playing(), "the last command won");
     }
 }

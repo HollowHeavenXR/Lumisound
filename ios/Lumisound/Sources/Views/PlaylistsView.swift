@@ -96,7 +96,7 @@ struct PlaylistsView: View {
                 if isImportingM3U {
                     ProgressView().tint(AppTheme.dynamicAccent)
                 } else {
-                    Menu {
+                    LumiMenu {
                         Button {
                             newPlaylistName = ""
                             showingCreateSheet = true

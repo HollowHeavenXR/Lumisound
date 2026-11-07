@@ -221,12 +221,11 @@ struct SleepTimerSheet: View {
                 .font(.subheadline)
                 .foregroundStyle(AppTheme.textPrimary)
             Spacer()
-            Picker("", selection: $sleepTimer.fadeDurationSeconds) {
+            LumiPicker("", selection: $sleepTimer.fadeDurationSeconds) {
                 ForEach(SleepTimerService.fadeDurationPresets, id: \.seconds) { preset in
-                    Text(preset.label).tag(preset.seconds)
+                    Text(preset.label).lumiOptionLabel(String(describing: preset.label)).tag(preset.seconds)
                 }
             }
-            .pickerStyle(.menu)
             .tint(AppTheme.dynamicAccent)
         }
         .padding(14)

@@ -304,8 +304,7 @@ pub struct SongTags {
 /// fallbacks), for the refresh merge. Nil when the core can't parse the file.
 #[uniffi::export]
 pub fn scan_read_raw_tags(path: String, cache_dir: String) -> Option<SongTags> {
-    let readable = crate::lock::lms_playable_path(path, cache_dir);
-    let i = lumisound_media::tags::read_info(Path::new(&readable))?;
+    let i = crate::lock::read_tags_with(&path, &cache_dir, lumisound_media::tags::read_info)?;
     Some(SongTags {
         title: i.title.unwrap_or_default(),
         artist: i.artist.unwrap_or_default(),

@@ -25,7 +25,7 @@ struct LibrarySelectionActionBar: View {
 
             Spacer()
 
-            Menu {
+            LumiMenu {
                 if library.playlists.isEmpty {
                     Text("No playlists yet")
                 } else {

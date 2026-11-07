@@ -485,15 +485,14 @@ private struct FadeCurvePickerRow: View {
                 .foregroundStyle(AppTheme.textSecondary)
                 .font(AppTheme.bodyFont(size: 14))
             Spacer()
-            Picker("", selection: Binding(
+            LumiPicker("", selection: Binding(
                 get: { player.audioSettings.crossfadeCurve ?? .equalPower },
                 set: { player.audioSettings.crossfadeCurve = $0 }
             )) {
                 ForEach(CrossfadeCurve.allCases) { curve in
-                    Text(curve.displayName).tag(curve)
+                    Text(curve.displayName).lumiOptionLabel(String(describing: curve.displayName)).tag(curve)
                 }
             }
-            .pickerStyle(.menu)
             .tint(.teal)
         }
         .padding(.leading, 16)
@@ -509,13 +508,12 @@ private struct EQPresetPickerRow: View {
             Label("EQ Preset", systemImage: "waveform")
                 .foregroundStyle(AppTheme.textPrimary)
             Spacer()
-            Picker("", selection: $player.audioSettings.eqPreset) {
+            LumiPicker("", selection: $player.audioSettings.eqPreset) {
                 ForEach(EQPreset.allCases) { preset in
                     Text(preset.displayName)
                         .tag(preset)
                 }
             }
-            .pickerStyle(.menu)
             .tint(.teal)
             .onChange(of: player.audioSettings.eqPreset) { newPreset in
                 player.applyEQPreset(newPreset)
@@ -534,13 +532,12 @@ private struct ReverbPresetPickerRow: View {
                 .foregroundStyle(AppTheme.textSecondary)
                 .font(AppTheme.bodyFont(size: 14))
             Spacer()
-            Picker("", selection: $player.audioSettings.reverbPreset) {
+            LumiPicker("", selection: $player.audioSettings.reverbPreset) {
                 ForEach(ReverbRoomPreset.allCases) { preset in
                     Text(preset.displayName)
                         .tag(preset)
                 }
             }
-            .pickerStyle(.menu)
             .tint(.teal)
         }
         .padding(.leading, 16)
@@ -617,7 +614,7 @@ private struct EightDSpeedControl: View {
     }
 }
 
-/// Lumisound's own audio engine (Rust) for local tracks; off = AVAudioEngine.
+/// Lumisound's own audio engine (Rust), on by default; off = Apple's engine.
 private struct RustEngineToggleRow: View {
     @ObservedObject var player: AudioPlayerManager
     @AppStorage(AudioPlayerManager.rustEngineKey) private var enabled = true
@@ -636,7 +633,7 @@ private struct RustEngineToggleRow: View {
             player.tearDownRustEngine()
             if wasPlaying { player.playCurrent(from: at) }
         }
-        Text("Decodes and mixes local tracks in Lumisound's own engine (gapless, EQ, reverb, night mode). Turn off to use Apple's engine.")
+        Text("Plays every track — library, downloads and streams — in Lumisound's own engine: gapless, crossfade, speed and pitch, EQ, reverb, 8D, spatial and night mode. Tracks re-encoded for the Lumisound engine always play on it. Turn off to use Apple's engine for everything else.")
             .font(.caption)
             .foregroundStyle(AppTheme.textSecondary)
             .padding(.leading, 16)

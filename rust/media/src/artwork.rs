@@ -9,7 +9,7 @@ use std::path::Path;
 pub fn embedded(path: &Path) -> Option<Vec<u8>> {
     use lofty::file::TaggedFileExt;
     use lofty::picture::PictureType;
-    let f = lofty::read_from_path(path).ok()?;
+    let f = crate::tags::open_tagged(path)?;
     let pics: Vec<&lofty::picture::Picture> = f.tags().iter().flat_map(|t| t.pictures()).filter(|p| p.data().len() > 500).collect();
     pics.iter().find(|p| p.pic_type() == PictureType::CoverFront).or(pics.first()).map(|p| p.data().to_vec())
 }

@@ -80,11 +80,18 @@ pub struct Eq10 {
     gains: [f32; 10],
     pub enabled: bool,
     rate: f32,
+    /// Auto-headroom: boosts are paid for by lowering the input first (half
+    /// the largest boost), so a hot master isn't driven into the limiter and
+    /// the tone change stays audible instead of being squashed. Smoothed.
+    pre: f32,
+    pre_target: f32,
+    pre_coef: f32,
 }
 
 impl Eq10 {
     pub fn new(rate: f32) -> Self {
-        let mut e = Self { bands: [Biquad::default(); 10], gains: [0.0; 10], enabled: false, rate };
+        let pre_coef = 1.0 - (-1.0 / (0.05 * rate)).exp(); // ~50 ms glide
+        let mut e = Self { bands: [Biquad::default(); 10], gains: [0.0; 10], enabled: false, rate, pre: 1.0, pre_target: 1.0, pre_coef };
         e.set_gains(&[0.0; 10]);
         e
     }
@@ -105,6 +112,17 @@ impl Eq10 {
             let d = Self::design(i, g, self.rate);
             self.bands[i].retune(&d);
         }
+        let boost = self.gains.iter().fold(0f32, |m, g| m.max(*g));
+        self.pre_target = 10f32.powf(-0.5 * boost / 20.0);
+    }
+
+    /// Current headroom gain (1 = none).
+    pub fn pre_gain(&self) -> f32 {
+        self.pre_target
+    }
+
+    pub fn gains(&self) -> [f32; 10] {
+        self.gains
     }
 
     pub fn is_flat(&self) -> bool {
@@ -116,6 +134,10 @@ impl Eq10 {
         if !self.enabled || self.is_flat() {
             return x;
         }
+        if ch == 0 {
+            self.pre += (self.pre_target - self.pre) * self.pre_coef;
+        }
+        x *= self.pre;
         for b in self.bands.iter_mut() {
             x = b.process(ch, x);
         }
@@ -194,7 +216,10 @@ mod tests {
         eq.set_gains(&g);
         let boosted = rms_after(&mut eq, 1000.0, rate);
         let db = 20.0 * (boosted / base).log10();
-        assert!((db - 6.0).abs() < 0.6, "got {db} dB");
+        // +6 dB band, minus the 3 dB auto-headroom.
+        assert!((db - 3.0).abs() < 0.6, "got {db} dB");
+        let off = 20.0 * (rms_after(&mut eq, 8000.0, rate) / rms_after(&mut flat, 8000.0, rate)).log10();
+        assert!((db - off - 6.0).abs() < 0.8, "tone change {}", db - off);
     }
     #[test]
     fn ramp_reaches_target() {
@@ -254,10 +279,34 @@ impl Allpass {
 pub struct Reverb {
     combs: [Vec<Comb>; 2],
     allpasses: [Vec<Allpass>; 2],
-    pub wet: f32,
+    /// Mix, gliding to `wet_target` (~40 ms): slider moves don't zipper and
+    /// switching off fades the tail instead of cutting it (a click + a jump
+    /// in the dry level).
+    wet: f32,
+    wet_target: f32,
+    wet_coef: f32,
+    /// Fully off and cleared: turning it back on never replays old echoes.
+    idle: bool,
     pub room: f32,
     pub damp: f32,
     pub width: f32,
+    /// Pre-delay (per room size) so the dry sound lands before the room,
+    /// like a real space; and a ~120 Hz low cut on what feeds the tank, so
+    /// bass doesn't turn the tail to mud.
+    pre: Vec<f32>,
+    pre_w: usize,
+    pre_len: usize,
+    /// Previous pre-delay during a preset change (crossfaded out over 30 ms).
+    pre_old: usize,
+    pre_xf: f32,
+    /// Tank input level, ramped 0 → 1 over 150 ms when the reverb starts:
+    /// the music was already playing, so the room must fade in, not be
+    /// "struck" by an abrupt onset (which rang broadband for ~1 s).
+    feed: f32,
+    rate: f32,
+    hp_a: f32,
+    hp_x1: f32,
+    hp_y1: f32,
 }
 
 impl Reverb {
@@ -271,32 +320,109 @@ impl Reverb {
         };
         let (cl, al) = mk(0);
         let (cr, ar) = mk(STEREO_SPREAD);
-        Self { combs: [cl, cr], allpasses: [al, ar], wet: 0.0, room: 0.5, damp: 0.5, width: 1.0 }
+        let hp_rc = 1.0 / (std::f32::consts::TAU * 120.0);
+        Self {
+            combs: [cl, cr],
+            allpasses: [al, ar],
+            wet: 0.0,
+            wet_target: 0.0,
+            wet_coef: 1.0 - (-1.0 / (0.04 * rate)).exp(),
+            idle: true,
+            room: 0.5,
+            damp: 0.5,
+            width: 1.0,
+            pre: vec![0.0; (rate * 0.06) as usize + 1],
+            pre_w: 0,
+            pre_len: (rate * 0.01) as usize,
+            pre_old: 0,
+            pre_xf: 1.0,
+            feed: 0.0,
+            rate,
+            hp_a: hp_rc / (hp_rc + 1.0 / rate),
+            hp_x1: 0.0,
+            hp_y1: 0.0,
+        }
+    }
+
+    pub fn wet_target(&self) -> f32 {
+        self.wet_target
+    }
+
+    pub fn set_wet(&mut self, wet: f32) {
+        self.wet_target = wet.clamp(0.0, 1.0);
+    }
+
+    fn clear(&mut self) {
+        for ch in 0..2 {
+            for c in self.combs[ch].iter_mut() {
+                c.buf.fill(0.0);
+                c.store = 0.0;
+            }
+            for a in self.allpasses[ch].iter_mut() {
+                a.buf.fill(0.0);
+            }
+        }
+        self.pre.fill(0.0);
+        self.hp_x1 = 0.0;
+        self.hp_y1 = 0.0;
     }
 
     /// Room presets matching the app's ReverbRoomPreset names.
     pub fn set_preset(&mut self, name: &str) {
-        let (room, damp) = match name {
-            "smallRoom" => (0.35, 0.6),
-            "mediumRoom" => (0.55, 0.5),
-            "largeRoom" | "largeRoom2" => (0.75, 0.4),
-            "mediumHall" | "mediumHall2" | "mediumHall3" => (0.8, 0.35),
-            "largeHall" | "largeHall2" => (0.88, 0.3),
-            "plate" => (0.7, 0.15),
-            "cathedral" => (0.95, 0.25),
-            "mediumChamber" | "largeChamber" => (0.65, 0.45),
-            _ => (0.55, 0.5),
+        // (room, damping, pre-delay ms)
+        let (room, damp, pre_ms) = match name {
+            "smallRoom" => (0.35, 0.6, 4.0),
+            "mediumRoom" => (0.55, 0.5, 9.0),
+            "largeRoom" | "largeRoom2" => (0.75, 0.4, 14.0),
+            "mediumHall" | "mediumHall2" | "mediumHall3" => (0.8, 0.35, 22.0),
+            "largeHall" | "largeHall2" => (0.88, 0.3, 30.0),
+            "plate" => (0.7, 0.15, 1.0),
+            "cathedral" => (0.95, 0.25, 45.0),
+            "mediumChamber" | "largeChamber" => (0.65, 0.45, 12.0),
+            _ => (0.55, 0.5, 9.0),
         };
         self.room = room;
         self.damp = damp;
+        let len = ((pre_ms / 1000.0 * self.rate) as usize).min(self.pre.len() - 1);
+        if len != self.pre_len {
+            self.pre_old = self.pre_len;
+            self.pre_len = len;
+            self.pre_xf = 0.0;
+        }
     }
 
     #[inline]
     pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
-        if self.wet <= 0.0001 {
+        if self.wet_target <= 1e-4 && self.wet <= 1e-5 {
+            if !self.idle {
+                self.clear();
+                self.idle = true;
+                self.wet = 0.0;
+                self.feed = 0.0;
+            }
             return (l, r);
         }
-        let input = (l + r) * 0.015;
+        self.idle = false;
+        self.wet += (self.wet_target - self.wet) * self.wet_coef;
+        let x = (l + r) * 0.5;
+        let y = self.hp_a * (self.hp_y1 + x - self.hp_x1);
+        self.hp_x1 = x;
+        self.hp_y1 = y;
+        let n = self.pre.len();
+        self.pre[self.pre_w] = y;
+        let mut delayed = self.pre[(self.pre_w + n - self.pre_len) % n];
+        if self.pre_xf < 1.0 {
+            let old = self.pre[(self.pre_w + n - self.pre_old) % n];
+            delayed = old + (delayed - old) * self.pre_xf;
+            self.pre_xf = (self.pre_xf + 1.0 / (0.03 * self.rate)).min(1.0);
+        }
+        self.pre_w = (self.pre_w + 1) % n;
+        if self.feed < 1.0 {
+            self.feed = (self.feed + 1.0 / (0.15 * self.rate)).min(1.0);
+        }
+        // Raised-cosine shape: smooth at both ends of the ramp.
+        let fg = 0.5 - 0.5 * (std::f32::consts::PI * self.feed).cos();
+        let input = delayed * 0.03 * fg;
         let fb = self.room * 0.28 + 0.7;
         let damp = self.damp * 0.4;
         let mut out = [0f32; 2];
@@ -323,27 +449,103 @@ pub struct Compressor {
     attack: f32,
     release: f32,
     pub enabled: bool,
+    /// 0..1 blend of the compressor's gain, glided over ~50 ms: switching
+    /// night mode used to jump the level (up to +6 dB) in one sample.
+    mix: f32,
+    mix_step: f32,
 }
 
 impl Compressor {
     pub fn new(rate: f32) -> Self {
         let coef = |ms: f32| (-1.0 / (ms * 0.001 * rate)).exp();
-        Self { env: 0.0, attack: coef(10.0), release: coef(200.0), enabled: false }
+        Self { env: 0.0, attack: coef(10.0), release: coef(200.0), enabled: false, mix: 0.0, mix_step: 1.0 / (0.05 * rate) }
     }
 
     #[inline]
     pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
-        if !self.enabled {
-            return (l, r);
-        }
+        // The level detector always runs (cheap), so switching on starts
+        // from the music's real level rather than from silence.
         let x = l.abs().max(r.abs());
         let c = if x > self.env { self.attack } else { self.release };
         self.env = c * self.env + (1.0 - c) * x;
+        self.mix = if self.enabled { (self.mix + self.mix_step).min(1.0) } else { (self.mix - self.mix_step).max(0.0) };
+        if self.mix <= 0.0 {
+            return (l, r);
+        }
         let db = 20.0 * self.env.max(1e-6).log10();
         // Threshold -24 dBFS, ratio 3:1, +6 dB make-up.
         let over = (db + 24.0).max(0.0);
         let gain_db = -over * (1.0 - 1.0 / 3.0) + 6.0;
-        let g = 10f32.powf(gain_db / 20.0);
+        let g = 1.0 + (10f32.powf(gain_db / 20.0) - 1.0) * self.mix;
         (l * g, r * g)
+    }
+}
+
+/// Transparent look-ahead peak limiter for the master output (replaces a
+/// hard clip, which turned overloads from EQ boosts / crossfade overlap /
+/// reverb into harsh distortion). Delays the signal by `LOOKAHEAD` samples
+/// so gain reduction is fully in place before a peak arrives; the gain
+/// follows a sliding-window minimum, ramps down over the look-ahead (no
+/// instant steps) and releases smoothly. Below the threshold it's a pure
+/// delay: bit-exact, no coloration.
+pub struct Limiter {
+    threshold: f32,
+    delay: Vec<[f32; 2]>,
+    pos: usize,
+    /// Monotonic deque over the look-ahead window: (index, required gain).
+    window: std::collections::VecDeque<(u64, f32)>,
+    index: u64,
+    gain: f32,
+    attack_step: f32,
+    release: f32,
+}
+
+pub const LOOKAHEAD_MS: f32 = 1.5;
+
+impl Limiter {
+    pub fn new(rate: f32) -> Self {
+        let la = ((rate * LOOKAHEAD_MS / 1000.0) as usize).max(8);
+        Self {
+            threshold: 0.966, // -0.3 dBFS: headroom for inter-sample peaks
+            delay: vec![[0.0; 2]; la],
+            pos: 0,
+            window: std::collections::VecDeque::with_capacity(la + 1),
+            index: 0,
+            gain: 1.0,
+            attack_step: 1.0 / la as f32,
+            release: 1.0 - (-1.0 / (rate * 0.08)).exp(), // ~80 ms
+        }
+    }
+
+    pub fn latency(&self) -> usize {
+        self.delay.len()
+    }
+
+    #[inline]
+    pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+        let la = self.delay.len() as u64;
+        let peak = l.abs().max(r.abs());
+        let need = if peak > self.threshold { self.threshold / peak } else { 1.0 };
+        // Sliding minimum of the required gain over the look-ahead window.
+        while self.window.back().is_some_and(|&(_, g)| g >= need) {
+            self.window.pop_back();
+        }
+        self.window.push_back((self.index, need));
+        while self.window.front().is_some_and(|&(i, _)| i + la <= self.index) {
+            self.window.pop_front();
+        }
+        let target = self.window.front().map_or(1.0, |&(_, g)| g);
+        if target < self.gain {
+            // Reach the target by the time the peak leaves the delay line.
+            self.gain = (self.gain - self.attack_step).max(target);
+        } else {
+            self.gain += (target - self.gain) * self.release;
+        }
+        let out = self.delay[self.pos];
+        self.delay[self.pos] = [l, r];
+        self.pos = (self.pos + 1) % self.delay.len();
+        self.index += 1;
+        let g = self.gain.min(1.0);
+        (out[0] * g, out[1] * g)
     }
 }

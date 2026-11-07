@@ -196,9 +196,9 @@ struct LumenNowPlayingView: View {
     }
 
     private var moreMenu: some View {
-        Menu {
+        LumiMenu {
             if let song = player.currentSong {
-                Menu {
+                LumiMenu {
                     ForEach(library.playlists) { playlist in
                         Button(playlist.name) {
                             library.addSong(id: song.id, toPlaylistID: playlist.id)
@@ -776,7 +776,7 @@ struct LumenQueuePanel: View {
                     .font(LumenType.title(19))
                     .foregroundStyle(LumenPalette.textPrimary)
                 Spacer()
-                Menu {
+                LumiMenu {
                     Button { showSave = true } label: { Label("Save Queue as Playlist", systemImage: "square.and.arrow.down") }
                     Button(role: .destructive) {
                         let offsets = IndexSet(upcoming.map(\.index))

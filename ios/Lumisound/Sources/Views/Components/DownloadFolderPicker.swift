@@ -19,7 +19,7 @@ struct DownloadFolderPicker: View {
     @State private var existingFolders: [String] = []
 
     var body: some View {
-        Menu {
+        LumiMenu {
             Button {
                 folderName = ""
             } label: {

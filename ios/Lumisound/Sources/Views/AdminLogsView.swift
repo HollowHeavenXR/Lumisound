@@ -20,9 +20,9 @@ struct AdminLogsView: View {
     var body: some View {
         List {
             Section {
-                Picker("Level", selection: $levelFilter) {
+                LumiPicker("Level", selection: $levelFilter) {
                     ForEach(Self.levels, id: \.self) { level in
-                        Text(level.capitalized).tag(level)
+                        Text(level.capitalized).lumiOptionLabel(String(describing: level.capitalized)).tag(level)
                     }
                 }
                 TextField("Category (e.g. account, admin, network)", text: $categoryFilter)

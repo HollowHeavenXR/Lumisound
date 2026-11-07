@@ -148,7 +148,7 @@ extension StreamSearchView {
     }
 
     private var trendingWindowMenu: some View {
-        Menu {
+        LumiMenu {
             ForEach(TrendingWindow.allCases) { window in
                 Button {
                     loadTrending(days: window.rawValue)

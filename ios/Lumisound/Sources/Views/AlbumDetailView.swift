@@ -173,7 +173,7 @@ struct AlbumDetailView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
+                LumiMenu {
                     Button {
                         for song in songs.reversed() { player.insertNext(song: song) }
                         ToastCenter.shared.show("\(album) plays next", category: .success, icon: "text.insert")

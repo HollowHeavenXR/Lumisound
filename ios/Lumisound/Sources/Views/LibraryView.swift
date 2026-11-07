@@ -297,7 +297,7 @@ struct LibraryView: View {
     private var toolbarItems: some ToolbarContent {
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             if selectedTab == .songs && !filteredSongsState.isEmpty {
-                Menu {
+                LumiMenu {
                     ForEach(SongSortOrder.allCases, id: \.self) { option in
                         Button {
                             songSortRaw = option.rawValue

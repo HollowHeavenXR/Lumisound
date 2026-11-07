@@ -93,13 +93,11 @@ struct DownloadsManagementView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                Menu {
-                    Picker("Sort", selection: $sortOption) {
-                        ForEach(SortOption.allCases) { option in
-                            Text(option.rawValue).tag(option)
-                        }
+                LumiPicker(selection: $sortOption) {
+                    ForEach(SortOption.allCases) { option in
+                        Text(option.rawValue).lumiOptionLabel(option.rawValue).tag(option)
                     }
-                } label: {
+                } trigger: {
                     Image(systemName: "arrow.up.arrow.down")
                 }
                 .disabled(sortedSongs.isEmpty)

@@ -58,7 +58,7 @@ struct FriendsListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
+                LumiMenu {
                     Button {
                         showBlockedUsers = true
                     } label: {

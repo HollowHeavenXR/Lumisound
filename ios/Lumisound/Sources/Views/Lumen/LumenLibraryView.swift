@@ -61,7 +61,7 @@ struct LumenLibraryView: View {
                         } else {
                             LumenIconButton(systemName: "arrow.clockwise", accessibilityLabel: "Rescan library") { refresh() }
                         }
-                        Menu {
+                        LumiMenu {
                             Button { showAddMusic = true } label: { Label("Add Music", systemImage: "square.and.arrow.down") }
                             Button { showNewPlaylist = true } label: { Label("New Playlist", systemImage: "music.note.list") }
                             Button { showOpenSharedPlaylist = true } label: { Label("Open Shared Playlist", systemImage: "link.badge.plus") }
@@ -319,7 +319,7 @@ struct LumenSongsListView: View {
         .lumenScreen(title: "Songs")
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Menu {
+                LumiMenu {
                     ForEach(SongSortOrder.allCases, id: \.self) { option in
                         Button {
                             sortRaw = option.rawValue
@@ -383,7 +383,7 @@ struct LumenSelectionBar: View {
                 .font(LumenType.headline(14))
                 .foregroundStyle(LumenPalette.textPrimary)
             Spacer()
-            Menu {
+            LumiMenu {
                 ForEach(library.playlists) { playlist in
                     Button(playlist.name) {
                         library.addSongs(ids: selectedIDs, toPlaylistID: playlist.id)

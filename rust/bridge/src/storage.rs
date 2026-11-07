@@ -50,17 +50,24 @@ fn decode_to(src: &Path, out: &mut std::fs::File) -> std::io::Result<()> {
     // gzip-stored upload -> decompress; then a locked payload -> unmask.
     if is_gzip(src) {
         let mut d = flate2::read::GzDecoder::new(std::io::BufReader::new(std::fs::File::open(src)?));
-        let mut head = [0u8; 8];
+        let mut head = [0u8; crate::lock::HEADER2_LEN];
         let mut n = 0;
-        while n < 8 {
+        while n < head.len() {
             match d.read(&mut head[n..])? {
                 0 => break,
                 k => n += k,
             }
         }
-        if n == 8 && &head == crate::lock::MAGIC {
-            let mut buf = vec![0u8; 1 << 20];
+        if let Some(h) = crate::lock::parse_header(&head[..n]) {
+            // v1 header is 8 bytes: what we read past it is already payload.
             let mut off = 0u64;
+            if n > h.payload_offset {
+                let mut first = head[h.payload_offset..n].to_vec();
+                crate::lock::apply_mask(&mut first, 0);
+                std::io::Write::write_all(out, &first)?;
+                off = (n - h.payload_offset) as u64;
+            }
+            let mut buf = vec![0u8; 1 << 20];
             loop {
                 let k = d.read(&mut buf)?;
                 if k == 0 {

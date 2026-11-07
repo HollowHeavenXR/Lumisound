@@ -320,8 +320,7 @@ pub struct ScannedTrack {
 /// roots). None when the file can't be parsed (caller falls back).
 #[uniffi::export]
 pub fn scan_read_track(path: String, cache_dir: String) -> Option<ScannedTrack> {
-    let readable = crate::lock::lms_playable_path(path.clone(), cache_dir);
-    let info = lumisound_media::tags::read_info(Path::new(&readable))?;
+    let info = crate::lock::read_tags_with(&path, &cache_dir, lumisound_media::tags::read_info)?;
     let f = crate::import::tag_apply_fallbacks(path, info.title.clone().unwrap_or_default(), info.artist.clone().unwrap_or_default(), info.album.clone().unwrap_or_default());
     let (title, artist, album, inferred) = (f.title, f.artist, f.album, f.album_inferred_from_folder);
     Some(ScannedTrack {
@@ -408,8 +407,7 @@ pub fn m3u_match(data: Vec<u8>, library: Vec<M3uCandidate>) -> M3uResult {
 /// Embedded cover art of a library file (front cover preferred).
 #[uniffi::export]
 pub fn artwork_embedded(path: String, cache_dir: String) -> Option<Vec<u8>> {
-    let readable = crate::lock::lms_playable_path(path, cache_dir);
-    lumisound_media::artwork::embedded(Path::new(&readable))
+    crate::lock::read_tags_with(&path, &cache_dir, lumisound_media::artwork::embedded)
 }
 
 /// The app's artwork cleanup: trim letterbox bars, square, fit `max_dim`, JPEG.
