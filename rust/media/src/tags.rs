@@ -99,8 +99,18 @@ pub fn write(path: &Path, f: &Fields) -> Result<(), String> {
 }
 
 /// (source id, thumbnail URL) written by Lumisound, if present.
+/// Open a file for tag reading. Locked `.lms` files are read through
+/// `MaskedFile` (unmasked on the fly, format detected from content) — no
+/// temp copy of the whole track.
+pub fn open_tagged(path: &Path) -> Option<lofty::file::TaggedFile> {
+    match crate::lock::MaskedFile::open(path) {
+        Some(m) => lofty::probe::Probe::new(std::io::BufReader::new(m)).guess_file_type().ok()?.read().ok(),
+        None => lofty::read_from_path(path).ok(),
+    }
+}
+
 pub fn read_lumisound(path: &Path) -> (Option<String>, Option<String>) {
-    let Ok(file) = lofty::read_from_path(path) else { return (None, None) };
+    let Some(file) = open_tagged(path) else { return (None, None) };
     let mut out = (None, None);
     for tag in file.tags() {
         let tt = tag.tag_type();
@@ -151,7 +161,7 @@ pub fn cleaned_genre(raw: &str) -> String {
 
 pub fn read_info(path: &Path) -> Option<Info> {
     use lofty::file::AudioFile;
-    let file = lofty::read_from_path(path).ok()?;
+    let file = open_tagged(path)?;
     let props = file.properties();
     let mut info = Info {
         duration: props.duration().as_secs_f64(),
@@ -176,6 +186,6 @@ pub fn read_info(path: &Path) -> Option<Info> {
 
 /// BPM written in the file's tags (TBPM / tmpo / BPM comment), if any.
 pub fn read_bpm(path: &Path) -> Option<f64> {
-    let file = lofty::read_from_path(path).ok()?;
+    let file = open_tagged(path)?;
     file.tags().iter().find_map(|t| t.get_string(&ItemKey::Bpm).or(t.get_string(&ItemKey::IntegerBpm)).and_then(|v| v.trim().parse::<f64>().ok()).filter(|b| *b > 0.0))
 }

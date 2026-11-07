@@ -141,6 +141,9 @@ extension AudioPlayerManager {
             appLog("Audio session interruption ended — resuming"
                    + (systemSuggestsResume ? "" : " (no shouldResume hint, but we were interrupted mid-playback)"),
                    category: "audio")
+            // iOS stopped the engine's output stream during the interruption;
+            // it doesn't restart by itself.
+            restartRustOutput(reason: "interruption_ended", force: true)
             resume()
         @unknown default:
             break
@@ -152,6 +155,14 @@ extension AudioPlayerManager {
               let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue)
         else { return }
+
+        // The Lumisound engine's stream is bound to the route it opened on:
+        // rebind on every real route change (Bluetooth connect/reconnect,
+        // headphones, AirPlay) so audio follows the device. Done for the
+        // pause-on-loss path too, so a later resume plays on the new route.
+        if [.newDeviceAvailable, .oldDeviceUnavailable, .override, .routeConfigurationChange].contains(reason) {
+            restartRustOutput(reason: "route_\(reason.rawValue)", force: true)
+        }
 
         switch reason {
         case .oldDeviceUnavailable:

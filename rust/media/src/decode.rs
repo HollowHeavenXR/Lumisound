@@ -18,14 +18,36 @@ pub struct Probe {
     pub channels: u16,
 }
 
-fn open(path: &Path) -> Option<(Box<dyn symphonia::core::formats::FormatReader>, u32)> {
-    let file = std::fs::File::open(path).ok()?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+impl symphonia::core::io::MediaSource for crate::lock::MaskedFile {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.len())
+    }
+}
+
+/// A symphonia source for `path` and its format hint: a plain file as is,
+/// or a locked `.lms` file unmasked on the fly (decoded in place: no
+/// unlocked copy of the whole track), hinted by its inner extension.
+pub fn media_source(path: &Path) -> std::io::Result<(MediaSourceStream, Hint)> {
     let mut hint = Hint::new();
-    // `.lms` callers pass the unlocked copy; use the real extension when present.
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if let Some(m) = crate::lock::MaskedFile::open(path) {
+        if let Some(e) = crate::lock::inner_ext(name) {
+            hint.with_extension(&e);
+        }
+        return Ok((MediaSourceStream::new(Box::new(m), Default::default()), hint));
+    }
     if let Some(e) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(e);
     }
+    let file = std::fs::File::open(path)?;
+    Ok((MediaSourceStream::new(Box::new(file), Default::default()), hint))
+}
+
+fn open(path: &Path) -> Option<(Box<dyn symphonia::core::formats::FormatReader>, u32)> {
+    let (mss, hint) = media_source(path).ok()?;
     let probed = symphonia::default::get_probe().format(&hint, mss, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default()).ok()?;
     let fmt = probed.format;
     let track = fmt.default_track()?;

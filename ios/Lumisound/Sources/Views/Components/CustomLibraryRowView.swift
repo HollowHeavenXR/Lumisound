@@ -40,6 +40,11 @@ struct CustomLibraryRowView: View {
     }
 
     var body: some View {
+        songContent.engineConvertingOverlay(songID: song.id)
+    }
+
+    /// The row itself; `body` adds the re-encoding lock overlay.
+    @ViewBuilder private var songContent: some View {
         layoutBody
             .contentShape(Rectangle())
             .animation(.easeInOut(duration: 0.25), value: isCurrent)
@@ -216,6 +221,11 @@ struct CustomLibraryGridCellView: View {
     }
 
     var body: some View {
+        songContent.engineConvertingOverlay(songID: song.id)
+    }
+
+    /// The row itself; `body` adds the re-encoding lock overlay.
+    @ViewBuilder private var songContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             GeometryReader { geo in
                 ArtworkThumbnail(song: song, size: geo.size.width)

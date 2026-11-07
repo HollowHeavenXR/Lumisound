@@ -80,6 +80,11 @@ struct SongRow: View {
     }
 
     var body: some View {
+        songContent.engineConvertingOverlay(songID: song.id)
+    }
+
+    /// The row itself; `body` adds the re-encoding lock overlay.
+    @ViewBuilder private var songContent: some View {
         if InterfaceEdition.isLumen, customStyle == nil {
             LumenSongRowContent(song: song, isCurrent: isCurrent, showArtwork: showArtwork, subtitle: subtitle)
                 .contextMenu {
@@ -310,6 +315,11 @@ struct SongGridCell: View {
     }
 
     var body: some View {
+        songContent.engineConvertingOverlay(songID: song.id)
+    }
+
+    /// The row itself; `body` adds the re-encoding lock overlay.
+    @ViewBuilder private var songContent: some View {
         if InterfaceEdition.isLumen, customStyle == nil {
             LumenSongGridContent(song: song, isCurrent: isCurrent, subtitle: resolvedSubtitle, trackNumber: trackNumber)
                 .contextMenu {

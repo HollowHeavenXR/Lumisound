@@ -612,6 +612,11 @@ struct LumenTrackRow: View {
     private var isCurrent: Bool { player.currentSong?.id == song.id }
 
     var body: some View {
+        songContent.engineConvertingOverlay(songID: song.id)
+    }
+
+    /// The row itself; `body` adds the re-encoding lock overlay.
+    @ViewBuilder private var songContent: some View {
         HStack(spacing: 14) {
             Button(action: onTap) {
                 HStack(spacing: 14) {

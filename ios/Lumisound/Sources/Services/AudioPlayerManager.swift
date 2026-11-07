@@ -34,6 +34,9 @@ final class AudioPlayerManager: ObservableObject {
     @Published var currentSong: Song? {
         didSet {
             if currentSong?.id != oldValue?.id {
+                // Tracks waiting to become engine-exclusive convert once the
+                // listener has switched off them.
+                EngineExclusiveService.shared.currentSongChanged(to: currentSong)
                 nowPlayingArtworkSongID = nil
                 updateNowPlaying()
                 let isFavoriteNow = currentSong.flatMap { LibraryManager.shared?.isFavorite(songID: $0.id) } ?? false
@@ -539,7 +542,7 @@ final class AudioPlayerManager: ObservableObject {
     // When active, this player owns audio output instead of the AVAudioEngine nodes.
     var opusPlayer: AVPlayer?
     /// Rust engine deck playing the current track (nil = AVAudioEngine/AVPlayer path).
-    var rustDeckID: UInt64?
+    @Published var rustDeckID: UInt64?
     var rustNextDeckID: UInt64?
     var rustNextPath: String?
     var rustOutputStarted = false

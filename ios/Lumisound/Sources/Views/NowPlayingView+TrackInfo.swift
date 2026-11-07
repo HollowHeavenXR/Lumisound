@@ -140,8 +140,9 @@ extension NowPlayingView {
     var trackBadges: some View {
         let bpm = LuaFeatureFlags.showBpmBadges ? player.currentSong?.bpm : nil
         let formatTag = player.currentSong?.formatTag
-        if bpm != nil || formatTag != nil {
+        if let song = player.currentSong {
             HStack(spacing: 6) {
+                engineBadge(for: song)
                 if let formatTag {
                     HStack(spacing: 4) {
                         if player.isUsingOpusPlayer {
@@ -165,6 +166,29 @@ extension NowPlayingView {
             }
             .padding(.top, 2)
         }
+    }
+}
+
+extension NowPlayingView {
+    /// Which audio engine is playing this track: the Lumisound Audio Engine
+    /// (with a lock when the track is engine-exclusive), or the system
+    /// engine (Apple Music items, or a fallback).
+    @ViewBuilder
+    func engineBadge(for song: Song) -> some View {
+        let lumisound = player.isUsingRustEngine
+        let exclusive = EngineExclusiveService.shared.isExclusive(song)
+        HStack(spacing: 4) {
+            Image(systemName: lumisound ? (exclusive ? "lock.fill" : "waveform") : "exclamationmark.triangle.fill")
+                .font(.system(size: 9, weight: .bold))
+            Text(lumisound ? "LUMISOUND ENGINE" : "SYSTEM ENGINE")
+                .font(AppTheme.monoFont(size: 10))
+        }
+        .foregroundStyle(lumisound ? screenStyle.accentColor : AppTheme.warning)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .overlay(Capsule().strokeBorder((lumisound ? screenStyle.accentColor : AppTheme.warning).opacity(0.55), lineWidth: 1))
+        .fixedSize()
+        .accessibilityLabel(lumisound ? (exclusive ? "Lumisound Audio Engine, exclusive" : "Lumisound Audio Engine") : "System audio engine")
     }
 }
 

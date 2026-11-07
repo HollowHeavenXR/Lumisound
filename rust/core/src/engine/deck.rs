@@ -123,12 +123,9 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f6
     // of "nice" rates and measured -37 dB THD+N on pitch shifts).
     let target = out_rate as f64 / pitch;
     let stretch_ratio = speed / pitch;
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut hint = Hint::new();
-    if let Some(e) = Path::new(path).extension().and_then(|e| e.to_str()) {
-        hint.with_extension(e);
-    }
+    // Locked `.lms` tracks decode in place (unmasked on the fly): no unlocked
+    // copy, so a cold start never waits on decrypting the whole file.
+    let (mss, hint) = lumisound_media::decode::media_source(Path::new(path)).map_err(|e| e.to_string())?;
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
         .map_err(|e| format!("unsupported file: {e}"))?;

@@ -287,6 +287,19 @@ extension AudioPlayerManager {
     /// `downloadAndSchedule` completes the setup and starts the node once the file is cached.
     func scheduleCurrent(from startTime: TimeInterval) {
         guard let song = currentSong else { return }
+        // Being re-encoded for the Lumisound engine (a second or so): wait
+        // for it rather than reading a file that's being swapped.
+        if EngineExclusiveService.shared.isConverting(song.id) {
+            let gen = scheduleGeneration
+            Task { [weak self] in
+                while EngineExclusiveService.shared.isConverting(song.id) {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                }
+                guard let self, self.scheduleGeneration == gen, self.currentSong?.id == song.id else { return }
+                self.scheduleCurrent(from: startTime)
+            }
+            return
+        }
         // A new schedule always stops the Rust engine's decks first; the local
         // file branch below re-loads into it when the track is eligible.
         tearDownRustEngine()
@@ -331,7 +344,6 @@ extension AudioPlayerManager {
         // Opus/WebM decode natively in the Rust engine (pure-Rust Opus) — no
         // AVFoundation transcode first.
         if ["opus", "webm", "ogg"].contains(LumisoundExclusiveExtensionService.effectiveExtension(for: url)),
-           !LumisoundExclusiveExtensionService.isConverted(url) || LumisoundExclusiveExtensionService.hasWarmPlayableCache(for: url),
            rustEligible(for: url) {
             tearDownOpusPlayer()
             let gen = scheduleGeneration &+ 1
@@ -339,7 +351,7 @@ extension AudioPlayerManager {
             if scheduleWithRustEngine(url: url, startTime: startTime) { return }
         }
         let fileExt = LumisoundExclusiveExtensionService.effectiveExtension(for: url)
-        if ["opus", "webm", "ogg"].contains(fileExt) {
+        if ["opus", "webm", "ogg"].contains(fileExt), !EngineExclusiveService.shared.isExclusive(song) {
             Task { await transcodeAndSchedule(url: url, startTime: startTime) }
             return
         }
@@ -354,7 +366,10 @@ extension AudioPlayerManager {
         // gapless/crossfade's own next-track prewarm has already run) this
         // check is just a cheap stat and falls straight through to the
         // existing synchronous path unchanged.
+        // (The Lumisound engine reads locked files in place; only the system
+        // engine needs the unlocked copy, so skip the prewarm when it'll play.)
         if LumisoundExclusiveExtensionService.isConverted(url),
+           !rustEligible(for: url),
            !LumisoundExclusiveExtensionService.hasWarmPlayableCache(for: url) {
             let gen = scheduleGeneration &+ 1
             scheduleGeneration = gen
@@ -372,6 +387,11 @@ extension AudioPlayerManager {
             let gen = scheduleGeneration &+ 1
             scheduleGeneration = gen
             if scheduleWithRustEngine(url: url, startTime: startTime) { return }
+        }
+        // Engine-exclusive tracks never fall back to the system engine.
+        if EngineExclusiveService.shared.isExclusive(song) {
+            refuseSystemEngine(for: song, reason: "engine_could_not_start")
+            return
         }
         do {
             let node = activeNode

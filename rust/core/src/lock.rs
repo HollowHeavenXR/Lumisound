@@ -63,6 +63,15 @@ fn path_lock(key: &str) -> Arc<Mutex<()>> {
     UNLOCK_LOCKS.lock().unwrap().entry(key.to_string()).or_default().clone()
 }
 
+/// Read tags/artwork of `path` with `f`: a locked file is read in place
+/// (unmasked on the fly — no copy of the whole track), with the unlocked
+/// cache copy only as a fallback if that ever fails.
+pub fn read_tags_with<T>(path: &str, cache_dir: &str, f: impl Fn(&Path) -> Option<T>) -> Option<T> {
+    f(Path::new(path)).or_else(|| {
+        lms_is_converted(path.to_string()).then(|| lms_playable_path(path.to_string(), cache_dir.to_string())).and_then(|p| f(Path::new(&p)))
+    })
+}
+
 /// A warm cache copy exists and is at least as new as the locked file.
 #[uniffi::export]
 pub fn lms_has_warm_cache(path: String, cache_dir: String) -> bool {
@@ -399,6 +408,109 @@ mod convert_tests {
         wav(&legacy);
         assert!(lms_relock_in_place(legacy.to_string_lossy().into(), tmp.clone(), None));
         assert!(fmt::is_locked(&legacy) && lms_verify_round_trip(legacy.to_string_lossy().into(), tmp, None));
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
+
+// MARK: - Header flags (v2): engine-exclusive, lyrics synced
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct LmsInfo {
+    pub locked: bool,
+    /// 0 = not locked, 1 = LMSLOCK1, 2 = LMSLOCK2.
+    pub version: u8,
+    /// Only the Lumisound Audio Engine may play it.
+    pub engine_exclusive: bool,
+    /// Its lyrics were force time-synced.
+    pub lyrics_synced: bool,
+}
+
+#[uniffi::export]
+pub fn lms_info(path: String) -> LmsInfo {
+    match fmt::read_header(Path::new(&path)) {
+        Some(h) => LmsInfo { locked: true, version: h.version, engine_exclusive: h.flags & fmt::FLAG_ENGINE_EXCLUSIVE != 0, lyrics_synced: h.flags & fmt::FLAG_LYRICS_SYNCED != 0 },
+        None => LmsInfo { locked: false, version: 0, engine_exclusive: false, lyrics_synced: false },
+    }
+}
+
+/// Set/clear header flags on a locked `.lms` file (None = leave as is).
+/// Rewrites to a staged file beside it (payload copied byte for byte),
+/// verifies the staged file still unlocks to playable audio, carries the
+/// vault xattr over, then renames over the original: `path` is untouched
+/// on any failure. Also drops a stale unlocked cache copy.
+#[uniffi::export]
+pub fn lms_set_flags(path: String, engine_exclusive: Option<bool>, lyrics_synced: Option<bool>, tmp_dir: String, verifier: Option<Arc<dyn AudioVerifier>>) -> bool {
+    let p = Path::new(&path);
+    let Some(h) = fmt::read_header(p) else { return false };
+    let mut flags = h.flags;
+    for (want, bit) in [(engine_exclusive, fmt::FLAG_ENGINE_EXCLUSIVE), (lyrics_synced, fmt::FLAG_LYRICS_SYNCED)] {
+        match want {
+            Some(true) => flags |= bit,
+            Some(false) => flags &= !bit,
+            None => {}
+        }
+    }
+    if flags == h.flags {
+        return true;
+    }
+    let staged = p.with_file_name(format!(".{}.reencode", uuid::Uuid::new_v4()));
+    let ext = lms_effective_extension(path.clone());
+    let tag = xattr_get(&path);
+    let ok = fmt::rewrite_header(p, &staged, flags).is_ok() && round_trips(&staged, if ext.is_empty() { "m4a" } else { &ext }, Path::new(&tmp_dir), &verifier) && {
+        if let Some(t) = &tag {
+            xattr_set(&staged.to_string_lossy(), t);
+        }
+        std::fs::rename(&staged, p).is_ok()
+    };
+    if !ok {
+        let _ = std::fs::remove_file(&staged);
+    }
+    ok
+}
+
+#[cfg(test)]
+mod flag_tests {
+    use super::*;
+
+    #[test]
+    fn exclusive_flag_reencode() {
+        let d = std::env::temp_dir().join(format!("lmsflags-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        // A real (decodable) wav so the round-trip verification runs.
+        let rate = 8000u32;
+        let n = rate * 2;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + n * 2).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&(rate * 2).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&(n * 2).to_le_bytes());
+        for i in 0..n {
+            b.extend_from_slice(&(((i as f32 * 0.2).sin() * 8000.0) as i16).to_le_bytes());
+        }
+        let plain = d.join("s.wav");
+        std::fs::write(&plain, &b).unwrap();
+        let locked = d.join("s.wav.lms");
+        assert!(lms_lock(plain.to_string_lossy().into(), locked.to_string_lossy().into()));
+        let lp: String = locked.to_string_lossy().into();
+        let tmp: String = d.join("tmp").to_string_lossy().into();
+        assert_eq!(lms_info(lp.clone()), LmsInfo { locked: true, version: 1, engine_exclusive: false, lyrics_synced: false });
+        assert!(lms_set_flags(lp.clone(), Some(true), None, tmp.clone(), None));
+        assert_eq!(lms_info(lp.clone()), LmsInfo { locked: true, version: 2, engine_exclusive: true, lyrics_synced: false });
+        assert!(lms_verify_round_trip(lp.clone(), tmp.clone(), None));
+        assert!(lms_set_flags(lp.clone(), None, Some(true), tmp.clone(), None));
+        assert!(lms_info(lp.clone()).lyrics_synced && lms_info(lp.clone()).engine_exclusive);
+        let out = d.join("o.wav");
+        assert!(lms_unlock(lp.clone(), out.to_string_lossy().into()));
+        assert_eq!(std::fs::read(&out).unwrap(), b);
+        assert!(!lms_set_flags(plain.to_string_lossy().into(), Some(true), None, tmp, None), "plain files have no header");
         let _ = std::fs::remove_dir_all(d);
     }
 }
