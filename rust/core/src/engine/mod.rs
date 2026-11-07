@@ -102,6 +102,7 @@ impl AudioEngine {
     pub fn start_output(&self) -> Result<(), EngineError> {
         let mut o = self.output.lock().unwrap();
         *o = None;
+        self.adopt_device_rate(output::preferred_rate());
         let out = output::Output::start(self.mixer.clone(), self.tele.clone()).map_err(|m| {
             use std::sync::atomic::Ordering::Relaxed;
             self.tele.health.output_errors.fetch_add(1, Relaxed);
@@ -344,6 +345,39 @@ impl AudioEngine {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (speed, pitch) = *self.tempo.lock().unwrap();
         deck::open(id, path, start, self.output_rate(), db_to_lin(gain_db), speed, pitch, nudge, self.tele.clone()).map_err(|m| EngineError::Open { message: m })
+    }
+
+    /// The device now runs at `dev_rate` (Bluetooth A2DP at 44.1 kHz, a
+    /// hi-res session at 96 kHz...). Opening the stream at the device rate
+    /// while the mixer kept rendering at the old one played everything
+    /// ~9% fast or slow (pitch shifted with it) after a route change. Rebuild
+    /// the mixer's processors at the new rate and reopen the playing and
+    /// queued decks under their same ids (the app's bookkeeping is by id),
+    /// the playing one at its current position. Applied before the stream
+    /// starts, so the first callback already renders at the right rate.
+    fn adopt_device_rate(&self, dev_rate: u32) {
+        let old = self.output_rate();
+        if dev_rate == old || dev_rate == 0 {
+            return;
+        }
+        self.rate.store(dev_rate as u64, Ordering::Relaxed);
+        let (cur, next) = {
+            let mut m = self.mixer.lock().unwrap();
+            m.set_rate(dev_rate);
+            m.reopen_targets()
+        };
+        let (speed, pitch) = *self.tempo.lock().unwrap();
+        if let Some((id, path, gain, pos)) = cur {
+            if let Ok(d) = deck::open(id, &path, pos.max(0.0), dev_rate, gain, speed, pitch, None, self.tele.clone()) {
+                self.send(Cmd::Replace(Box::new(d)));
+            }
+        }
+        if let Some((id, path, gain)) = next {
+            if let Ok(d) = deck::open(id, &path, 0.0, dev_rate, gain, speed, pitch, None, self.tele.clone()) {
+                self.send(Cmd::QueueNext(Box::new(d)));
+            }
+        }
+        self.tele.health.rate_switches.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Queue a command for the audio callback. Never blocks the caller (the
@@ -678,6 +712,37 @@ mod tests {
         }
         assert!(worst < 8, "silent run of {worst} frames");
         assert_eq!(e.current_id(), ib);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn follows_device_rate_change_without_pitch_shift() {
+        let d = std::env::temp_dir().join(format!("engine-rate-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&d).unwrap();
+        let a = d.join("a.wav");
+        wav(&a, 6.0, 440.0, 48_000);
+        let l = Arc::new(L(Mutex::new(vec![])));
+        let e = AudioEngine::new(l.clone());
+        assert_eq!(e.output_rate(), 48_000);
+        let id = e.load(a.to_string_lossy().into(), 0.0, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        e.play();
+        let _ = pump(&e, 1.0);
+        let before = e.position();
+        // The route moves to a 44.1 kHz device (Bluetooth A2DP).
+        e.adopt_device_rate(44_100);
+        assert_eq!(e.output_rate(), 44_100);
+        std::thread::sleep(Duration::from_millis(200));
+        let out = pump(&e, 1.5);
+        assert_eq!(e.current_id(), id, "same deck id after the switch");
+        // Measure the tone from zero crossings after the 10 ms hand-over.
+        let left: Vec<f32> = out.chunks(2).map(|c| c[0]).skip(4410).collect();
+        let zc: Vec<f64> = left.windows(2).enumerate().filter(|(_, w)| w[0] < 0.0 && w[1] >= 0.0).map(|(i, w)| i as f64 + (w[0] / (w[0] - w[1])) as f64).collect();
+        let hz = 44_100.0 * (zc.len() - 1) as f64 / (zc[zc.len() - 1] - zc[0]);
+        assert!((hz - 440.0).abs() < 1.0, "tone at {hz:.1} Hz after the rate switch");
+        let moved = e.position() - before;
+        assert!((moved - 1.5).abs() < 0.15, "position advanced {moved:.2}s over 1.5 s");
+        assert_eq!(e.health().rate_switches, 1);
         let _ = std::fs::remove_dir_all(d);
     }
 

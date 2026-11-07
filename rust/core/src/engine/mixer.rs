@@ -104,6 +104,9 @@ pub struct Mixer {
     pausing: bool,
     eq: Eq10,
     reverb: Reverb,
+    /// Last settings, to rebuild the rate-dependent processors (`set_rate`).
+    reverb_preset: String,
+    spatial_yaw: f32,
     comp: Compressor,
     limiter: Limiter,
     mono: bool,
@@ -146,7 +149,7 @@ struct Monitor {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_coef: 1.0 - (-1.0 / (0.03 * rate as f32)).exp(), vib_target: 0.0, vib_wet: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
+        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), reverb_preset: String::new(), spatial_yaw: 0.0, comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_coef: 1.0 - (-1.0 / (0.03 * rate as f32)).exp(), vib_target: 0.0, vib_wet: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -208,12 +211,14 @@ impl Mixer {
             Cmd::Effects { reverb_wet, reverb_preset, mono, night } => {
                 self.reverb.set_wet(reverb_wet);
                 self.reverb.set_preset(&reverb_preset);
+                self.reverb_preset = reverb_preset;
                 self.mono = mono;
                 self.comp.enabled = night;
             }
             Cmd::Spatial { enabled, yaw_deg } => {
                 self.spatial.enabled = enabled;
                 self.spatial.set_yaw(yaw_deg);
+                self.spatial_yaw = yaw_deg;
             }
             Cmd::Modulation { pan_hz, tremolo_hz, tremolo_depth, vibrato_hz, vibrato_semitones } => {
                 // Delay-line vibrato: peak pitch ratio 2^(st/12) ≈ 1 + A·2πf,
@@ -310,6 +315,45 @@ impl Mixer {
     /// Apply queued commands without rendering: used by the control side
     /// when the output callback isn't running (interrupted session, dead
     /// route), so play/pause/seek still take effect instead of piling up.
+    /// Follow the output device to a new sample rate: rebuild every
+    /// rate-dependent processor with its current settings. The decks are
+    /// reopened at the new rate by the engine (see `AudioEngine::adopt_device_rate`).
+    pub fn set_rate(&mut self, rate: u32) {
+        if rate == self.rate || rate == 0 {
+            return;
+        }
+        self.rate = rate;
+        let r = rate as f32;
+        let (eq_on, gains) = (self.eq.enabled, self.eq.gains());
+        self.eq = Eq10::new(r);
+        self.eq.enabled = eq_on;
+        self.eq.set_gains(&gains);
+        let wet = self.reverb.wet_target();
+        self.reverb = Reverb::new(r);
+        if !self.reverb_preset.is_empty() {
+            self.reverb.set_preset(&self.reverb_preset);
+        }
+        self.reverb.set_wet(wet);
+        let night = self.comp.enabled;
+        self.comp = Compressor::new(r);
+        self.comp.enabled = night;
+        self.limiter = Limiter::new(r);
+        let spatial_on = self.spatial.enabled;
+        self.spatial = Binaural::new(r);
+        self.spatial.enabled = spatial_on;
+        self.spatial.set_yaw(self.spatial_yaw);
+        self.vib_coef = 1.0 - (-1.0 / (0.03 * r)).exp();
+    }
+
+    /// (id, path, gain, position) of the playing deck and (id, path, gain)
+    /// of the queued one, for reopening at a new rate.
+    pub fn reopen_targets(&self) -> (Option<(u64, String, f32, f64)>, Option<(u64, String, f32)>) {
+        (
+            self.cur.as_ref().map(|d| (d.id, d.path.clone(), d.gain, d.position())),
+            self.next.as_ref().map(|d| (d.id, d.path.clone(), d.gain)),
+        )
+    }
+
     pub fn drain_commands(&mut self) {
         while let Ok(c) = self.cmds.pop() {
             self.apply(c);

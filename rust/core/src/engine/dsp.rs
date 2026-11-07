@@ -121,6 +121,10 @@ impl Eq10 {
         self.pre_target
     }
 
+    pub fn gains(&self) -> [f32; 10] {
+        self.gains
+    }
+
     pub fn is_flat(&self) -> bool {
         self.gains.iter().all(|g| g.abs() < 0.01)
     }
@@ -338,6 +342,10 @@ impl Reverb {
             hp_x1: 0.0,
             hp_y1: 0.0,
         }
+    }
+
+    pub fn wet_target(&self) -> f32 {
+        self.wet_target
     }
 
     pub fn set_wet(&mut self, wet: f32) {
