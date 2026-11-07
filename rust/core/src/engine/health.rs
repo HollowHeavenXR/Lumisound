@@ -98,6 +98,9 @@ pub struct EngineHealth {
     /// Slowest decoder speed seen (x real time; 0 = not measured yet).
     pub decode_speed_min: f64,
     pub incidents_dropped: u64,
+    /// Output streams restarted by the app's guardrails (interruption,
+    /// route change, stalled callbacks).
+    pub output_restarts: u64,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -150,6 +153,9 @@ pub struct Health {
     pub start_latency_max_us: AtomicU64,
     pub decode_speed_min_milli: AtomicU64,
     pub incidents_dropped: AtomicU64,
+    /// Monotonic ns of the last output callback (0 = never): liveness.
+    pub last_callback_ns: AtomicU64,
+    pub output_restarts: AtomicU64,
     log: Mutex<VecDeque<EngineIncident>>,
     last: Mutex<Option<(EngineHealth, f64)>>,
 }
@@ -158,6 +164,12 @@ const LOG_CAP: usize = 256;
 /// Thresholds.
 pub const SLOW_START_MS: f64 = 400.0;
 pub const SLOW_DECODE_X: f64 = 4.0;
+
+/// Monotonic nanoseconds since process start.
+pub fn mono_ns() -> u64 {
+    static START: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(std::time::Instant::now);
+    START.elapsed().as_nanos() as u64 + 1
+}
 
 pub fn now() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
@@ -227,6 +239,7 @@ impl Health {
             start_latency_max_ms: self.start_latency_max_us.load(Relaxed) as f64 / 1000.0,
             decode_speed_min: self.decode_speed_min_milli.load(Relaxed) as f64 / 1000.0,
             incidents_dropped: self.incidents_dropped.load(Relaxed),
+            output_restarts: self.output_restarts.load(Relaxed),
         }
     }
 
@@ -261,7 +274,7 @@ impl Health {
         for a in [
             &self.callbacks, &self.playing_frames, &self.load_sum_micro, &self.load_max_micro, &self.callback_overruns, &self.late_callbacks, &self.lock_misses, &self.underrun_events, &self.underrun_frames,
             &self.nonfinite_samples, &self.clipped_samples, &self.decode_errors, &self.deck_failures, &self.decode_stopped_early, &self.slow_starts, &self.slow_decodes, &self.output_errors,
-            &self.start_latency_max_us, &self.decode_speed_min_milli, &self.incidents_dropped,
+            &self.start_latency_max_us, &self.decode_speed_min_milli, &self.incidents_dropped, &self.output_restarts,
         ] {
             a.store(0, Relaxed);
         }
@@ -294,6 +307,7 @@ fn diff(a: &EngineHealth, b: &EngineHealth) -> EngineHealth {
         start_latency_max_ms: a.start_latency_max_ms,
         decode_speed_min: a.decode_speed_min,
         incidents_dropped: a.incidents_dropped.saturating_sub(b.incidents_dropped),
+        output_restarts: a.output_restarts.saturating_sub(b.output_restarts),
     }
 }
 
@@ -374,7 +388,7 @@ pub fn engine_report_json(report: EngineReport) -> String {
         "decodeErrors": d.decode_errors, "deckFailures": d.deck_failures, "decodeStoppedEarly": d.decode_stopped_early,
         "slowStarts": d.slow_starts, "startLatencyMaxMs": round(report.totals.start_latency_max_ms),
         "slowDecodes": d.slow_decodes, "decodeSpeedMin": round(report.totals.decode_speed_min),
-        "outputErrors": d.output_errors, "incidentsDropped": d.incidents_dropped,
+        "outputErrors": d.output_errors, "outputRestarts": d.output_restarts, "incidentsDropped": d.incidents_dropped,
         "severe": report.severe, "groups": g,
     })
     .to_string()

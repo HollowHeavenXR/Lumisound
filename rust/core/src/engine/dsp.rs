@@ -347,3 +347,72 @@ impl Compressor {
         (l * g, r * g)
     }
 }
+
+/// Transparent look-ahead peak limiter for the master output (replaces a
+/// hard clip, which turned overloads from EQ boosts / crossfade overlap /
+/// reverb into harsh distortion). Delays the signal by `LOOKAHEAD` samples
+/// so gain reduction is fully in place before a peak arrives; the gain
+/// follows a sliding-window minimum, ramps down over the look-ahead (no
+/// instant steps) and releases smoothly. Below the threshold it's a pure
+/// delay: bit-exact, no coloration.
+pub struct Limiter {
+    threshold: f32,
+    delay: Vec<[f32; 2]>,
+    pos: usize,
+    /// Monotonic deque over the look-ahead window: (index, required gain).
+    window: std::collections::VecDeque<(u64, f32)>,
+    index: u64,
+    gain: f32,
+    attack_step: f32,
+    release: f32,
+}
+
+pub const LOOKAHEAD_MS: f32 = 1.5;
+
+impl Limiter {
+    pub fn new(rate: f32) -> Self {
+        let la = ((rate * LOOKAHEAD_MS / 1000.0) as usize).max(8);
+        Self {
+            threshold: 0.966, // -0.3 dBFS: headroom for inter-sample peaks
+            delay: vec![[0.0; 2]; la],
+            pos: 0,
+            window: std::collections::VecDeque::with_capacity(la + 1),
+            index: 0,
+            gain: 1.0,
+            attack_step: 1.0 / la as f32,
+            release: 1.0 - (-1.0 / (rate * 0.08)).exp(), // ~80 ms
+        }
+    }
+
+    pub fn latency(&self) -> usize {
+        self.delay.len()
+    }
+
+    #[inline]
+    pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+        let la = self.delay.len() as u64;
+        let peak = l.abs().max(r.abs());
+        let need = if peak > self.threshold { self.threshold / peak } else { 1.0 };
+        // Sliding minimum of the required gain over the look-ahead window.
+        while self.window.back().is_some_and(|&(_, g)| g >= need) {
+            self.window.pop_back();
+        }
+        self.window.push_back((self.index, need));
+        while self.window.front().is_some_and(|&(i, _)| i + la <= self.index) {
+            self.window.pop_front();
+        }
+        let target = self.window.front().map_or(1.0, |&(_, g)| g);
+        if target < self.gain {
+            // Reach the target by the time the peak leaves the delay line.
+            self.gain = (self.gain - self.attack_step).max(target);
+        } else {
+            self.gain += (target - self.gain) * self.release;
+        }
+        let out = self.delay[self.pos];
+        self.delay[self.pos] = [l, r];
+        self.pos = (self.pos + 1) % self.delay.len();
+        self.index += 1;
+        let g = self.gain.min(1.0);
+        (out[0] * g, out[1] * g)
+    }
+}

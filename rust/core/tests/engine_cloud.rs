@@ -264,6 +264,7 @@ fn cloud_tracks_through_engine_and_effects() {
     std::fs::create_dir_all(&unlocked).unwrap();
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "lms")).collect();
     files.sort();
+    assert!(!files.is_empty(), "LUMI_CLOUD_DIR has no .lms tracks: nothing would be tested");
     let mut tracks = Vec::new();
     for f in &files {
         let out = unlocked.join(f.file_stem().unwrap());

@@ -274,7 +274,7 @@ fn engine_quality_report() {
         let seg = &out[(rate * 1.0) as usize..(rate * 2.0) as usize];
         let peak = raw.iter().fold(0f32, |m, v| m.max(v.abs())) as f64;
         check(&mut rows, "EQ +9 dB on hot tone", "THD+N dB", thdn_db(seg, rate, &[1000.0]), -30.0, true);
-        check(&mut rows, "EQ +9 dB on hot tone", "peak", peak, 1.0, true);
+        check(&mut rows, "EQ +9 dB on hot tone", "peak", peak, 0.97, true);
     }
 
     // --- Clicks at every transition (200 Hz sine: smooth, known curvature) ---

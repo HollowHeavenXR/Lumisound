@@ -4,7 +4,7 @@
 
 use super::deck::Deck;
 use super::binaural::Binaural;
-use super::dsp::{Compressor, Eq10, Ramp, Reverb};
+use super::dsp::{Compressor, Eq10, Limiter, Ramp, Reverb};
 use super::health::{EngineIncident, Health, IncidentKind, PlaybackPhase, SLOW_START_MS, atomic_max};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -105,6 +105,7 @@ pub struct Mixer {
     eq: Eq10,
     reverb: Reverb,
     comp: Compressor,
+    limiter: Limiter,
     mono: bool,
     spatial: Binaural,
     pan_hz: f32,
@@ -140,7 +141,7 @@ struct Monitor {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
+        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -227,13 +228,28 @@ impl Mixer {
                     self.end_cur_starve(o.0, o.1);
                 }
                 self.mon.fade_starve = 0;
-                if let Some(old) = self.cur.replace(d) {
-                    self.retire(old);
-                }
                 if let Some((f, _)) = self.fading.take() {
                     self.retire(f);
                 }
-                self.fade_in = Ramp::new(1.0);
+                // Seek / load: a 10 ms micro-crossfade from the old position to
+                // the new one instead of a hard cut (which clicks on any
+                // waveform that isn't at a zero crossing).
+                let xf = self.short_fade();
+                match self.cur.replace(d) {
+                    Some(old) if self.playing && old.frames_played > 0 => {
+                        let mut down = Ramp::new(1.0);
+                        down.to(0.0, xf);
+                        self.fading = Some((old, down));
+                        self.equal_power = true;
+                        self.fade_in = Ramp::new(0.0);
+                        self.fade_in.to(1.0, xf);
+                    }
+                    Some(old) => {
+                        self.retire(old);
+                        self.fade_in = Ramp::new(1.0);
+                    }
+                    None => self.fade_in = Ramp::new(1.0),
+                }
                 let id = self.cur.as_ref().unwrap().id;
                 self.tele.deck_id.store(id, Ordering::Relaxed);
             }
@@ -286,8 +302,18 @@ impl Mixer {
     }
 
     /// Fill `out` (interleaved stereo f32).
+    /// Apply queued commands without rendering: used by the control side
+    /// when the output callback isn't running (interrupted session, dead
+    /// route), so play/pause/seek still take effect instead of piling up.
+    pub fn drain_commands(&mut self) {
+        while let Ok(c) = self.cmds.pop() {
+            self.apply(c);
+        }
+    }
+
     pub fn render(&mut self, out: &mut [f32]) {
         let t_start = std::time::Instant::now();
+        self.tele.health.last_callback_ns.store(super::health::mono_ns(), Ordering::Relaxed);
         while let Ok(c) = self.cmds.pop() {
             self.apply(c);
         }
@@ -300,8 +326,11 @@ impl Mixer {
                 self.pausing = false;
             }
             if !self.playing {
-                frame[0] = 0.0;
-                frame[1] = 0.0;
+                // Keep the limiter's look-ahead line draining (silence in),
+                // or its last 1.5 ms would be cut off: a click on pause.
+                let (l, r) = self.limiter.process(0.0, 0.0);
+                frame[0] = l;
+                frame[1] = r;
                 continue;
             }
             playing_frames += 1;
@@ -406,10 +435,14 @@ impl Mixer {
             (l, r) = self.spatial.process(l, r);
             let tau = std::f32::consts::TAU;
             if self.pan_hz > 0.0 {
-                // Balance swing like AVAudioMixerNode.pan = sin(phase) * 0.5.
+                // Constant-power balance swing: gains sqrt(1±x) keep L²+R²
+                // steady as the sound circles (the old linear attenuation
+                // dipped ~2 dB at each side). x = 0.6 gives the same 2:1
+                // (6 dB) side-to-side ratio as before.
                 self.pan_phase = (self.pan_phase + tau * self.pan_hz / self.rate as f32) % tau;
-                let p = self.pan_phase.sin() * 0.5;
-                if p > 0.0 { l *= 1.0 - p } else { r *= 1.0 + p }
+                let x = self.pan_phase.sin() * 0.6;
+                l *= (1.0 - x).sqrt();
+                r *= (1.0 + x).sqrt();
             }
             if self.vib_amp > 0.0 {
                 let n = self.vib_buf.len();
@@ -443,7 +476,10 @@ impl Mixer {
             if l.abs() > 1.0 || r.abs() > 1.0 {
                 clipped += 1;
             }
-            // Soft safety clip (EQ boosts + crossfade overlap can exceed 0 dBFS).
+            // Look-ahead limiter instead of a hard clip: EQ boosts, crossfade
+            // overlap or reverb pushing past full scale are turned down
+            // smoothly rather than squared off (harsh distortion).
+            (l, r) = self.limiter.process(l, r);
             frame[0] = l.clamp(-1.0, 1.0);
             frame[1] = r.clamp(-1.0, 1.0);
             self.tele.tap.push((frame[0] + frame[1]) * 0.5);

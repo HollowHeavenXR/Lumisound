@@ -346,27 +346,60 @@ impl AudioEngine {
         deck::open(id, path, start, self.output_rate(), db_to_lin(gain_db), speed, pitch, nudge, self.tele.clone()).map_err(|m| EngineError::Open { message: m })
     }
 
+    /// Queue a command for the audio callback. Never blocks the caller (the
+    /// main thread): if the queue is full because the callback isn't running
+    /// — another app took the audio session, the route died — the commands
+    /// are applied to the mixer directly. (This used to wait forever, which
+    /// froze play/pause/seek after an interruption.)
     fn send(&self, c: Cmd) {
         let mut q = self.cmds.lock().unwrap();
         let mut c = c;
-        // The callback drains every buffer; if it is stalled (no output yet),
-        // render inline so commands still take effect.
-        loop {
+        for attempt in 0..5 {
             match q.push(c) {
                 Ok(()) => return,
                 Err(rtrb::PushError::Full(back)) => {
                     c = back;
-                    std::thread::sleep(Duration::from_millis(2));
+                    if attempt < 4 {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
                 }
             }
         }
+        // Callback stalled: apply what's queued ourselves, then enqueue.
+        if let Ok(mut m) = self.mixer.lock() {
+            m.drain_commands();
+        }
+        let _ = q.push(c);
     }
+
 
     /// Offline render (tests / export): pull `frames` stereo frames.
     pub fn render_offline(&self, frames: usize) -> Vec<f32> {
         let mut buf = vec![0f32; frames * 2];
         self.mixer.lock().unwrap().render(&mut buf);
         buf
+    }
+}
+
+#[uniffi::export]
+impl AudioEngine {
+    /// True when the output callback ran within the last `max_age_ms`.
+    /// (False before output starts or while iOS has it stopped.)
+    pub fn output_alive(&self, max_age_ms: u32) -> bool {
+        let last = self.tele.health.last_callback_ns.load(Ordering::Relaxed);
+        last != 0 && health::mono_ns().saturating_sub(last) <= max_age_ms as u64 * 1_000_000
+    }
+
+    /// Tear down and reopen the output stream on the current route (after an
+    /// interruption, a Bluetooth reconnect, or a stalled callback). The
+    /// mixer, decks and position are untouched; queued commands are applied.
+    pub fn restart_output(&self) -> Result<(), EngineError> {
+        *self.output.lock().unwrap() = None;
+        if let Ok(mut m) = self.mixer.lock() {
+            m.drain_commands();
+        }
+        self.tele.health.output_restarts.fetch_add(1, Ordering::Relaxed);
+        self.start_output()
     }
 }
 
@@ -746,5 +779,25 @@ mod tests {
         assert_eq!(j["groups"][0]["kind"], "underrun");
         assert!(e.incidents().is_empty(), "report drains the log");
         let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn commands_never_block_when_output_is_stalled() {
+        // No output callback at all (as after another app takes the session):
+        // 2,000 commands must not hang the caller, and they must take effect.
+        let l = Arc::new(L(Mutex::new(vec![])));
+        let e = AudioEngine::new(l);
+        assert!(!e.output_alive(1000), "no callback yet");
+        let t = std::time::Instant::now();
+        for i in 0..2000 {
+            e.set_volume((i % 10) as f32 / 10.0);
+            e.play();
+            e.pause(0.0);
+        }
+        assert!(t.elapsed() < Duration::from_secs(2), "send blocked: {:?}", t.elapsed());
+        e.play();
+        e.render_offline(256);
+        assert!(e.output_alive(1000), "a render counts as a callback");
+        assert!(e.is_playing(), "the last command won");
     }
 }
