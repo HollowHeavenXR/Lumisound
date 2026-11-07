@@ -206,7 +206,7 @@ impl Mixer {
                 self.eq.set_gains(&gains);
             }
             Cmd::Effects { reverb_wet, reverb_preset, mono, night } => {
-                self.reverb.wet = reverb_wet.clamp(0.0, 1.0);
+                self.reverb.set_wet(reverb_wet);
                 self.reverb.set_preset(&reverb_preset);
                 self.mono = mono;
                 self.comp.enabled = night;

@@ -275,10 +275,34 @@ impl Allpass {
 pub struct Reverb {
     combs: [Vec<Comb>; 2],
     allpasses: [Vec<Allpass>; 2],
-    pub wet: f32,
+    /// Mix, gliding to `wet_target` (~40 ms): slider moves don't zipper and
+    /// switching off fades the tail instead of cutting it (a click + a jump
+    /// in the dry level).
+    wet: f32,
+    wet_target: f32,
+    wet_coef: f32,
+    /// Fully off and cleared: turning it back on never replays old echoes.
+    idle: bool,
     pub room: f32,
     pub damp: f32,
     pub width: f32,
+    /// Pre-delay (per room size) so the dry sound lands before the room,
+    /// like a real space; and a ~120 Hz low cut on what feeds the tank, so
+    /// bass doesn't turn the tail to mud.
+    pre: Vec<f32>,
+    pre_w: usize,
+    pre_len: usize,
+    /// Previous pre-delay during a preset change (crossfaded out over 30 ms).
+    pre_old: usize,
+    pre_xf: f32,
+    /// Tank input level, ramped 0 → 1 over 150 ms when the reverb starts:
+    /// the music was already playing, so the room must fade in, not be
+    /// "struck" by an abrupt onset (which rang broadband for ~1 s).
+    feed: f32,
+    rate: f32,
+    hp_a: f32,
+    hp_x1: f32,
+    hp_y1: f32,
 }
 
 impl Reverb {
@@ -292,32 +316,105 @@ impl Reverb {
         };
         let (cl, al) = mk(0);
         let (cr, ar) = mk(STEREO_SPREAD);
-        Self { combs: [cl, cr], allpasses: [al, ar], wet: 0.0, room: 0.5, damp: 0.5, width: 1.0 }
+        let hp_rc = 1.0 / (std::f32::consts::TAU * 120.0);
+        Self {
+            combs: [cl, cr],
+            allpasses: [al, ar],
+            wet: 0.0,
+            wet_target: 0.0,
+            wet_coef: 1.0 - (-1.0 / (0.04 * rate)).exp(),
+            idle: true,
+            room: 0.5,
+            damp: 0.5,
+            width: 1.0,
+            pre: vec![0.0; (rate * 0.06) as usize + 1],
+            pre_w: 0,
+            pre_len: (rate * 0.01) as usize,
+            pre_old: 0,
+            pre_xf: 1.0,
+            feed: 0.0,
+            rate,
+            hp_a: hp_rc / (hp_rc + 1.0 / rate),
+            hp_x1: 0.0,
+            hp_y1: 0.0,
+        }
+    }
+
+    pub fn set_wet(&mut self, wet: f32) {
+        self.wet_target = wet.clamp(0.0, 1.0);
+    }
+
+    fn clear(&mut self) {
+        for ch in 0..2 {
+            for c in self.combs[ch].iter_mut() {
+                c.buf.fill(0.0);
+                c.store = 0.0;
+            }
+            for a in self.allpasses[ch].iter_mut() {
+                a.buf.fill(0.0);
+            }
+        }
+        self.pre.fill(0.0);
+        self.hp_x1 = 0.0;
+        self.hp_y1 = 0.0;
     }
 
     /// Room presets matching the app's ReverbRoomPreset names.
     pub fn set_preset(&mut self, name: &str) {
-        let (room, damp) = match name {
-            "smallRoom" => (0.35, 0.6),
-            "mediumRoom" => (0.55, 0.5),
-            "largeRoom" | "largeRoom2" => (0.75, 0.4),
-            "mediumHall" | "mediumHall2" | "mediumHall3" => (0.8, 0.35),
-            "largeHall" | "largeHall2" => (0.88, 0.3),
-            "plate" => (0.7, 0.15),
-            "cathedral" => (0.95, 0.25),
-            "mediumChamber" | "largeChamber" => (0.65, 0.45),
-            _ => (0.55, 0.5),
+        // (room, damping, pre-delay ms)
+        let (room, damp, pre_ms) = match name {
+            "smallRoom" => (0.35, 0.6, 4.0),
+            "mediumRoom" => (0.55, 0.5, 9.0),
+            "largeRoom" | "largeRoom2" => (0.75, 0.4, 14.0),
+            "mediumHall" | "mediumHall2" | "mediumHall3" => (0.8, 0.35, 22.0),
+            "largeHall" | "largeHall2" => (0.88, 0.3, 30.0),
+            "plate" => (0.7, 0.15, 1.0),
+            "cathedral" => (0.95, 0.25, 45.0),
+            "mediumChamber" | "largeChamber" => (0.65, 0.45, 12.0),
+            _ => (0.55, 0.5, 9.0),
         };
         self.room = room;
         self.damp = damp;
+        let len = ((pre_ms / 1000.0 * self.rate) as usize).min(self.pre.len() - 1);
+        if len != self.pre_len {
+            self.pre_old = self.pre_len;
+            self.pre_len = len;
+            self.pre_xf = 0.0;
+        }
     }
 
     #[inline]
     pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
-        if self.wet <= 0.0001 {
+        if self.wet_target <= 1e-4 && self.wet <= 1e-5 {
+            if !self.idle {
+                self.clear();
+                self.idle = true;
+                self.wet = 0.0;
+                self.feed = 0.0;
+            }
             return (l, r);
         }
-        let input = (l + r) * 0.015;
+        self.idle = false;
+        self.wet += (self.wet_target - self.wet) * self.wet_coef;
+        let x = (l + r) * 0.5;
+        let y = self.hp_a * (self.hp_y1 + x - self.hp_x1);
+        self.hp_x1 = x;
+        self.hp_y1 = y;
+        let n = self.pre.len();
+        self.pre[self.pre_w] = y;
+        let mut delayed = self.pre[(self.pre_w + n - self.pre_len) % n];
+        if self.pre_xf < 1.0 {
+            let old = self.pre[(self.pre_w + n - self.pre_old) % n];
+            delayed = old + (delayed - old) * self.pre_xf;
+            self.pre_xf = (self.pre_xf + 1.0 / (0.03 * self.rate)).min(1.0);
+        }
+        self.pre_w = (self.pre_w + 1) % n;
+        if self.feed < 1.0 {
+            self.feed = (self.feed + 1.0 / (0.15 * self.rate)).min(1.0);
+        }
+        // Raised-cosine shape: smooth at both ends of the ramp.
+        let fg = 0.5 - 0.5 * (std::f32::consts::PI * self.feed).cos();
+        let input = delayed * 0.03 * fg;
         let fb = self.room * 0.28 + 0.7;
         let damp = self.damp * 0.4;
         let mut out = [0f32; 2];

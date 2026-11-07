@@ -369,6 +369,27 @@ fn engine_quality_report() {
         }
     }
 
+    // --- Reverb: switching it on/off never clicks or jumps in level ---
+    {
+        let tone = d.join("rev.wav");
+        wav(&tone, 48_000, 6.0, &[(200.0, 0.4)]);
+        let (e, _) = engine();
+        e.load(tone.to_string_lossy().into(), 0.0, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        e.play();
+        let mut x = left(&pump(&e, 0.4));
+        e.set_effects(0.5, "largeHall".into(), false, false);
+        x.extend(left(&pump(&e, 1.5)));
+        e.set_effects(0.0, "largeHall".into(), false, false);
+        x.extend(left(&pump(&e, 1.0)));
+        e.set_effects(0.35, "smallRoom".into(), false, false);
+        x.extend(left(&pump(&e, 0.6)));
+        // The reverb's own output can sum above the dry level; judge clicks
+        // against the loudest the signal gets.
+        let peak = x.iter().fold(0f64, |m, v| m.max(v.abs()));
+        check(&mut rows, "reverb on/off/preset", "click score", click_score(&x, rate, 200.0, peak), 8.0, true);
+    }
+
     // --- Vibrato: no click switching it on/off; the swing it was asked for ---
     {
         let tone = d.join("vib.wav");
