@@ -454,7 +454,7 @@ struct LumisoundApp: App {
                 }
                 .onAppear {
                     bgService.loadSettings()
-                    if bgService.isEnabled, !bgService.images.isEmpty {
+                    if bgService.isEnabled, bgService.hasImages {
                         bgService.startShuffling()
                     }
                 }
