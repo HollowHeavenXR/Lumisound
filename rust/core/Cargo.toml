@@ -49,3 +49,6 @@ mlua = { version = "0.10", features = ["lua54", "vendored", "serialize", "send"]
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 cpal = "0.15"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }

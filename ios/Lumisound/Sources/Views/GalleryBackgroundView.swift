@@ -33,11 +33,10 @@ struct GalleryBackgroundView: View {
                 }
 
                 // Read directly from the service — no intermediate @State needed.
-                // currentIndex change drives the transition; the image is always
-                // images[currentIndex % count] so the first image appears the
-                // moment isEnabled + images are both true, without any onAppear
-                // ordering dependency.
-                if bg.isEnabled, !bg.images.isEmpty {
+                // The gallery engine (Rust) picks what's on screen; the service
+                // hands over the decoded image and its entry id, and a change
+                // of id drives the transition.
+                if bg.isEnabled, let image = bg.currentImage, let id = bg.currentEntryID {
                     // Driving the swap through a single-element ForEach (rather
                     // than a bare `.id()` on one conditional Image) is what makes
                     // the crossfade actually overlap: ForEach tracks the leaving
@@ -47,8 +46,10 @@ struct GalleryBackgroundView: View {
                     // yanked instantly — which is why every animation previously
                     // blanked to the background before the next image faded in.
                     ZStack {
-                        ForEach([bg.currentIndex], id: \.self) { index in
-                            AnimatedImageView(image: bg.images[index % bg.images.count], contentMode: .scaleAspectFill)
+                        // Keyed on the gallery entry (from the Rust gallery
+                        // engine), so each change runs the transition.
+                        ForEach([id], id: \.self) { _ in
+                            AnimatedImageView(image: image, contentMode: .scaleAspectFill)
                                 .frame(width: geo.size.width, height: geo.size.height)
                                 .clipped()
                                 .modifier(KenBurnsModifier(isActive: bg.kenBurnsEnabled && !reduceMotion))

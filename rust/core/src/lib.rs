@@ -14,6 +14,7 @@ pub mod cache;
 pub mod client;
 pub mod downloads;
 pub mod dropdown;
+pub mod gallery;
 pub mod duplicates;
 pub mod engine;
 pub mod import;

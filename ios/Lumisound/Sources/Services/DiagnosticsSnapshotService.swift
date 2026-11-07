@@ -360,7 +360,7 @@ enum DiagnosticsSnapshotService {
                 "enabled": bg.isEnabled,
                 "source": UserDefaults.standard.string(forKey: GalleryBackgroundSource.storageKey)
                     ?? GalleryBackgroundSource.photos.rawValue,
-                "imageCount": bg.images.count,
+                "imageCount": bg.imageCount,
                 // The "is it actually doing something" signal: enabled with
                 // images loaded but the shuffle timer not running means the
                 // toggle is on and nothing is happening — exactly the shape

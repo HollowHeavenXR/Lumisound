@@ -80,7 +80,7 @@ final class HeatGovernor: ObservableObject {
                 "enabled": bg.isEnabled,
                 "source": UserDefaults.standard.string(forKey: GalleryBackgroundSource.storageKey) ?? "photos",
                 "kenBurns": bg.kenBurnsEnabled,
-                "imageCount": bg.images.count,
+                "imageCount": bg.imageCount,
             ]
         }
         if let library = LibraryManager.shared {
