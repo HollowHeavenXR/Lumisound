@@ -39,6 +39,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/discord/oauth/callback", get(discord_callback))
         .route("/api/discord/verification", get(discord_verification).delete(discord_unverify))
         .route("/api/app/latest-release", get(latest_release))
+        .route("/api/app/release-asset/{id}/{name}", get(release_asset))
 }
 
 const AUTH_RATE_LIMIT: usize = 10;
@@ -864,13 +865,16 @@ async fn discord_unverify(State(st): State<AppState>, u: User) -> ApiResult<Stat
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn latest_release(State(st): State<AppState>) -> Json<Value> {
+const RELEASES_API: &str = "https://api.github.com/repos/HollowHeavenXR/Lumisound/releases";
+
+/// GitHub's releases list (cached 5 min; the last good copy if GitHub fails).
+async fn fetch_releases(st: &AppState) -> Value {
     if let Some(v) = st.release_cache.get(&()) {
-        return Json(v);
+        return v;
     }
     let mut req = st
         .http
-        .get("https://api.github.com/repos/HollowHeavenXR/Lumisound/releases")
+        .get(RELEASES_API)
         .header("User-Agent", "Lumisound-Bridge")
         .header("Accept", "application/vnd.github+json")
         .timeout(Duration::from_secs(15));
@@ -882,12 +886,80 @@ async fn latest_release(State(st): State<AppState>) -> Json<Value> {
             Ok(v) => {
                 st.release_cache.set((), v.clone());
                 *st.release_stale.lock().unwrap() = Some(v.clone());
-                return Json(v);
+                return v;
             }
             Err(e) => tracing::warn!("GitHub releases decode failed: {e}"),
         },
-        Ok(r) => tracing::warn!("GitHub releases fetch failed: HTTP {}", r.status()),
+        Ok(r) => tracing::warn!("GitHub releases fetch failed: HTTP {} (private repo needs GITHUB_RELEASES_TOKEN)", r.status()),
         Err(e) => tracing::warn!("GitHub releases fetch failed: {e}"),
     }
-    Json(st.release_stale.lock().unwrap().clone().unwrap_or(json!([])))
+    st.release_stale.lock().unwrap().clone().unwrap_or(json!([]))
+}
+
+/// The address the caller reached this bridge on (behind the tunnel: https).
+fn public_base(headers: &HeaderMap) -> String {
+    let host = headers.get("x-forwarded-host").or_else(|| headers.get("host")).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
+    let proto = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()).unwrap_or_else(|| {
+        let h = host.split(':').next().unwrap_or("");
+        if h == "localhost" || h.parse::<std::net::IpAddr>().is_ok() { "http" } else { "https" }
+    });
+    format!("{proto}://{host}")
+}
+
+async fn latest_release(State(st): State<AppState>, headers: HeaderMap) -> Json<Value> {
+    let mut v = fetch_releases(&st).await;
+    // The repo is private: GitHub's own asset links need a GitHub login, so
+    // the app's "download update" goes through this bridge instead.
+    let base = public_base(&headers);
+    if let Some(list) = v.as_array_mut() {
+        for rel in list {
+            let Some(assets) = rel.get_mut("assets").and_then(Value::as_array_mut) else { continue };
+            for a in assets {
+                let (Some(id), Some(name)) = (a["id"].as_u64(), a["name"].as_str().map(str::to_string)) else { continue };
+                if name.to_lowercase().ends_with(".ipa") {
+                    a["browser_download_url"] = json!(format!("{base}/api/app/release-asset/{id}/{}", urlencoding::encode(&name)));
+                }
+            }
+        }
+    }
+    Json(v)
+}
+
+/// Streams one of the listed releases' .ipa assets (public, like the
+/// release downloads were before the repo went private). Only asset ids that
+/// appear in the releases list are served.
+async fn release_asset(State(st): State<AppState>, Path((id, _name)): Path<(u64, String)>) -> ApiResult<Response> {
+    let releases = fetch_releases(&st).await;
+    let asset = releases
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r["assets"].as_array())
+        .flatten()
+        .find(|a| a["id"].as_u64() == Some(id) && a["name"].as_str().is_some_and(|n| n.to_lowercase().ends_with(".ipa")))
+        .cloned()
+        .ok_or_else(|| AppError::not_found("Unknown release asset"))?;
+    let name = asset["name"].as_str().unwrap_or("Lumisound.ipa").replace(['"', '\\', '/'], "_");
+    let mut req = st
+        .http
+        .get(format!("{RELEASES_API}/assets/{id}"))
+        .header("User-Agent", "Lumisound-Bridge")
+        .header("Accept", "application/octet-stream")
+        .timeout(Duration::from_secs(900));
+    if let Some(t) = &st.cfg.github_releases_token {
+        req = req.bearer_auth(t);
+    }
+    let r = req.send().await.and_then(|r| r.error_for_status()).map_err(|e| {
+        tracing::warn!("release asset {id} fetch failed: {e}");
+        AppError::new(502, "Release download unavailable")
+    })?;
+    let mut res = Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/octet-stream")
+        .header("content-disposition", format!("attachment; filename=\"{name}\""));
+    if let Some(cl) = r.headers().get("content-length") {
+        res = res.header("content-length", cl.clone());
+    }
+    let body = axum::body::Body::from_stream(futures_util::StreamExt::map(r.bytes_stream(), |c| c.map_err(std::io::Error::other)));
+    Ok(res.body(body).unwrap())
 }
