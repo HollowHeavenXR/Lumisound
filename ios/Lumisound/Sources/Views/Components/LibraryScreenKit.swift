@@ -27,31 +27,40 @@ struct HeroArtworkBackdrop: View {
     @State private var image: UIImage?
 
     var body: some View {
-        ZStack {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(height: height)
-                    .clipped()
-                    .blur(radius: 50)
-                    .overlay(Color.black.opacity(0.5))
-            } else {
-                LinearGradient(
-                    colors: [AppTheme.dynamicAccent.opacity(0.45), AppTheme.dynamicAccentSecondary.opacity(0.25)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
+        // The artwork is an OVERLAY on a full-width, fixed-height box, so it
+        // never takes part in sizing. As a `scaledToFill` image with only a
+        // height set, a wide (16:9 YouTube) thumbnail made this view ~680pt
+        // wide; `.clipped()` hid the overflow but the layout still used the
+        // full width, so the whole screen around it (buttons, grid, title)
+        // was laid out wider than the phone — the "UI randomly oversized"
+        // bug, depending on which song's artwork the screen showed.
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .overlay {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .blur(radius: 50)
+                        .overlay(Color.black.opacity(0.5))
+                } else {
+                    LinearGradient(
+                        colors: [AppTheme.dynamicAccent.opacity(0.45), AppTheme.dynamicAccentSecondary.opacity(0.25)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                }
             }
             // Fades the backdrop into the screen's real background at the
             // bottom edge so content below reads as continuous, not a hard-
             // edged banner.
-            LinearGradient(
-                colors: [.clear, AppTheme.background],
-                startPoint: .init(x: 0.5, y: 0.35), endPoint: .bottom
-            )
-        }
-        .frame(height: height)
-        .clipped()
+            .overlay {
+                LinearGradient(
+                    colors: [.clear, AppTheme.background],
+                    startPoint: .init(x: 0.5, y: 0.35), endPoint: .bottom
+                )
+            }
+            .clipped()
         .task(id: song?.id) {
             guard let song else { image = nil; return }
             if let cached = ArtworkService.shared.artwork(for: song) {

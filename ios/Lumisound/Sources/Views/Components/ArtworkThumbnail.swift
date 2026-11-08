@@ -18,6 +18,10 @@ struct ArtworkThumbnail: View {
     /// the cover. Off for places that show the cover on its own (Now
     /// Playing's styles, album covers), where it only dulled the artwork.
     var showsScrim: Bool = true
+    /// Draw the cover with SwiftUI instead of the UIKit `PanningArtwork`.
+    /// Required inside a `.drawingGroup()` (Now Playing's styles), which
+    /// renders UIKit views blank.
+    var drawsInSwiftUI: Bool = false
 
     @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage? = nil
@@ -36,9 +40,15 @@ struct ArtworkThumbnail: View {
             if let image {
                 // The whole picture: non-square art slides across the frame
                 // instead of being cropped (see `PanningArtwork`).
-                PanningArtwork(image: image)
-                    .frame(width: size, height: size)
-                    .transition(.opacity)
+                Group {
+                    if drawsInSwiftUI {
+                        SwiftUIPanningArtwork(image: image, size: size)
+                    } else {
+                        PanningArtwork(image: image)
+                            .frame(width: size, height: size)
+                    }
+                }
+                .transition(.opacity)
 
                 if showsScrim {
                     LinearGradient(

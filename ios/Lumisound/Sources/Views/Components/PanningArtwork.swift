@@ -116,3 +116,43 @@ final class PanningImageView: UIView {
 
     private var wantsPan: Bool { !UIAccessibility.isReduceMotionEnabled }
 }
+
+/// `PanningArtwork` drawn by SwiftUI itself, for covers that sit inside a
+/// `.drawingGroup()` — every animated Now Playing style flattens its stage
+/// that way, and SwiftUI cannot draw a UIKit view (`PanningArtwork`) into a
+/// drawing group: the cover rendered blank there, so Now Playing showed only
+/// the placeholder while every other screen showed the artwork. Same fill,
+/// pace and Reduce Motion behaviour; only used for a single on-screen cover,
+/// where per-frame redraw is no concern (those styles redraw every frame).
+struct SwiftUIPanningArtwork: View {
+    let image: UIImage
+    let size: CGFloat
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var atEnd = false
+
+    var body: some View {
+        let w = max(image.size.width, 1), h = max(image.size.height, 1)
+        let aspect = w / h
+        let fill = aspect > 1 ? CGSize(width: size * aspect, height: size) : CGSize(width: size, height: size / aspect)
+        let overflowX = fill.width - size, overflowY = fill.height - size
+        let horizontal = overflowX >= overflowY
+        let travel = max(overflowX, overflowY)
+        let pans = travel > 2 && !reduceMotion
+        let shift: CGFloat = pans ? (atEnd ? -travel / 2 : travel / 2) : 0
+
+        Image(uiImage: image)
+            .resizable()
+            .frame(width: fill.width, height: fill.height)
+            .offset(x: horizontal ? shift : 0, y: horizontal ? 0 : shift)
+            .frame(width: size, height: size)
+            .clipped()
+            .onAppear {
+                guard pans else { return }
+                atEnd = false
+                withAnimation(.easeInOut(duration: max(5, Double(travel / (size * 0.06)))).repeatForever(autoreverses: true)) {
+                    atEnd = true
+                }
+            }
+    }
+}
