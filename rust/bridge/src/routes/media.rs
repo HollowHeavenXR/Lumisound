@@ -169,21 +169,49 @@ impl AppState {
         if let Some(u) = self.stream_urls.get(&key) {
             return Ok((u, false));
         }
+        if let Some((code, d)) = self.stream_failures.get(&key) {
+            return Err(AppError::new(code, d));
+        }
+        // AVPlayer/AVURLAsset open a stream with a burst of range requests;
+        // without this every one of them ran its own yt-dlp (one song was
+        // resolved 342 times in two days, 35-85 s each behind the limiter).
+        let lock = self.stream_resolving.entry(key.clone()).or_default().clone();
+        let _guard = lock.lock().await;
+        if let Some(u) = self.stream_urls.get(&key) {
+            return Ok((u, false));
+        }
+        if let Some((code, d)) = self.stream_failures.get(&key) {
+            return Err(AppError::new(code, d));
+        }
         let start = Instant::now();
-        let (url, reason) = self.ytdlp.raw_url(target, ytdlp::format_flag(format), user_id).await.map_err(|e| timeout_err(e, "Stream URL fetch timed out"))?;
+        let res = self.ytdlp.raw_url(target, ytdlp::format_flag(format), user_id).await;
         let ms = start.elapsed().as_millis();
-        match url {
-            Some(u) => {
-                self.stream_urls.set(key, u.clone());
+        let out = match res {
+            Err(e) => {
+                let err = timeout_err(e, "Stream URL fetch timed out");
+                let detail = err.detail.as_str().unwrap_or("Stream URL fetch timed out").to_string();
+                self.stream_failures.set_ttl(key.clone(), (err.status.as_u16(), detail), Duration::from_secs(15));
+                Err(err)
+            }
+            Ok((Some(u), _)) => {
+                self.stream_resolved_at.set(key.clone(), Instant::now());
+                self.stream_urls.set(key.clone(), u.clone());
                 self.spawn_log_stream(user_id.map(str::to_string), source, id, "success", None, ms);
                 Ok((u, true))
             }
-            None => {
+            Ok((None, reason)) => {
+                // A known reason (unavailable, private, sign-in) won't change
+                // in seconds; an unexplained miss gets a short memory only.
+                let ttl = if reason.is_some() { 300 } else { 30 };
                 let d = reason.unwrap_or_else(|| "No stream URL found".into());
+                self.stream_failures.set_ttl(key.clone(), (404, d.clone()), Duration::from_secs(ttl));
                 self.spawn_log_stream(user_id.map(str::to_string), source, id, "failed", Some(d.clone()), ms);
                 Err(AppError::not_found(d))
             }
-        }
+        };
+        drop(_guard);
+        self.stream_resolving.remove_if(&key, |_, l| Arc::strong_count(l) <= 2);
+        out
     }
 }
 
@@ -344,12 +372,17 @@ async fn stream_proxy(State(st): State<AppState>, headers: HeaderMap, Q(p): Q<St
     source = source.to_string();
     let target = target_for(&source, &id, &p.url).await?;
     let user = uid(&st, &headers);
-    let (raw_url, fresh) = st.resolve_stream_url(&source, &id, &format, &target, user.as_deref()).await?;
-    if fresh {
-        // googlevideo 403s a URL fetched the instant it was resolved.
-        tokio::time::sleep(Duration::from_secs(3)).await;
-    }
+    let (raw_url, _fresh) = st.resolve_stream_url(&source, &id, &format, &target, user.as_deref()).await?;
     let cache_key = format!("{source}:{id}:{format}");
+    // googlevideo 403s a URL fetched the instant it was resolved — that
+    // holds for every request sharing the URL, not just the one that ran
+    // yt-dlp (the others used to fail with 502 and evict it).
+    if let Some(at) = st.stream_resolved_at.get(&cache_key) {
+        let wait = Duration::from_secs(3).saturating_sub(at.elapsed());
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
+        }
+    }
     let mut req = st.cdn.get(&raw_url).header("User-Agent", IPHONE_UA);
     if let Some(r) = headers.get("range") {
         req = req.header("Range", r.clone());
@@ -712,7 +745,8 @@ async fn do_download_job(
                     cookies = forced;
                 }
             }
-            if attempt == max_attempts {
+            // A removed/private video fails the same way every time.
+            if attempt == max_attempts || is_permanent_failure(&out.stderr) {
                 let detail = yt.auth_failure_reason(&out.stderr).unwrap_or_else(|| generic_failure_summary(&out.stderr));
                 return Err((404, detail, is_permanent_failure(&out.stderr)));
             }

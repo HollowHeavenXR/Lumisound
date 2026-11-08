@@ -34,6 +34,15 @@ pub struct Inner {
     pub live: LiveHub,
     pub search_cache: TtlCache<String, Value>,
     pub stream_urls: TtlCache<String, String>,
+    /// Recent resolve failures (key -> (status, reason)): a dead or
+    /// unavailable video answers from here instead of spawning yt-dlp again.
+    pub stream_failures: TtlCache<String, (u16, String)>,
+    /// One yt-dlp resolve per (source, id, format) at a time; concurrent
+    /// requests for the same track wait for it and share its result.
+    pub stream_resolving: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+    /// When each stream URL was resolved: googlevideo 403s a URL fetched
+    /// within ~3 s of being issued, for every request that shares it.
+    pub stream_resolved_at: TtlCache<String, Instant>,
     pub stream_tickets: TtlCache<String, String>,
     pub inventory: TtlCache<String, Arc<HashSet<String>>>,
     pub download_jobs: DashMap<String, Job>,
@@ -109,6 +118,9 @@ impl AppState {
             live: LiveHub::default(),
             search_cache: TtlCache::new(Duration::from_secs(3600), 500),
             stream_urls: TtlCache::new(Duration::from_secs(5 * 3600), 20_000),
+            stream_failures: TtlCache::new(Duration::from_secs(60), 5000),
+            stream_resolving: DashMap::new(),
+            stream_resolved_at: TtlCache::new(Duration::from_secs(10), 5000),
             stream_tickets: TtlCache::new(Duration::from_secs(6 * 3600), 5000),
             inventory: TtlCache::new(Duration::from_secs(30), 5000),
             download_jobs: DashMap::new(),
@@ -150,6 +162,7 @@ impl AppState {
                 st.session_cache.retain(|_, until| *until > now);
                 st.stream_tickets.sweep();
                 st.stream_urls.sweep();
+                st.stream_failures.sweep();
                 st.auth_attempts.retain(|_, v| v.iter().any(|t| now.duration_since(*t) < Duration::from_secs(60)));
             }
         });

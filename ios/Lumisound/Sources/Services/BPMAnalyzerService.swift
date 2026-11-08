@@ -28,6 +28,8 @@ actor BPMAnalyzerService {
     /// Tempo of the first 60 s, cached by path + mtime + size (Rust core:
     /// symphonia decode + energy-onset autocorrelation, as on the bridge).
     func bpm(for url: URL) async -> Double? {
+        // Streams are analysed from their downloaded copy only (StreamCache).
+        guard let url = StreamCache.localURL(for: url) else { return nil }
         let path = url.standardizedFileURL.path
         if let v = bpmCached(path: path) { return v }
         // Formats the core decoder can't read (Opus/WebM) are decoded here.
@@ -42,6 +44,7 @@ actor BPMAnalyzerService {
     /// Mono 16-bit PCM at `sampleRate` for the first `maxSeconds` — decoded by
     /// the Rust core; AVAssetReader only for formats it can't read.
     static func decodeMono(url: URL, sampleRate: Double, maxSeconds: Double) async -> [Int16]? {
+        guard let url = StreamCache.localURL(for: url) else { return nil }
         if let s = CoreAudio.mono(path: url.path, sampleRate: sampleRate, start: 0, maxSeconds: maxSeconds) {
             return s
         }
@@ -54,6 +57,7 @@ actor BPMAnalyzerService {
     /// `PitchContourService` (hum-to-search) reuses this exact decode path
     /// rather than duplicating its own `AVAssetReader` boilerplate.
     static func decodeMonoAV(url: URL, sampleRate: Double, maxSeconds: Double) async -> [Int16]? {
+        guard let url = StreamCache.localURL(for: url) else { return nil }
         // Shared decode path reused by tempo detection, Hum-to-Search
         // (PitchContourService), and Skip Silent Intros (SilenceTrimAnalyzer)
         // -- a `.lms`-locked url's on-disk bytes are XOR-masked and

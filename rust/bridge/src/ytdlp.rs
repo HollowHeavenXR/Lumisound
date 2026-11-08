@@ -28,6 +28,7 @@ const RATE_LIMIT_MARKERS: &[&str] = &[
 ];
 const PERMANENT_FAILURE_MARKERS: &[&str] = &[
     "video unavailable",
+    "video is unavailable",
     "private video",
     "this video is private",
     "removed by the uploader",
@@ -561,7 +562,8 @@ impl Ytdlp {
             start.elapsed().as_secs_f64(),
             tail(&String::from_utf8_lossy(&last_stderr), 500)
         );
-        Ok((None, self.auth_failure_reason(&last_stderr)))
+        let reason = self.auth_failure_reason(&last_stderr).or_else(|| is_permanent_failure(&last_stderr).then(|| generic_failure_summary(&last_stderr)));
+        Ok((None, reason))
     }
 }
 

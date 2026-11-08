@@ -915,7 +915,9 @@ final class ArtworkService {
            let image = UIImage(data: data) {
             return image
         }
-        let avURL = fallbackURL ?? url
+        // Never over the network: for a streamed song this used to open the
+        // bridge's stream proxy and set off a yt-dlp run per range request.
+        guard let avURL = StreamCache.localURL(for: fallbackURL ?? url) else { return nil }
         return await Task.detached(priority: .utility) {
             let asset = AVURLAsset(url: avURL)
 
@@ -958,6 +960,7 @@ final class ArtworkService {
            let u = URL(string: s) {
             return u
         }
+        guard let url = StreamCache.localURL(for: url) else { return nil }
         return await Task.detached(priority: .utility) {
             let asset = AVURLAsset(url: url)
             guard let allMeta = try? await asset.load(.metadata) else { return nil as URL? }
@@ -979,6 +982,7 @@ final class ArtworkService {
     /// Extracts the first frame of a video file as a thumbnail.
     /// Uses the modern async `image(at:)` API on iOS 16+ with sync fallback.
     private func extractVideoFrame(url: URL) async -> UIImage? {
+        guard let url = StreamCache.localURL(for: url) else { return nil }
         return await Task.detached(priority: .utility) {
             let asset = AVURLAsset(url: url)
             let generator = AVAssetImageGenerator(asset: asset)

@@ -193,3 +193,10 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
   random OAuth state, newer yt-dlp thumbnails and the documented shadowing fixes differ.
 - Known schema quirk (unchanged): ios_user_music_metadata.id is the content hash alone, so
   two users uploading the same file share one row (second upload rewrites the first's).
+- 2026-11-07 stream storm fix: AVURLAsset readers (artwork, ReplayGain, BPM) opened
+  streamed songs over /api/stream/proxy and every range request ran yt-dlp (one song:
+  342 runs in 48 h, 35-85 s each behind the limiter) -> streams timed out, skipped, app
+  crashed once. Bridge: per-track singleflight resolve + failure memory (stream_failures)
+  + shared 3 s googlevideo settle (stream_resolved_at). App: StreamCache.localURL (analysis
+  reads the downloaded copy only); a failed stream download retries once then skips
+  (never AVPlayer on the proxy URL); a superseded load's failure is ignored.

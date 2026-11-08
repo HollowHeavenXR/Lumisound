@@ -343,6 +343,9 @@ pub async fn bridge_download_job(method: String, start_url: String, headers: Vec
             408 => return Err(JobError::Timeout),
             404 => return Err(JobError::NotFound { permanent: false, detail: None }),
             502 | 503 | 504 | 524 => return Err(retry(format!("gateway error {}", r.status().as_u16()))),
+            // The bridge already has this track in the account's inventory;
+            // retrying gets the same answer (it was retried 3x per track).
+            204 => return Err(JobError::Http { code: 204, detail: "already in your library".into() }),
             s => return Err(retry(format!("unexpected start status {s}"))),
         }
         let v: serde_json::Value = r.json().await.map_err(|_| retry("bad start payload"))?;

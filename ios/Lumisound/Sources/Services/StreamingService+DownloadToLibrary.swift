@@ -466,6 +466,9 @@ extension StreamingService {
             case let .Unavailable(detail):
                 appWarn("downloadToLibrary: unavailable for \"\(track.title)\": \(detail)", category: "network")
                 throw StreamingError.serverDetail(detail)
+            case let .Http(code, detail) where code == 204:
+                appLog("downloadToLibrary: bridge reports \"\(track.title)\" is already in this account's library (\(detail)) — not retrying", category: "network")
+                throw StreamingError.httpError(Int(code))
             case let .Http(code, detail):
                 appError("downloadToLibrary: job failed (\(code)) for \"\(track.title)\": \(detail)", category: "network")
                 throw StreamingError.httpError(Int(code))

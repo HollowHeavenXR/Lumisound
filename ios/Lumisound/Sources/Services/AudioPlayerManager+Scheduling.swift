@@ -169,12 +169,15 @@ extension AudioPlayerManager {
     /// crossfade rather than a plain skip/seek. No-op if ReplayGain is off.
     func analyzeReplayGain(for url: URL) {
         guard audioSettings.replayGainEnabled else { return }
+        // A streamed track is read from its downloaded copy, never over the
+        // network (see StreamCache).
+        guard let localURL = StreamCache.localURL(for: url) else { return }
         // See LumisoundExclusiveExtensionService.playableURL's doc comment --
         // a downloaded track's on-disk `.lms` bytes are XOR-masked and
         // unreadable by AVURLAsset until unlocked; without this the
         // embedded-tag read AND the RMS fallback both silently no-op for
         // every locked track.
-        let capturedURL = LumisoundExclusiveExtensionService.playableURL(for: url)
+        let capturedURL = LumisoundExclusiveExtensionService.playableURL(for: localURL)
         let asset = AVURLAsset(url: capturedURL)
         Task.detached(priority: .utility) { [weak self] in
             let metadata = (try? await asset.load(.metadata)) ?? []
@@ -655,7 +658,7 @@ extension AudioPlayerManager {
     }
 
     @MainActor
-    func downloadAndSchedule(url: URL, startTime: TimeInterval) async {
+    func downloadAndSchedule(url: URL, startTime: TimeInterval, attempt: Int = 0) async {
         let playbackStartedAt = Date()
         let playbackURL = url.absoluteString
         tearDownOpusPlayer()
@@ -679,14 +682,14 @@ extension AudioPlayerManager {
         // NSException from inside this function's async continuation).
         let entryGen = scheduleGeneration &+ 1
         scheduleGeneration = entryGen
+        let entrySongID = currentSong?.id
+        // Set once the track's bytes are on disk: a failure after that point
+        // is a decode problem, before it a network one.
+        var localFile: URL? = nil
 
         do {
             // Derive a stable cache filename from the URL string.
-            let cacheKey: String = url.absoluteString.data(using: .utf8).map { bytes in
-                var hash: UInt64 = 5381
-                for byte in bytes { hash = hash &* 31 &+ UInt64(byte) }
-                return String(hash, radix: 16)
-            } ?? UUID().uuidString
+            let cacheKey = StreamCache.key(for: url)
 
             // Detect the actual audio container from the URL path before choosing an extension.
             // YouTube CDN URLs often include the itag/mime in the path or may serve webm/opus
@@ -792,6 +795,7 @@ extension AudioPlayerManager {
                     let refinedURL = tempURL.deletingPathExtension().appendingPathExtension(refinedExt)
                     try? FileManager.default.removeItem(at: refinedURL)
                     try FileManager.default.moveItem(at: downloaded, to: refinedURL)
+                    localFile = refinedURL
                     // The Lumisound engine first, as for every other stream.
                     // (This branch went straight to AVAudioFile, so roughly
                     // half of all streams — every response carrying a
@@ -852,6 +856,7 @@ extension AudioPlayerManager {
                 try? FileManager.default.removeItem(at: tempURL)
                 try FileManager.default.moveItem(at: downloaded, to: tempURL)
             }
+            localFile = tempURL
 
             // Downloaded: the Rust engine plays the cached file like a local track.
             if rustEligible(for: tempURL), scheduleWithRustEngine(url: tempURL, startTime: startTime) {
@@ -918,29 +923,48 @@ extension AudioPlayerManager {
             appLog("downloadAndSchedule: playback scheduled in \(String(format: "%.2f", Date().timeIntervalSince(playbackStartedAt)))s", category: "audio")
 
         } catch {
-            // AVAudioFile couldn't open the downloaded temp file — usually a
-            // container it just doesn't support (raw Ogg/Opus, or a
-            // format/extension mismatch the heuristics above didn't catch).
-            // Previously this just gave up and showed an error, which is
-            // most of what "streaming doesn't work" reports traced back to
-            // — the very same class of failure the LOCAL-file path already
-            // has a fallback for (`transcodeAndSchedule` -> AVPlayer via
-            // `scheduleWithOpusPlayer`). AVPlayer has access to iOS's full
-            // codec pipeline and can play directly from the ORIGINAL remote
-            // URL without needing the temp-file download at all, so fall
-            // back to it here too instead of only ever erroring out.
-            appWarn("downloadAndSchedule: AVAudioFile open failed after \(String(format: "%.2f", Date().timeIntervalSince(playbackStartedAt)))s for \"\(currentSong?.displayName ?? "?")\" (\(error.localizedDescription)) — falling back to AVPlayer", category: "audio")
-            // The fallback below plays through `opusPlayer` (AVPlayer), not
-            // `activeNode` — if playCurrent silenced that node for a seek
-            // ramp that's never going to happen now (see
-            // `pendingSeekRampTarget`'s doc comment), restore it directly
-            // rather than leaving it stuck at 0 for whatever this node next
-            // gets reused for.
+            // A seek, skip or track change already started its own schedule
+            // while this one was downloading: its failure belongs to a track
+            // that is no longer current. Acting on it used to tear down the
+            // NEW track (AVPlayer fallback / skip) — part of the "plays, then
+            // skips a few in a row" reports.
+            guard scheduleGeneration == entryGen, currentSong?.id == entrySongID else {
+                appLog("downloadAndSchedule: ignoring failure of a superseded load for \(playbackURL)", category: "audio")
+                return
+            }
             if let target = pendingSeekRampTarget {
                 pendingSeekRampTarget = nil
                 activeNode.volume = target
             }
-            scheduleWithOpusPlayer(url: url, startTime: startTime)
+            let elapsed = String(format: "%.2f", Date().timeIntervalSince(playbackStartedAt))
+            if let localFile, FileManager.default.fileExists(atPath: localFile.path) {
+                // The bytes are here but AVAudioFile can't open them: let
+                // AVPlayer (the full system codec set) play the LOCAL copy.
+                appWarn("downloadAndSchedule: AVAudioFile open failed after \(elapsed)s for \"\(currentSong?.displayName ?? "?")\" (\(error.localizedDescription)) — playing the downloaded file via AVPlayer", category: "audio")
+                scheduleWithOpusPlayer(url: localFile, startTime: startTime)
+                return
+            }
+            // The download itself failed. Handing the stream URL to AVPlayer
+            // here only repeated the same request as a burst of range
+            // requests (each one a yt-dlp run on the bridge). Retry the
+            // download once, then skip.
+            // A 404 is the bridge saying the video is gone (or has no
+            // stream): asking again won't change that.
+            var permanent = false
+            if case StreamingError.httpError(let code) = error, code == 404 || code == 403 || code == 401 { permanent = true }
+            if attempt == 0, !permanent {
+                appWarn("downloadAndSchedule: stream download failed after \(elapsed)s for \"\(currentSong?.displayName ?? "?")\" (\(error.localizedDescription)) — retrying once", category: "audio")
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard scheduleGeneration == entryGen, currentSong?.id == entrySongID else { return }
+                await downloadAndSchedule(url: url, startTime: startTime, attempt: 1)
+                return
+            }
+            handleLoadFailure(
+                message: "downloadAndSchedule: stream download failed for \"\(currentSong?.displayName ?? "?")\" (\(error.localizedDescription)) — skipping",
+                userFacingMessage: "Could not load this track.",
+                retryURL: nil,
+                errorCode: Self.underlyingURLErrorCode(error)
+            )
         }
     }
 
