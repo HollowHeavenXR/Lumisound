@@ -98,6 +98,8 @@ const PUB: &str = "json_build_object('user_id', u.id, 'username', u.username, 'd
 const PRESENCE_FRESH: i64 = 90;
 const ROOM_TTL_SECS: i32 = 90;
 const ROOM_IDLE_HOURS: i32 = 12;
+/// A device-sync room counts as live only while its host keeps updating it.
+const DEVICE_SYNC_LIVE_SECS: i32 = 90;
 
 fn ok() -> Json<Value> {
     Json(json!({"ok": true}))
@@ -1737,8 +1739,12 @@ async fn device_sync_start(State(st): State<AppState>, u: User, J(b): J<RoomBody
 }
 
 async fn device_sync_active(State(st): State<AppState>, u: User) -> ApiResult<Json<Value>> {
+    // The host pushes its state every ~5 s while it plays. A room it has
+    // stopped updating (app closed, reinstalled, crashed) is not a session to
+    // follow: a 12 h window kept followers forcing a long-gone host's song
+    // back over whatever the listener picked, every 5 s.
     let c: Option<String> = sqlx::query_scalar(&format!(
-        "SELECT room_code FROM ios_listen_rooms WHERE host_user_id = $1 AND is_device_sync = TRUE AND updated_at > NOW() - make_interval(hours => {ROOM_IDLE_HOURS}) \
+        "SELECT room_code FROM ios_listen_rooms WHERE host_user_id = $1 AND is_device_sync = TRUE AND updated_at > NOW() - make_interval(secs => {DEVICE_SYNC_LIVE_SECS}) \
          ORDER BY updated_at DESC LIMIT 1"
     ))
     .bind(&u.id)

@@ -46,6 +46,10 @@ final class DeviceSyncService: ObservableObject {
     /// player-state change doesn't get mistaken for a local user action.
     private var isApplyingRemote = false
     private var lastAppliedTrackURL: String?
+    /// The song this device put in the player to follow the room.
+    private var appliedSongID: String?
+    /// A room the listener left by picking their own music; not rejoined.
+    private var dismissedRoomCode: String?
 
     init() {
         Self.shared = self
@@ -110,6 +114,7 @@ final class DeviceSyncService: ObservableObject {
                 if isFollowing { stopFollowing() }
                 return
             }
+            guard code != dismissedRoomCode else { return }
             if code != roomCode {
                 roomCode = code
                 isFollowing = true
@@ -125,6 +130,7 @@ final class DeviceSyncService: ObservableObject {
         isFollowing = false
         roomCode = nil
         lastAppliedTrackURL = nil
+        appliedSongID = nil
     }
 
     private func pollOnce(code: String, account: AccountService) async {
@@ -144,6 +150,16 @@ final class DeviceSyncService: ObservableObject {
 
     private func apply(room: RoomState) async {
         guard let player, let streaming else { return }
+        // The listener chose something else on this device: that ends
+        // following. Re-applying the room here forced the room's track back
+        // over their pick every ~5 s ("skips to a song that isn't even
+        // downloaded, and going back keeps switching to it").
+        if let applied = appliedSongID, player.currentSong?.id != applied {
+            appLog("DeviceSync: listener picked another song — leaving sync room \(roomCode ?? "?")", category: "audio")
+            dismissedRoomCode = roomCode
+            stopFollowing()
+            return
+        }
         isApplyingRemote = true
         defer { isApplyingRemote = false }
 
@@ -178,6 +194,7 @@ final class DeviceSyncService: ObservableObject {
             player.setQueue([song], startIndex: 0, autoplay: room.is_playing)
             if room.is_playing { player.seek(to: position) }
             lastAppliedTrackURL = trackURL
+            appliedSongID = player.currentSong?.id
             return
         }
 
