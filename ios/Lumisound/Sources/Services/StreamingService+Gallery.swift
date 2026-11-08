@@ -113,4 +113,25 @@ extension StreamingService {
         else { return nil }
         return UIImage(data: data)
     }
+
+    /// The stored bytes of a cloud gallery photo, as uploaded (no decode and
+    /// re-encode, so the same photo restores to the same bytes every time).
+    /// Logs why a download failed instead of returning nil silently.
+    func fetchGalleryImageBytes(_ image: GalleryImageInfo, token: String) async -> Data? {
+        guard var request = makeRequest(image.url) else { return nil }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 60
+        do {
+            let (data, response) = try await Core.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            guard status == 200, !data.isEmpty else {
+                appWarn("Gallery: cloud photo \(image.id) download returned HTTP \(status)", category: "background")
+                return nil
+            }
+            return data
+        } catch {
+            appWarn("Gallery: cloud photo \(image.id) download failed: \(error.localizedDescription)", category: "background")
+            return nil
+        }
+    }
 }

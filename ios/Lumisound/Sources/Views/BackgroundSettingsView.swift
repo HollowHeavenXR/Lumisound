@@ -144,6 +144,16 @@ struct BackgroundSettingsView: View {
                     }
                 }
 
+                if !bg.hasImages, bg.cloudOnlyCount > 0 {
+                    // Photos still coming down from the account (or ones that
+                    // couldn't be fetched): clearable without adding one first.
+                    Button(role: .destructive) {
+                        bg.clearAll()
+                    } label: {
+                        Label("Delete \(bg.cloudOnlyCount) Cloud Image\(bg.cloudOnlyCount == 1 ? "" : "s")", systemImage: "icloud.slash")
+                    }
+                }
+
                 if bg.hasImages {
                     Button(role: .destructive) {
                         bg.clearAll()

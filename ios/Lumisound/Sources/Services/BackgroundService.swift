@@ -91,7 +91,8 @@ final class BackgroundService: ObservableObject {
     private var prefetched: (id: String, image: UIImage)?
     private var foregroundObserver: NSObjectProtocol?
     private var cloudSyncTask: Task<Void, Never>?
-    private var didAttemptCloudRestore = false
+    /// A cloud → device sync is running (one at a time).
+    private var isSyncingFromCloud = false
     private var isLoadingSettings = false
 
     static let intervalPresets: [(label: String, seconds: Double)] = [
@@ -114,6 +115,21 @@ final class BackgroundService: ObservableObject {
         static let migrated         = "bg_gallery_engine_migrated_v1"
         /// How many entries (from the front) are confirmed uploaded to the cloud.
         static let cloudSyncedCount = "bg_gallery_cloud_synced_count"
+        /// Local entry id -> cloud image id, so removing a photo deletes ITS
+        /// cloud copy (not just "the last one").
+        static let cloudMap         = "bg_gallery_cloud_map_v1"
+        /// Cloud image ids this device already has (or adopted, or can't use).
+        static let cloudHandled     = "bg_gallery_cloud_handled_v1"
+    }
+
+    private var cloudMap: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: Keys.cloudMap) as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: Keys.cloudMap) }
+    }
+
+    private var handledCloudIDs: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: Keys.cloudHandled) ?? []) }
+        set { UserDefaults.standard.set(Array(newValue), forKey: Keys.cloudHandled) }
     }
 
     private static var storeDir: URL {
@@ -192,12 +208,14 @@ final class BackgroundService: ObservableObject {
         engine.setSettings(settings: engineSettings)
         migrateLegacyGalleryIfNeeded()
         reloadEntries()
-        if isEnabled, !hasImages { isEnabled = false }
+        // Not switched off for an empty gallery: on a fresh install the
+        // photos are still on their way down from the cloud, and saving
+        // "off" here (then syncing it to the account) left them unapplied
+        // once they arrived. startShuffling() already waits for images.
         showCurrent(animated: false)
         if isEnabled, hasImages { startShuffling() }
         appLog("loadSettings: enabled=\(isEnabled) images=\(entries.count) interval=\(shuffleIntervalSeconds)s shuffle=\(shuffleOrder)", category: "background")
-        restoreGalleryFromCloudIfNeeded()
-        resumeIncompleteCloudGallerySyncIfNeeded()
+        syncGalleryWithCloud()
     }
 
     /// The old Swift gallery kept its files in Documents/BackgroundImages with
@@ -363,7 +381,21 @@ final class BackgroundService: ObservableObject {
     /// off the main thread). Returns (added, duplicates, rejected).
     @discardableResult
     func addImages(_ items: [NewImage], uploadToCloud: Bool = true) async -> (added: Int, duplicates: Int, rejected: Int) {
-        guard !items.isEmpty else { return (0, 0, 0) }
+        let results = await addImagesDetailed(items, uploadToCloud: uploadToCloud)
+        var a = 0, d = 0, r = 0
+        for res in results {
+            switch res {
+            case .added: a += 1
+            case .duplicate: d += 1
+            case .rejected: r += 1
+            }
+        }
+        return (a, d, r)
+    }
+
+    /// `addImages` with one result per item, in order.
+    private func addImagesDetailed(_ items: [NewImage], uploadToCloud: Bool) async -> [GalleryAddResult] {
+        guard !items.isEmpty else { return [] }
         isImporting = true
         defer { isImporting = false }
         let engine = self.engine
@@ -389,7 +421,7 @@ final class BackgroundService: ObservableObject {
             if uploadToCloud { scheduleCloudGallerySync(newEntries: added) }
         }
         appLog("Gallery: added \(added.count), duplicates \(dupes), rejected \(rejected) (total \(entries.count))", category: "background")
-        return (added.count, dupes, rejected)
+        return results
     }
 
     /// The core reads JPEG/PNG/WebP/GIF: anything else (HEIC from Photos)
@@ -417,7 +449,15 @@ final class BackgroundService: ObservableObject {
         } else if currentEntryID == id {
             showCurrent(animated: true)
         }
-        scheduleCloudGallerySync(newEntries: nil)
+        // Delete this photo's own cloud copy. (This used to delete "however
+        // many the cloud has over the local count" from the END of the cloud
+        // list, so the cloud drifted away from what's on screen.) A photo
+        // with no linked copy was never uploaded: nothing to delete.
+        var map = cloudMap
+        if let cloudID = map.removeValue(forKey: id) {
+            cloudMap = map
+            deleteCloudImages(ids: [cloudID])
+        }
     }
 
     func clearAll() {
@@ -427,7 +467,40 @@ final class BackgroundService: ObservableObject {
         stopShuffling()
         currentImage = nil
         currentEntryID = nil
-        scheduleCloudGallerySync(newEntries: nil)
+        cloudSyncTask?.cancel()
+        cloudMap = [:]
+        handledCloudIDs = []
+        cloudOnlyCount = 0
+        UserDefaults.standard.set(0, forKey: Keys.cloudSyncedCount)
+        // Everything in the cloud, not "the excess over the local count":
+        // with an empty or out-of-sync gallery that deleted nothing, so
+        // photos stuck in the cloud could only be cleared by adding one
+        // first.
+        guard AccountService.shared?.isLoggedIn == true, let token = AccountService.shared?.token, !token.isEmpty,
+              let streaming = StreamingService.shared else { return }
+        Task {
+            do {
+                let cloud = try await streaming.fetchGalleryImages(token: token)
+                for image in cloud { try? await streaming.deleteGalleryImage(id: image.id, token: token) }
+                appLog("Gallery: cleared \(cloud.count) cloud image(s)", category: "background")
+            } catch {
+                appWarn("Gallery: cloud clear failed: \(error.localizedDescription)", category: "background")
+            }
+        }
+    }
+
+    /// Photos in the account's cloud gallery this device hasn't got (shown in
+    /// Settings so they can be cleared even with none local).
+    @Published private(set) var cloudOnlyCount: Int = 0
+
+    private func deleteCloudImages(ids: [String]) {
+        guard !ids.isEmpty, let token = AccountService.shared?.token, !token.isEmpty,
+              let streaming = StreamingService.shared else { return }
+        // The ids stay in handledCloudIDs, so a sync running meanwhile
+        // can't download them again before the deletes land.
+        Task {
+            for id in ids { try? await streaming.deleteGalleryImage(id: id, token: token) }
+        }
     }
 
     func moveImage(from: Int, to: Int) {
@@ -453,7 +526,13 @@ final class BackgroundService: ObservableObject {
                     guard let order = self.entries.firstIndex(where: { $0.id == entry.id }),
                           let image = UIImage(contentsOfFile: entry.path) else { continue }
                     do {
-                        _ = try await streaming.uploadGalleryImage(image, token: token, displayOrder: order)
+                        let cloudID = try await streaming.uploadGalleryImage(image, token: token, displayOrder: order)
+                        var map = self.cloudMap
+                        map[entry.id] = cloudID
+                        self.cloudMap = map
+                        var handled = self.handledCloudIDs
+                        handled.insert(cloudID)
+                        self.handledCloudIDs = handled
                         if order + 1 > UserDefaults.standard.integer(forKey: Keys.cloudSyncedCount) {
                             UserDefaults.standard.set(order + 1, forKey: Keys.cloudSyncedCount)
                         }
@@ -481,42 +560,114 @@ final class BackgroundService: ObservableObject {
         }
     }
 
-    /// Re-uploads whatever an interrupted backup didn't finish.
-    func resumeIncompleteCloudGallerySyncIfNeeded() {
-        guard AccountService.shared?.isLoggedIn == true else { return }
-        let synced = UserDefaults.standard.integer(forKey: Keys.cloudSyncedCount)
-        guard synced < entries.count else { return }
-        scheduleCloudGallerySync(newEntries: Array(entries[synced...]))
-    }
-
-    /// Fresh install with an empty gallery: bring the account's backup back.
-    func restoreGalleryFromCloudIfNeeded() {
-        guard !didAttemptCloudRestore else { return }
-        guard !hasImages else { didAttemptCloudRestore = true; return }
-        guard AccountService.shared?.isLoggedIn == true, let token = AccountService.shared?.token, !token.isEmpty,
+    /// Two-way gallery sync, run at launch and after account sync:
+    /// - photos in the account's cloud gallery that this device doesn't have
+    ///   are downloaded (4 at a time) and applied as they arrive — a fresh
+    ///   install gets its backgrounds back, and photos added on another
+    ///   device show up here;
+    /// - local photos with no cloud copy are uploaded.
+    ///
+    /// Replaces a restore that only ran on an empty gallery, fetched all
+    /// photos one by one, added nothing until the last one was in, and
+    /// silently dropped everything if the app was closed or suspended
+    /// part-way (116 photos listed, 0 restored, nothing logged).
+    func syncGalleryWithCloud() {
+        guard !isSyncingFromCloud, AccountService.shared?.isLoggedIn == true,
+              let token = AccountService.shared?.token, !token.isEmpty,
               let streaming = StreamingService.shared else { return }
-        didAttemptCloudRestore = true
+        isSyncingFromCloud = true
         Task { [weak self] in
             guard let self else { return }
+            defer { self.isSyncingFromCloud = false }
+            let cloud: [GalleryImageInfo]
             do {
-                let cloud = try await streaming.fetchGalleryImages(token: token)
-                var items: [NewImage] = []
-                for entry in cloud.sorted(by: { $0.displayOrder < $1.displayOrder }) {
-                    if let img = await streaming.fetchGalleryImageData(entry, token: token),
-                       let data = img.jpegData(compressionQuality: 0.92) {
-                        items.append(NewImage(data: data, assetID: nil))
-                    }
-                }
-                guard !items.isEmpty else { return }
-                let r = await self.addImages(items, uploadToCloud: false)
-                // Came from the cloud: already backed up.
-                UserDefaults.standard.set(self.entries.count, forKey: Keys.cloudSyncedCount)
-                if r.added > 0 {
-                    ToastCenter.shared.show("Restored \(r.added) background image\(r.added == 1 ? "" : "s") from your account", category: .success, icon: "icloud.and.arrow.down")
-                }
+                cloud = try await streaming.fetchGalleryImages(token: token).sorted { $0.displayOrder < $1.displayOrder }
             } catch {
-                appWarn("Gallery: cloud restore failed: \(error.localizedDescription)", category: "background")
+                appWarn("Gallery: cloud sync failed to list images: \(error.localizedDescription)", category: "background")
+                return
             }
+            let d = UserDefaults.standard
+            if d.object(forKey: Keys.cloudMap) == nil {
+                // First run with per-photo tracking. A gallery that already
+                // exists here was backed up in order: pair photos by
+                // position instead of downloading them again (the cloud
+                // copies are re-encoded, so they would not dedupe).
+                var map: [String: String] = [:]
+                if self.hasImages {
+                    for (entry, image) in zip(self.entries, cloud) { map[entry.id] = image.id }
+                    self.handledCloudIDs = Set(cloud.map(\.id))
+                    appLog("Gallery: linked \(map.count) local photo(s) to their cloud copies", category: "background")
+                }
+                self.cloudMap = map
+            }
+            // Drop links to local photos that no longer exist.
+            let localIDs = Set(self.entries.map(\.id))
+            let liveCloud = Set(cloud.map(\.id))
+            self.cloudMap = self.cloudMap.filter { localIDs.contains($0.key) && liveCloud.contains($0.value) }
+
+            let missing = cloud.filter { !self.handledCloudIDs.contains($0.id) }
+            self.cloudOnlyCount = missing.count
+            if !missing.isEmpty {
+                await self.download(missing, streaming: streaming, token: token)
+            }
+            let handledNow = self.handledCloudIDs
+            self.cloudOnlyCount = cloud.filter { !handledNow.contains($0.id) }.count
+            await self.uploadUnbackedEntries(streaming: streaming, token: token)
         }
+    }
+
+    private func download(_ missing: [GalleryImageInfo], streaming: StreamingService, token: String) async {
+        appLog("Gallery: restoring \(missing.count) photo(s) from the cloud", category: "background")
+        let bgTask = BackgroundTaskToken(name: "GalleryCloudRestore")
+        defer { bgTask.end() }
+        var restored = 0, failed = 0
+        for start in stride(from: 0, to: missing.count, by: 4) {
+            let batch = Array(missing[start..<min(start + 4, missing.count)])
+            let data: [Int: Data] = await withTaskGroup(of: (Int, Data?).self) { group in
+                for (i, info) in batch.enumerated() {
+                    group.addTask { (i, await streaming.fetchGalleryImageBytes(info, token: token)) }
+                }
+                var out: [Int: Data] = [:]
+                for await (i, d) in group { if let d { out[i] = d } }
+                return out
+            }
+            var items: [NewImage] = []
+            var infos: [GalleryImageInfo] = []
+            for (i, info) in batch.enumerated() {
+                if let d = data[i] { items.append(NewImage(data: d, assetID: nil)); infos.append(info) } else { failed += 1 }
+            }
+            // Added (and applied) batch by batch, and recorded as we go, so
+            // an interrupted restore keeps what it got and resumes next time.
+            let results = await addImagesDetailed(items, uploadToCloud: false)
+            var map = cloudMap
+            var handled = handledCloudIDs
+            for (info, result) in zip(infos, results) {
+                switch result {
+                case .added(let entry): map[entry.id] = info.id; restored += 1
+                case .duplicate(let id): if map[id] == nil { map[id] = info.id }
+                case .rejected: break
+                }
+                handled.insert(info.id)
+            }
+            cloudMap = map
+            handledCloudIDs = handled
+            cloudOnlyCount = max(0, cloudOnlyCount - batch.count)
+        }
+        if failed > 0 {
+            appWarn("Gallery: \(failed) cloud photo(s) could not be downloaded — will retry next launch", category: "background")
+        }
+        appLog("Gallery: restored \(restored) photo(s) from the cloud", category: "background")
+        if restored > 0 {
+            ToastCenter.shared.show("Restored \(restored) background image\(restored == 1 ? "" : "s") from your account", category: .success, icon: "icloud.and.arrow.down")
+        }
+    }
+
+    /// Uploads local photos that have no cloud copy yet (also finishes an
+    /// interrupted backup).
+    private func uploadUnbackedEntries(streaming: StreamingService, token: String) async {
+        let map = cloudMap
+        let pending = entries.filter { map[$0.id] == nil }
+        guard !pending.isEmpty else { return }
+        scheduleCloudGallerySync(newEntries: pending)
     }
 }
