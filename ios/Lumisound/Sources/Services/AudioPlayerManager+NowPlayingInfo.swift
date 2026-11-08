@@ -190,7 +190,7 @@ extension AudioPlayerManager {
         center.nextTrackCommand.addTarget { [weak self] _ in
             Self.onMain {
                 guard let self, !self.queue.isEmpty else { return .noActionableNowPlayingItem }
-                self.skipToNext()
+                self.userSkipToNext()
                 return .success
             }
         }

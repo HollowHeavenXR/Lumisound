@@ -200,3 +200,33 @@ Swift models stay Codable view-data shapes; logic moves to Rust.
   + shared 3 s googlevideo settle (stream_resolved_at). App: StreamCache.localURL (analysis
   reads the downloaded copy only); a failed stream download retries once then skips
   (never AVPlayer on the proxy URL); a superseded load's failure is ignored.
+
+## 2026-11-07 upgrade + stability pass
+
+Done:
+- [x] Smart Shuffle (rust/core/src/shuffle.rs; Swift `SmartShuffle` / `[Song].smartShuffled()`):
+      weighted random order (recently played and often-skipped songs later), artist/album
+      spreading (24-song look-ahead; artist just played never repeats when avoidable), tempo
+      smoothing (half/double time count as close). Used by the queue shuffle and every Shuffle
+      button. Settings > Playback > Smart Shuffle (key `smartShuffleEnabled`, default on).
+- [x] Skip learning: `userSkipToNext()` (buttons, swipes, remote, Siri, shake) records early
+      skips (< 30 s, or < 40 % of a short song) in core `skip_history`; automatic advances
+      (song ended, load failed) don't count. Plays offset skips.
+- [x] Core store writes are background + coalesced (250 ms); `core_flush()` on app background.
+      Every play/skip used to write a whole JSON file on the main thread.
+- [x] Upload storm: the app re-downloaded the full cloud list (5.7k tracks) after every
+      upload, up to 17x a minute during backups. The bridge now returns the stored row as
+      `track` in the upload response; concurrent list fetches share one request; background
+      passes reuse a list < 30 s old; JSON decode is off the main thread.
+- [x] '+' in bridge query strings is sent as %2B (core client.rs). The bridge read it as a
+      space, so "Goku + Vegeta.opus" was stored as "Goku   Vegeta.opus" and re-uploaded on
+      every backup pass. A duplicate upload now heals the stored original_filename.
+
+Open / ideas:
+- [ ] Engine test `beatmatched_crossfade_tracks_position_and_returns_to_native_tempo` fails in
+      debug builds only (deck thread can't keep up unoptimised); passes with --release.
+      Make it pump at real-time pace or mark release-only.
+- [ ] Show "often skipped" songs somewhere (Library Health?) with a reset (core `skip_clear`).
+- [ ] Sync skip history across devices (needs a bridge column/route).
+- [ ] Incremental `/user/music/metadata?since=` so the app never pulls the whole list.
+- [ ] H. delete superseded Swift (AV graph etc.) — still open from the port.

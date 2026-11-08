@@ -196,6 +196,11 @@ final class StreamingService: ObservableObject {
 
     @Published var userMusicMetadata: [UserMusicMetadataTrack] = []
     @Published var isLoadingUserMusicMetadata = false
+    /// One shared in-flight `/user/music/metadata` request (see fetchUserMusicMetadata).
+    var userMusicMetadataTask: Task<[UserMusicMetadataTrack], Error>?
+    var userMusicMetadataFetchedAt: Date?
+    /// Last bridge base handed to the core's query-encoding fix (makeRequest).
+    var registeredBridgeBase: String?
     @Published var isSyncingLibraryBackup = false
 
     // MARK: Gallery state

@@ -540,7 +540,20 @@ async fn upload(State(st): State<AppState>, u: User, Q(q): Q<UploadQ>, req: Requ
             let abs = std::fs::canonicalize(&p).unwrap_or(p.clone());
             let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
             let rel = p.strip_prefix(&dir).map(|r| r.to_string_lossy().into_owned()).unwrap_or(name.clone());
-            return Ok((StatusCode::CREATED, Json(json!({"filename": name, "path": rel, "id": stable_id(&abs), "metadata_id": hash, "size": size, "duplicate": true})))
+            // Same bytes under a new name (a client that used to send '+' raw had
+            // its "+" stored as a space): keep the name the client has now, so its
+            // backup check matches and it stops re-uploading the file.
+            let _ = sqlx::query("UPDATE ios_user_music_metadata SET original_filename = $1 WHERE id = $2 AND user_id = $3 AND original_filename IS DISTINCT FROM $1")
+                .bind(&filename)
+                .bind(&hash)
+                .bind(&u.id)
+                .execute(&st.db)
+                .await;
+            let track = track_row(&st, &u.id, &hash).await;
+            return Ok((
+                StatusCode::CREATED,
+                Json(json!({"filename": name, "path": rel, "id": stable_id(&abs), "metadata_id": hash, "size": size, "duplicate": true, "track": track})),
+            )
                 .into_response());
         }
     }
@@ -627,11 +640,13 @@ async fn upload(State(st): State<AppState>, u: User, Q(q): Q<UploadQ>, req: Requ
         let (st2, uid) = (st.clone(), u.id.clone());
         tokio::spawn(async move { st2.maybe_warn_storage_quota(&uid).await });
     }
+    let track = track_row(&st, &u.id, &hash).await;
     Ok((
         StatusCode::CREATED,
         Json(json!({
             "filename": safe, "path": rel, "id": stable_id(&abs), "loudness_lufs": a.loudness_lufs, "gain_db": gain_db(a.loudness_lufs),
             "bpm": a.bpm, "musical_key": a.musical_key, "waveform": a.waveform.filter(|w| !w.is_empty()), "metadata_id": hash, "size": size,
+            "track": track,
         })),
     )
         .into_response())
@@ -850,6 +865,35 @@ struct MetaQ {
     key: Option<String>,
 }
 
+/// One `/user/music/metadata` track object (SQL), shared by the list and the
+/// upload response. `has_dir` is the SQL parameter saying whether this server
+/// keeps the user's files (artwork_url only then).
+fn track_json(has_dir: &str) -> String {
+    format!(
+        "json_build_object('id', id, 'filename', filename, 'original_filename', original_filename, \
+           'title', title, 'artist', artist, 'album', album, 'genre', genre, 'year', year, 'duration_seconds', duration_seconds, \
+           'file_size_bytes', file_size_bytes, 'bitrate', bitrate, 'sample_rate', sample_rate, 'mime_type', mime_type, \
+           'has_artwork', COALESCE(has_artwork, false), 'uploaded_at', lumi_iso(uploaded_at), 'loudness_lufs', loudness_lufs, 'bpm', bpm, \
+           'musical_key', musical_key, \
+           'artwork_url', CASE WHEN COALESCE(has_artwork, false) AND {has_dir} THEN '/user/music/artwork?path=' || replace(filename, ' ', '%20') END, \
+           'gain_db', CASE WHEN loudness_lufs IS NULL THEN NULL ELSE round(LEAST(12.0, GREATEST(-12.0, -14.0 - loudness_lufs))::numeric, 2)::float8 END)"
+    )
+}
+
+/// The stored track row as the metadata list returns it, so the app doesn't
+/// have to re-download the whole list after every upload.
+async fn track_row(st: &AppState, user_id: &str, id: &str) -> Option<Value> {
+    let has_dir = st.user_music_dir(user_id).is_some();
+    sqlx::query_scalar::<_, Value>(&format!("SELECT {} FROM ios_user_music_metadata WHERE id = $1 AND user_id = $2", track_json("$3")))
+        .bind(id)
+        .bind(user_id)
+        .bind(has_dir)
+        .fetch_optional(&st.db)
+        .await
+        .ok()
+        .flatten()
+}
+
 async fn list_metadata(State(st): State<AppState>, u: User, Q(q): Q<MetaQ>) -> ApiResult<Json<Value>> {
     let limit = q.limit.unwrap_or(5000);
     check_range("limit", limit, 1, 100000)?;
@@ -860,17 +904,11 @@ async fn list_metadata(State(st): State<AppState>, u: User, Q(q): Q<MetaQ>) -> A
     }
     let has_dir = st.user_music_dir(&u.id).is_some();
     let v: Value = sqlx::query_scalar(
-        "SELECT COALESCE(json_agg(json_build_object('id', id, 'filename', filename, 'original_filename', original_filename, \
-           'title', title, 'artist', artist, 'album', album, 'genre', genre, 'year', year, 'duration_seconds', duration_seconds, \
-           'file_size_bytes', file_size_bytes, 'bitrate', bitrate, 'sample_rate', sample_rate, 'mime_type', mime_type, \
-           'has_artwork', COALESCE(has_artwork, false), 'uploaded_at', lumi_iso(uploaded_at), 'loudness_lufs', loudness_lufs, 'bpm', bpm, \
-           'musical_key', musical_key, \
-           'artwork_url', CASE WHEN COALESCE(has_artwork, false) AND $6 THEN '/user/music/artwork?path=' || replace(filename, ' ', '%20') END, \
-           'gain_db', CASE WHEN loudness_lufs IS NULL THEN NULL ELSE round(LEAST(12.0, GREATEST(-12.0, -14.0 - loudness_lufs))::numeric, 2)::float8 END) \
-           ORDER BY uploaded_at DESC), '[]'::json) \
+        &format!("SELECT COALESCE(json_agg({} ORDER BY uploaded_at DESC), '[]'::json) \
          FROM (SELECT * FROM ios_user_music_metadata WHERE user_id = $1 AND ($2::float8 IS NULL OR bpm >= $2) AND ($3::float8 IS NULL OR bpm <= $3) \
                AND ($4::text IS NULL OR $4 = '' OR musical_key = $4) ORDER BY uploaded_at DESC LIMIT $5) m",
-    )
+        track_json("$6")
+    ))
     .bind(&u.id)
     .bind(q.min_bpm)
     .bind(q.max_bpm)

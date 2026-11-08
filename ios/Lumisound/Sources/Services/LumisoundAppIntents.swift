@@ -133,7 +133,7 @@ struct SkipToNextTrackIntent: AudioPlaybackIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         let player = try await IntentReadiness.player()
-        player.skipToNext()
+        player.userSkipToNext()
         return .result()
     }
 }
@@ -432,7 +432,7 @@ struct PlaybackControlIntent: AudioPlaybackIntent {
         case .pause:
             if player.isPlaying { player.pause() }
         case .next:
-            player.skipToNext()
+            player.userSkipToNext()
         case .previous:
             player.skipToPrevious()
         case .restart:
@@ -541,7 +541,7 @@ struct PlayArtistIntent: AudioPlaybackIntent {
         let player = try await IntentReadiness.player()
         let songs = library.songs(byArtist: artist.id)
         guard !songs.isEmpty else { throw LumisoundIntentError.artistNotFound }
-        player.setQueue(shuffle ? songs.shuffled() : songs, startIndex: 0, autoplay: true)
+        player.setQueue(shuffle ? songs.smartShuffled() : songs, startIndex: 0, autoplay: true)
         return .result()
     }
 }
@@ -558,7 +558,7 @@ struct ShuffleLibraryIntent: AudioPlaybackIntent {
         let library = try await IntentReadiness.library()
         let player = try await IntentReadiness.player()
         guard !library.allSongs.isEmpty else { throw LumisoundIntentError.emptyLibrary }
-        player.setQueue(library.allSongs.shuffled(), startIndex: 0, autoplay: true)
+        player.setQueue(library.allSongs.smartShuffled(), startIndex: 0, autoplay: true)
         return .result()
     }
 }

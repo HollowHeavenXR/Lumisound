@@ -204,7 +204,7 @@ struct MiniPlayerBar: View {
             // Skip Next
             Button {
                 if LuaFeatureFlags.hapticFeedback { skipHaptic.impactOccurred() }
-                player.skipToNext()
+                player.userSkipToNext()
             } label: {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 18, weight: .medium))

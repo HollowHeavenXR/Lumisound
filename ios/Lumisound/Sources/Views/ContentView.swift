@@ -885,7 +885,7 @@ struct CustomTabBar: View {
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: player.isPlaying)
 
             Button {
-                player.skipToNext()
+                player.userSkipToNext()
             } label: {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 15, weight: .medium))

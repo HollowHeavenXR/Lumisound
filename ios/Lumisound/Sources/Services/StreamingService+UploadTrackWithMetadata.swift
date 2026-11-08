@@ -44,7 +44,7 @@ extension StreamingService {
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 300
 
-        let (_, response) = try await Core.upload(for: request, fromFile: fileURL)
+        let (body, response) = try await Core.upload(for: request, fromFile: fileURL)
         if let http = response as? HTTPURLResponse {
             switch http.statusCode {
             case 200..<300: break
@@ -56,9 +56,20 @@ extension StreamingService {
         uploadProgress = 1.0
         appLog("uploadTrack: uploaded \(filename)", category: "network")
 
-        // Re-fetch metadata so the caller gets a fully populated object
-        let tracks = try await fetchUserMusicMetadata(token: token)
-        if let match = tracks.first(where: { $0.filename == filename }) {
+        // The bridge returns the stored row with the upload. Only an older
+        // bridge without it needs the whole list re-downloaded (that used to
+        // happen after EVERY upload: 5k+ tracks, many times a minute during a
+        // backup).
+        struct UploadResponse: Decodable { let track: UserMusicMetadataTrack? }
+        let returned = (try? JSONDecoder().decode(UploadResponse.self, from: body))?.track
+        if let returned { mergeUserMusicMetadata(returned) }
+        let resolved: UserMusicMetadataTrack?
+        if let returned {
+            resolved = returned
+        } else {
+            resolved = try await fetchUserMusicMetadata(token: token).first(where: { $0.filename == filename })
+        }
+        if let match = resolved {
             // A locked (`.lms`) upload's `has_artwork` flag only records
             // THAT it has embedded art, not the art itself — the server
             // can't extract it (XOR-masked bytes, same limitation as

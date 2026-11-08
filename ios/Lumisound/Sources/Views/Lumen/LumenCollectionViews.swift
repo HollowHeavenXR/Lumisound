@@ -130,7 +130,7 @@ struct LumenAlbumDetailView: View {
                         .compactMap { $0 }.joined(separator: " · "),
                     bloomSong: songs.first,
                     onPlay: { if let first = songs.first { player.play(song: first, in: songs) } },
-                    onShuffle: { let s = songs.shuffled(); if let first = s.first { player.play(song: first, in: s) } }
+                    onShuffle: { let s = songs.smartShuffled(); if let first = s.first { player.play(song: first, in: s) } }
                 ) {
                     LumenArtwork(song: songs.first, size: 240, radius: 24, fallbackSeed: album)
                 }
@@ -216,7 +216,7 @@ struct LumenArtistDetailView: View {
                     meta: "\(LumenFormat.count(songs.count, "song")) · \(LumenFormat.count(albums.count, "album"))",
                     bloomSong: songs.first,
                     onPlay: { if let first = topSongs.first { player.play(song: first, in: topSongs + songs.filter { s in !topSongs.contains(where: { $0.id == s.id }) }) } },
-                    onShuffle: { let s = songs.shuffled(); if let first = s.first { player.play(song: first, in: s) } }
+                    onShuffle: { let s = songs.smartShuffled(); if let first = s.first { player.play(song: first, in: s) } }
                 ) {
                     ArtistAvatar(artist: artist, size: 200)
                         .clipShape(Circle())
@@ -326,7 +326,7 @@ struct LumenPlaylistDetailView: View {
                 bloomSong: songs.first,
                 onPlay: { if let first = songs.first { player.play(song: first, in: songs, playlistID: playlist.id) } },
                 onShuffle: {
-                    let s = songs.shuffled()
+                    let s = songs.smartShuffled()
                     if let first = s.first { player.play(song: first, in: s, playlistID: playlist.id) }
                 }
             ) {
@@ -485,7 +485,7 @@ struct LumenSongCollectionView: View {
                     meta: "\(LumenFormat.count(songs.count, "song")) · \(LumenFormat.duration(totalDuration(songs)))",
                     bloomSong: songs.first,
                     onPlay: { if let first = songs.first { player.play(song: first, in: songs) } },
-                    onShuffle: { let s = songs.shuffled(); if let first = s.first { player.play(song: first, in: s) } }
+                    onShuffle: { let s = songs.smartShuffled(); if let first = s.first { player.play(song: first, in: s) } }
                 ) {
                     ZStack {
                         LumenGeneratedArt(seed: title, symbol: symbol)

@@ -321,7 +321,7 @@ struct FavoritesView: View {
             .buttonStyle(PressableButtonStyle())
 
             Button {
-                player.setQueue(visible.shuffled(), startIndex: 0, autoplay: true)
+                player.setQueue(visible.smartShuffled(), startIndex: 0, autoplay: true)
             } label: {
                 Label("Shuffle", systemImage: "shuffle")
                     .font(.headline)

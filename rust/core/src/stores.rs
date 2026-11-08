@@ -99,12 +99,18 @@ pub fn play_history_merge(remote: Vec<PlayHistoryRecord>) -> bool {
 #[uniffi::export]
 pub fn play_history_rekey(old_id: String, new_id: String) {
     let _g = LOCK.lock().unwrap();
+    if old_id == new_id {
+        return;
+    }
     let mut m: HashMap<String, Hist> = store::load(HISTORY);
-    if old_id != new_id {
-        if let Some(e) = m.remove(&old_id) {
-            m.insert(new_id, e);
-            store::save(HISTORY, &m);
-        }
+    if let Some(e) = m.remove(&old_id) {
+        m.insert(new_id.clone(), e);
+        store::save(HISTORY, &m);
+    }
+    let mut s: HashMap<String, Hist> = store::load(SKIPS);
+    if let Some(e) = s.remove(&old_id) {
+        s.insert(new_id, e);
+        store::save(SKIPS, &s);
     }
 }
 
@@ -112,12 +118,75 @@ pub fn play_history_rekey(old_id: String, new_id: String) {
 pub fn play_history_prune(valid_ids: Vec<String>) {
     let keep: HashSet<String> = valid_ids.into_iter().collect();
     let _g = LOCK.lock().unwrap();
-    let mut m: HashMap<String, Hist> = store::load(HISTORY);
-    let before = m.len();
-    m.retain(|k, _| keep.contains(k));
-    if m.len() != before {
-        store::save(HISTORY, &m);
+    for ns in [HISTORY, SKIPS] {
+        let mut m: HashMap<String, Hist> = store::load(ns);
+        let before = m.len();
+        m.retain(|k, _| keep.contains(k));
+        if m.len() != before {
+            store::save(ns, &m);
+        }
     }
+}
+
+// ---- skips ----------------------------------------------------------------------------------
+//
+// Early skips (the listener moved on within the first stretch of a song) per
+// song, local to the device. Smart shuffle plays often-skipped songs later.
+
+const SKIPS: &str = "skip_history";
+
+/// A skip counts when it happens before this many seconds…
+pub const SKIP_WINDOW_SECS: f64 = 30.0;
+/// …or before this share of a short song.
+const SKIP_WINDOW_SHARE: f64 = 0.4;
+
+/// True when moving on at `position` of a `duration`-long song is an early skip.
+#[uniffi::export]
+pub fn skip_is_early(position: f64, duration: f64) -> bool {
+    if !(position.is_finite() && position >= 0.0) {
+        return false;
+    }
+    let window = if duration.is_finite() && duration > 0.0 { SKIP_WINDOW_SECS.min(duration * SKIP_WINDOW_SHARE) } else { SKIP_WINDOW_SECS };
+    position < window
+}
+
+/// Record a skip of `song_id` at `position` seconds; false when it wasn't an
+/// early skip (nothing recorded).
+#[uniffi::export]
+pub fn skip_record(song_id: String, position: f64, duration: f64) -> bool {
+    if song_id.is_empty() || !skip_is_early(position, duration) {
+        return false;
+    }
+    let _g = LOCK.lock().unwrap();
+    let mut m: HashMap<String, Hist> = store::load(SKIPS);
+    let e = m.entry(song_id).or_default();
+    e.count += 1;
+    e.last = Some(now());
+    store::save(SKIPS, &m);
+    true
+}
+
+#[uniffi::export]
+pub fn skip_count(song_id: String) -> i64 {
+    let m: HashMap<String, Hist> = store::load(SKIPS);
+    m.get(&song_id).map_or(0, |h| h.count)
+}
+
+/// Forget a song's skips (the listener played it through, or reset it).
+#[uniffi::export]
+pub fn skip_clear(song_id: String) {
+    let _g = LOCK.lock().unwrap();
+    let mut m: HashMap<String, Hist> = store::load(SKIPS);
+    if m.remove(&song_id).is_some() {
+        store::save(SKIPS, &m);
+    }
+}
+
+/// Play + skip history for shuffling: (plays, last played, skips) per id.
+pub(crate) fn listening_stats() -> (HashMap<String, (i64, Option<f64>)>, HashMap<String, i64>) {
+    let h: HashMap<String, Hist> = store::load(HISTORY);
+    let s: HashMap<String, Hist> = store::load(SKIPS);
+    (h.into_iter().map(|(k, v)| (k, (v.count, v.last))).collect(), s.into_iter().map(|(k, v)| (k, v.count)).collect())
 }
 
 // ---- bookmarks ------------------------------------------------------------------------------
@@ -274,6 +343,14 @@ mod tests {
         assert_eq!(long_resume_position("x".into(), 3600.0), Some(600.0));
         long_resume_record("y".into(), 1210.0, 1190.0);
         assert_eq!(long_resume_position("y".into(), 1210.0), None); // inside the last 30 s
+        assert!(skip_is_early(5.0, 200.0) && !skip_is_early(45.0, 200.0));
+        assert!(skip_is_early(10.0, 40.0) && !skip_is_early(20.0, 40.0)); // short song: 40 %
+        assert!(skip_record("b".into(), 3.0, 180.0) && !skip_record("b".into(), 120.0, 180.0));
+        assert_eq!(skip_count("b".into()), 1);
+        play_history_rekey("b".into(), "c".into());
+        assert_eq!(skip_count("c".into()), 1);
+        skip_clear("c".into());
+        assert_eq!(skip_count("c".into()), 0);
         let _ = std::fs::remove_dir_all(d);
     }
 }

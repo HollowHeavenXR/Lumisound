@@ -29,7 +29,7 @@ extension NowPlayingView {
                 guard isHorizontalSwipe else { return }
                 skipHaptic.impactOccurred()
                 if horizontal < 0 {
-                    player.skipToNext()
+                    player.userSkipToNext()
                 } else {
                     player.skipToPrevious()
                 }

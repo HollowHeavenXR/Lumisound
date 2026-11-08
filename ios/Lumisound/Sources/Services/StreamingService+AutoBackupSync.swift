@@ -83,7 +83,7 @@ extension StreamingService {
 
             // Compare against what the server already has so re-runs (e.g. after
             // every scan) only ever upload genuinely new files.
-            guard let existing = try? await self.fetchUserMusicMetadata(token: token) else { return }
+            guard let existing = try? await self.fetchUserMusicMetadata(token: token, maxAge: 30) else { return }
             let existingByOriginalName = Dictionary(
                 existing.compactMap { track -> (String, UserMusicMetadataTrack)? in
                     guard let name = track.originalFilename else { return nil }

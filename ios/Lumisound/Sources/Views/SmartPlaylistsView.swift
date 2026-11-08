@@ -275,7 +275,7 @@ struct SmartPlaylistDetailView: View {
                     .disabled(matched.isEmpty)
 
                     Button {
-                        let shuffled = matched.shuffled()
+                        let shuffled = matched.smartShuffled()
                         if let first = shuffled.first { player.play(song: first, in: shuffled) }
                     } label: {
                         Label("Shuffle", systemImage: "shuffle")

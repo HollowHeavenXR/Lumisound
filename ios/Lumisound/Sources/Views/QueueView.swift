@@ -228,7 +228,7 @@ struct QueueView: View {
                         }
                         .buttonStyle(PressableButtonStyle())
                         .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
-                        heroTransportButton("forward.fill", size: 22, label: "Next") { player.skipToNext() }
+                        heroTransportButton("forward.fill", size: 22, label: "Next") { player.userSkipToNext() }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -343,7 +343,7 @@ struct QueueView: View {
                 .padding(.horizontal, 24)
             if !library.allSongs.isEmpty {
                 Button {
-                    player.setQueue(library.allSongs.shuffled(), startIndex: 0, autoplay: true)
+                    player.setQueue(library.allSongs.smartShuffled(), startIndex: 0, autoplay: true)
                 } label: {
                     Label("Shuffle Your Library", systemImage: "shuffle")
                         .font(.headline)

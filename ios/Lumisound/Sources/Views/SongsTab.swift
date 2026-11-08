@@ -274,7 +274,7 @@ struct SongsTab: View {
                             .foregroundStyle(.white)
                     }
                     Button {
-                        player.setQueue(sortedSongs.shuffled(), startIndex: 0, autoplay: true)
+                        player.setQueue(sortedSongs.smartShuffled(), startIndex: 0, autoplay: true)
                     } label: {
                         Label("Shuffle", systemImage: "shuffle")
                             .font(.subheadline.weight(.bold))

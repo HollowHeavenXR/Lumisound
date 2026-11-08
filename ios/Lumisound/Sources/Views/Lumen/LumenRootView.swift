@@ -507,7 +507,7 @@ struct LumenMiniPlayer: View {
 
                 Button {
                     haptic.impactOccurred()
-                    player.skipToNext()
+                    player.userSkipToNext()
                 } label: {
                     Image(systemName: "forward.fill")
                         .font(.system(size: 16, weight: .semibold))
@@ -548,7 +548,7 @@ struct LumenMiniPlayer: View {
                         if dy < -40, abs(dy) > abs(dx) {
                             onOpen()
                         } else if dx < -70 {
-                            haptic.impactOccurred(); player.skipToNext()
+                            haptic.impactOccurred(); player.userSkipToNext()
                         } else if dx > 70 {
                             haptic.impactOccurred(); player.skipToPrevious()
                         }

@@ -287,7 +287,7 @@ struct ArtistsTab: View {
             Button {
                 guard let artist = sections.flatMap(\.artists).randomElement() else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                player.setQueue(artist.songs.shuffled(), startIndex: 0, autoplay: true)
+                player.setQueue(artist.songs.smartShuffled(), startIndex: 0, autoplay: true)
                 ToastCenter.shared.show("Shuffling \(artist.name)", category: .info, icon: "dice.fill")
             } label: {
                 Image(systemName: "dice.fill")
@@ -341,7 +341,7 @@ struct ArtistsTab: View {
     private func artistMenu(_ artist: ArtistSummary) -> some View {
         Button { play(artist) } label: { Label("Play", systemImage: "play.fill") }
         Button {
-            player.setQueue(artist.songs.shuffled(), startIndex: 0, autoplay: true)
+            player.setQueue(artist.songs.smartShuffled(), startIndex: 0, autoplay: true)
         } label: { Label("Shuffle", systemImage: "shuffle") }
         Divider()
         Button {

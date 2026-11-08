@@ -147,7 +147,7 @@ struct ArtistDetailView: View {
             .tint(AppTheme.dynamicAccent)
 
             Button {
-                let shuffled = songs.shuffled()
+                let shuffled = songs.smartShuffled()
                 player.setQueue(shuffled, startIndex: 0, autoplay: true)
             } label: {
                 Label("Shuffle", systemImage: "shuffle")

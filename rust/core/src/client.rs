@@ -50,7 +50,52 @@ pub(crate) fn http_client() -> reqwest::Client {
 
 fn join(base: &str, path: &str) -> String {
     let base = base.trim_matches('/');
-    if path.starts_with('/') { format!("{base}{path}") } else { format!("{base}/{path}") }
+    let url = if path.starts_with('/') { format!("{base}{path}") } else { format!("{base}/{path}") };
+    encode_query_plus(&url).into_owned()
+}
+
+/// Hosts of the bridge(s) the app talks to (set from `ApiClient`).
+static BRIDGE_HOSTS: RwLock<Vec<String>> = RwLock::new(Vec::new());
+
+fn host_of(url: &str) -> Option<String> {
+    url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+}
+
+fn remember_bridge(base: &str) {
+    if let Some(h) = host_of(base) {
+        let mut v = BRIDGE_HOSTS.write().unwrap();
+        if !v.contains(&h) {
+            v.push(h);
+        }
+    }
+}
+
+/// Register a bridge base URL used outside `ApiClient` (StreamingService's
+/// configurable bridge), so its query strings get the '+' fix too.
+#[uniffi::export]
+pub fn client_register_bridge(base_url: String) {
+    remember_bridge(&base_url);
+}
+
+/// Swift's URLComponents leaves a literal '+' in query values, and the bridge
+/// (like any form decoder) reads '+' as a space: "Goku + Vegeta.opus" was
+/// stored as "Goku   Vegeta.opus", so the backup never matched it and
+/// re-uploaded it on every pass. Spaces are always sent as %20, so a raw '+'
+/// in a bridge query is always a real plus: send it as %2B.
+pub(crate) fn encode_query_plus(url: &str) -> std::borrow::Cow<'_, str> {
+    let Some(q) = url.find('?') else { return url.into() };
+    let end = url[q..].find('#').map_or(url.len(), |i| q + i);
+    if !url[q..end].contains('+') {
+        return url.into();
+    }
+    format!("{}{}{}", &url[..q], url[q..end].replace('+', "%2B"), &url[end..]).into()
+}
+
+/// `encode_query_plus` for requests to the bridge only (other services may
+/// use '+' for spaces on purpose).
+fn bridge_url(url: &str) -> std::borrow::Cow<'_, str> {
+    let is_bridge = host_of(url).is_some_and(|h| BRIDGE_HOSTS.read().unwrap().contains(&h));
+    if is_bridge { encode_query_plus(url) } else { url.into() }
 }
 
 /// FastAPI `{"detail": "..."}` (string) or a generic message.
@@ -66,10 +111,12 @@ pub(crate) fn error_for(status: u16, body: &[u8]) -> CoreError {
 impl ApiClient {
     #[uniffi::constructor]
     pub fn new(base_url: String) -> Arc<Self> {
+        remember_bridge(&base_url);
         Arc::new(Self { base: RwLock::new(base_url), token: RwLock::new(None), api_key: RwLock::new(None), http: http_client() })
     }
 
     pub fn set_base_url(&self, url: String) {
+        remember_bridge(&url);
         *self.base.write().unwrap() = url;
     }
 
@@ -160,7 +207,7 @@ static SHARED: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(h
 
 fn build(method: &str, url: &str, headers: &[HttpHeader], timeout_secs: f64) -> CoreResult<reqwest::RequestBuilder> {
     let m = reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).map_err(|_| CoreError::invalid("bad method"))?;
-    let mut rq = SHARED.request(m, url).timeout(Duration::from_secs_f64(timeout_secs.max(1.0)));
+    let mut rq = SHARED.request(m, bridge_url(url).as_ref()).timeout(Duration::from_secs_f64(timeout_secs.max(1.0)));
     for h in headers {
         rq = rq.header(&h.name, &h.value);
     }
@@ -262,6 +309,16 @@ pub async fn http_download_file(method: String, url: String, headers: Vec<HttpHe
 #[cfg(test)]
 mod download_tests {
     use super::*;
+
+    #[test]
+    fn plus_in_bridge_queries_is_encoded() {
+        assert_eq!(encode_query_plus("https://b.x/u?filename=a + b.mp3&x=1#f+g"), "https://b.x/u?filename=a %2B b.mp3&x=1#f+g");
+        assert_eq!(encode_query_plus("https://b.x/a+b?q=c"), "https://b.x/a+b?q=c");
+        assert_eq!(join("https://b.x/", "/user/music/upload?filename=A+B.mp3"), "https://b.x/user/music/upload?filename=A%2BB.mp3");
+        let _c = ApiClient::new("https://bridge.example".into());
+        assert_eq!(bridge_url("https://bridge.example/u?f=a+b"), "https://bridge.example/u?f=a%2Bb");
+        assert_eq!(bridge_url("https://itunes.apple.com/search?term=a+b"), "https://itunes.apple.com/search?term=a+b");
+    }
 
     #[test]
     fn download_streams_to_file() {

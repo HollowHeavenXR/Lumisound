@@ -137,7 +137,7 @@ final class PhysicalGesturesService: ObservableObject {
         guard delta > Self.shakeThreshold else { return }
         guard Date().timeIntervalSince(lastShakeAt) > Self.shakeCooldown else { return }
         lastShakeAt = Date()
-        player?.skipToNext()
+        player?.userSkipToNext()
     }
 
     @objc private func proximityChanged() {

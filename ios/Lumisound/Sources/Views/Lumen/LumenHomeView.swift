@@ -227,7 +227,7 @@ struct LumenHomeView: View {
             quickTile("Most Played", icon: "flame.fill", colors: [LumenPalette.warning, LumenPalette.ember],
                       value: LumenRoute.mostPlayed)
             Button {
-                let shuffled = library.allSongs.shuffled()
+                let shuffled = library.allSongs.smartShuffled()
                 if let first = shuffled.first { player.play(song: first, in: shuffled) }
             } label: {
                 quickTileLabel("Shuffle All", icon: "shuffle", colors: [LumenPalette.iris, Color(red: 0.42, green: 0.25, blue: 0.9)])
@@ -391,7 +391,7 @@ struct LumenHomeView: View {
                     HStack(spacing: 10) {
                         ForEach(snapshot.decadeGroups, id: \.decade) { group in
                             LumenChip(title: group.decade, systemImage: "play.fill") {
-                                let songs = group.songs.shuffled()
+                                let songs = group.songs.smartShuffled()
                                 if let first = songs.first { player.play(song: first, in: songs) }
                             }
                         }

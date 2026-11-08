@@ -94,6 +94,9 @@ extension SettingsView {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
+            // Smart Shuffle
+            SmartShuffleToggleRow(player: player)
+
             // Rust audio engine
             RustEngineToggleRow(player: player)
 
@@ -634,6 +637,30 @@ private struct RustEngineToggleRow: View {
             if wasPlaying { player.playCurrent(from: at) }
         }
         Text("Plays every track — library, downloads and streams — in Lumisound's own engine: gapless, crossfade, speed and pitch, EQ, reverb, 8D, spatial and night mode. Tracks re-encoded for the Lumisound engine always play on it. Turn off to use Apple's engine for everything else.")
+            .font(.caption)
+            .foregroundStyle(AppTheme.textSecondary)
+            .padding(.leading, 16)
+    }
+}
+
+/// Smart Shuffle (rust/core/src/shuffle.rs), on by default; off = plain random.
+private struct SmartShuffleToggleRow: View {
+    @ObservedObject var player: AudioPlayerManager
+    @AppStorage(SmartShuffle.settingKey) private var enabled = true
+
+    var body: some View {
+        Toggle(isOn: $enabled) {
+            Label("Smart Shuffle", systemImage: "shuffle")
+                .foregroundStyle(AppTheme.textPrimary)
+        }
+        .tint(.teal)
+        .onChange(of: enabled) { _ in
+            // Re-deal Up Next with the new mode when shuffle is already on.
+            if player.shuffleEnabled { player.shuffleQueue() }
+        }
+        Text(enabled
+             ? "Shuffle spreads artists and albums out, plays songs you just heard or keep skipping later, and avoids big tempo jumps."
+             : "Shuffle picks a plain random order.")
             .font(.caption)
             .foregroundStyle(AppTheme.textSecondary)
             .padding(.leading, 16)

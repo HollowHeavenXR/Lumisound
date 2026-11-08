@@ -28,6 +28,7 @@ pub mod metadata;
 pub mod mood;
 pub mod error;
 pub mod retry;
+pub mod shuffle;
 pub mod smart;
 pub mod store;
 pub mod sync;

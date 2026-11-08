@@ -119,7 +119,7 @@ extension NowPlayingView {
                 label: "Next"
             ) {
                 skipHaptic.impactOccurred()
-                player.skipToNext()
+                player.userSkipToNext()
             }
         case .repeatControl:
             transportToggle(

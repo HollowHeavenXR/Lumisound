@@ -117,7 +117,7 @@ final class SleepWakeAlarmService: ObservableObject {
         let targetVolume = settings.volume
         settings.volume = 0
         player.audioSettings = settings
-        player.setQueue(songs.shuffled(), startIndex: 0, autoplay: true)
+        player.setQueue(songs.smartShuffled(), startIndex: 0, autoplay: true)
 
         fadeTimer?.invalidate()
         var step = 0

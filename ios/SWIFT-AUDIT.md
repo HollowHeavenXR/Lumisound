@@ -52,6 +52,7 @@ logic around them is kept minimal and calls into the core.
 | `AccountService+Sync` payload + pull merge, inventory upload, `NetworkRetry` policy | `sync.rs`, `retry.rs` |
 | `MetadataFetchService`, `ArtworkService` processing, `ArtistImageService` lookup | `metadata.rs`, `media/artwork.rs` |
 | Smart-playlist rules, `MoodPlaylistService` classification | `smart.rs`, `mood.rs` |
+| Queue shuffle (`shuffleQueue`/`smartTempoOrder`) and every Shuffle button's `.shuffled()` | `shuffle.rs` (Smart Shuffle), skip history in `stores.rs` |
 | `AIDJService` (announce decisions, duck plan, session log, transition request) | `aidj.rs` |
 | `.lms` conversion (`LumisoundExclusiveExtensionService.convert`, relock) | `lock.rs` (`lms_convert`, `lms_relock_in_place`) |
 | `TrackedPlaylistStore.runAutoDownloads` rules, `LibraryManager+DuplicateDetection` | `stores.rs` (`tracked_due`, `tracked_batch_verdict`), `duplicates.rs` (`LocalCopyIndex`) |

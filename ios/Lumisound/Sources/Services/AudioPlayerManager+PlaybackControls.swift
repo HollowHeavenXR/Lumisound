@@ -324,6 +324,19 @@ extension AudioPlayerManager {
         WidgetDataService.shared.updatePlayState(isPlaying: isPlaying, position: target, duration: duration)
     }
 
+    /// Next track because the listener asked (button, swipe, remote, Siri):
+    /// an early skip is remembered so Smart Shuffle plays the song later.
+    /// Automatic advances (song ended, load failed) call `skipToNext()`.
+    func userSkipToNext() {
+        if let song = currentSong, repeatMode != .one {
+            let length = song.duration > 0 ? song.duration : duration
+            if skipRecord(songId: song.id, position: position, duration: length) {
+                appLog("Early skip remembered for \"\(song.displayName)\" at \(Int(position))s", category: "audio")
+            }
+        }
+        skipToNext()
+    }
+
     func skipToNext() {
         guard !queue.isEmpty else { return }
         if repeatMode == .one {
@@ -404,84 +417,15 @@ extension AudioPlayerManager {
         let currentSongID = currentSong?.id
         var rest = queue
         let current = rest.remove(at: currentIndex)
-        rest.shuffle()
-        let anchorBPM = current.bpm ?? bpmCache[current.id]
-        queue = [current] + smartTempoOrder(rest, anchorBPM: anchorBPM)
+        // Smart Shuffle (Rust core): spreads artists out, plays recently heard
+        // and often-skipped songs later, smooths tempo jumps from `current`.
+        let cache = bpmCache
+        let shuffled = SmartShuffle.order(rest, anchorBPM: current.bpm ?? cache[current.id],
+                                          previousArtist: current.artist, bpm: { cache[$0.id] })
+        queue = [current] + shuffled
         currentIndex = queue.firstIndex(where: { $0.id == currentSongID }) ?? 0
         gaplessScheduled = false
         pendingNextIndex = nil
-    }
-
-    /// Reorders an already-randomly-shuffled list so tracks with a known BPM
-    /// form smoother tempo transitions: each step greedily picks the remaining
-    /// known-BPM track closest to the previous track's tempo, avoiding jarring
-    /// energetic→sleep whiplash between consecutive songs. Tracks with no
-    /// known BPM (not yet analyzed) keep their shuffled relative order and are
-    /// interleaved back in at roughly their original positions, so the queue
-    /// doesn't degrade into two separate "known" / "unknown" blocks.
-    func smartTempoOrder(_ songs: [Song], anchorBPM: Double?) -> [Song] {
-        guard songs.count > 2 else { return songs }
-
-        var withBPM: [(offset: Int, song: Song, bpm: Double)] = []
-        var withoutBPM: [(offset: Int, song: Song)] = []
-        for (offset, song) in songs.enumerated() {
-            if let bpm = song.bpm ?? bpmCache[song.id] {
-                withBPM.append((offset, song, bpm))
-            } else {
-                withoutBPM.append((offset, song))
-            }
-        }
-        guard withBPM.count > 1 else { return songs }
-
-        // Sort once by BPM, then walk outward from the entry closest to
-        // `anchorBPM`. Because the list is sorted, the globally-nearest
-        // remaining track to whichever BPM was picked last is always one of
-        // the two entries immediately outside the already-picked contiguous
-        // block — so this two-pointer walk produces the exact same order as
-        // a naive "rescan everything remaining, every step" greedy search,
-        // but in O(n log n) instead of O(n²). The O(n²) version ran
-        // synchronously on the main thread on every shuffle; for a large
-        // library (thousands of BPM-tagged tracks) that was a real multi-
-        // second hang, the same bug class as the hasLocalCopy(of:) main-
-        // thread hang fixed in v1.4.30.
-        let sorted = withBPM.sorted { $0.bpm < $1.bpm }
-        let startAnchor = anchorBPM ?? sorted[0].bpm
-        var startIndex = 0
-        var bestDiff = Double.greatestFiniteMagnitude
-        for (index, entry) in sorted.enumerated() {
-            let diff = abs(entry.bpm - startAnchor)
-            if diff < bestDiff {
-                bestDiff = diff
-                startIndex = index
-            }
-        }
-
-        var ordered: [Song] = [sorted[startIndex].song]
-        var lastBPM = sorted[startIndex].bpm
-        var lo = startIndex - 1
-        var hi = startIndex + 1
-        while lo >= 0 || hi < sorted.count {
-            let leftDiff = lo >= 0 ? abs(sorted[lo].bpm - lastBPM) : Double.greatestFiniteMagnitude
-            let rightDiff = hi < sorted.count ? abs(sorted[hi].bpm - lastBPM) : Double.greatestFiniteMagnitude
-            if leftDiff <= rightDiff {
-                ordered.append(sorted[lo].song)
-                lastBPM = sorted[lo].bpm
-                lo -= 1
-            } else {
-                ordered.append(sorted[hi].song)
-                lastBPM = sorted[hi].bpm
-                hi += 1
-            }
-        }
-
-        guard !withoutBPM.isEmpty else { return ordered }
-        var result = ordered
-        for entry in withoutBPM {
-            let fraction = Double(entry.offset) / Double(max(songs.count - 1, 1))
-            let insertIndex = min(Int((fraction * Double(result.count)).rounded()), result.count)
-            result.insert(entry.song, at: insertIndex)
-        }
-        return result
     }
 
     /// Restores the queue order captured before shuffle was turned on.

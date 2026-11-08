@@ -510,7 +510,7 @@ struct LocalFolderDetailView: View {
             .buttonStyle(PressableButtonStyle())
 
             Button {
-                player.setQueue(songs.shuffled(), startIndex: 0, autoplay: true)
+                player.setQueue(songs.smartShuffled(), startIndex: 0, autoplay: true)
             } label: {
                 Label("Shuffle", systemImage: "shuffle")
                     .font(.headline)

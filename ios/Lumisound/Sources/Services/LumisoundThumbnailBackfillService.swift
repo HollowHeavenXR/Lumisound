@@ -98,7 +98,7 @@ enum LumisoundThumbnailBackfillService {
         // this is how a local song's already-uploaded server-side id (what
         // the artwork-upload endpoint keys on) gets resolved, matched by
         // the destination filename `uploadTrack` originally used.
-        guard let cloudTracks = try? await streaming.fetchUserMusicMetadata(token: token) else { return }
+        guard let cloudTracks = try? await streaming.fetchUserMusicMetadata(token: token, maxAge: 30) else { return }
         let cloudByFilename = Dictionary(cloudTracks.map { ($0.filename, $0) }, uniquingKeysWith: { first, _ in first })
 
         var processed = 0

@@ -307,7 +307,7 @@ struct LumenNowPlayingView: View {
             }
             .onEnded { value in
                 let dx = value.translation.width
-                if dx < -90 { haptic.impactOccurred(); player.skipToNext() }
+                if dx < -90 { haptic.impactOccurred(); player.userSkipToNext() }
                 else if dx > 90 { haptic.impactOccurred(); player.skipToPrevious() }
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) { artworkSwipe = 0 }
             }
@@ -402,7 +402,7 @@ struct LumenNowPlayingView: View {
                 .buttonStyle(LumenPressStyle(scale: 0.9))
                 .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
                 Spacer()
-                transportButton("forward.fill", size: 28, label: "Next track") { player.skipToNext() }
+                transportButton("forward.fill", size: 28, label: "Next track") { player.userSkipToNext() }
                 Spacer()
                 transportButton(player.repeatMode == .one ? "repeat.1" : "repeat", size: 20,
                                 tint: player.repeatMode == .off ? LumenPalette.textSecondary : LumenPalette.accent,

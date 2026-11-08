@@ -10,6 +10,12 @@ extension StreamingService {
         let base = bridgeURL.trimmingCharacters(in: .init(charactersIn: "/"))
         let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
         guard let url = URL(string: base + normalizedPath) else { return nil }
+        // Lets the core send a literal '+' in this bridge's queries as %2B
+        // (the bridge decodes a raw '+' as a space).
+        if registeredBridgeBase != base {
+            clientRegisterBridge(baseUrl: base)
+            registeredBridgeBase = base
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"

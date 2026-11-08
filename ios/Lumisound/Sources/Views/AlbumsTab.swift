@@ -487,7 +487,7 @@ struct AlbumsTab: View {
     private func albumMenu(_ album: AlbumSummary) -> some View {
         Button { play(album) } label: { Label("Play", systemImage: "play.fill") }
         Button {
-            player.setQueue(album.songs.shuffled(), startIndex: 0, autoplay: true)
+            player.setQueue(album.songs.smartShuffled(), startIndex: 0, autoplay: true)
         } label: { Label("Shuffle", systemImage: "shuffle") }
         Divider()
         Button {

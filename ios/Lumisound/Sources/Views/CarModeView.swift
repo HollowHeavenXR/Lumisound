@@ -159,7 +159,7 @@ struct CarModeView: View {
             // Skip forward (next)
             carButton(systemName: "forward.fill", size: 70) {
                 skipHaptic.impactOccurred()
-                player.skipToNext()
+                player.userSkipToNext()
             }
 
             Spacer()

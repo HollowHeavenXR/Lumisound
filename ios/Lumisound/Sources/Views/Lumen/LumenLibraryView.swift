@@ -281,7 +281,7 @@ struct LumenSongsListView: View {
                             if let first = visible.first { player.play(song: first, in: visible) }
                         }
                         LumenSecondaryButton(title: "Shuffle", systemImage: "shuffle", expands: true) {
-                            let shuffled = visible.shuffled()
+                            let shuffled = visible.smartShuffled()
                             if let first = shuffled.first { player.play(song: first, in: shuffled) }
                         }
                     }

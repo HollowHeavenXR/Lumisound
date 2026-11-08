@@ -154,6 +154,9 @@ struct LumisoundApp: App {
                 }
                 if phase == .background {
                     appLock.lock()
+                    // Core stores write to disk on a background thread; make
+                    // sure nothing is pending if iOS suspends or ends us now.
+                    coreFlush()
                     // Do not start full-library tagging or audio conversion
                     // while the app is transitioning to the background.
                     // Those file-heavy passes compete with suspension and

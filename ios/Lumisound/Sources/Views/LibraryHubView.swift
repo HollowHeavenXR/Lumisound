@@ -446,9 +446,10 @@ struct LibraryHubView: View {
     /// itself whenever `shuffleEnabled` is already true by the time it runs,
     /// so setting it first is all this needs.
     private func shuffleAll() {
-        guard let random = library.allSongs.randomElement() else { return }
+        // First song from Smart Shuffle too, so it isn't one just heard.
+        guard let first = library.allSongs.smartShuffled().first else { return }
         player.shuffleEnabled = true
-        player.play(song: random, in: library.allSongs)
+        player.play(song: first, in: library.allSongs)
     }
 
     /// "Surprise Me" — unlike Shuffle All (a flat random pick across the
