@@ -17,6 +17,12 @@ const HISTORY: &str = "play_history";
 struct Hist {
     count: i64,
     last: Option<f64>,
+    /// When the entry last changed (skips only: newer wins in cross-device sync).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    updated: Option<f64>,
+    /// Changed here and not yet uploaded (skips only).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    dirty: bool,
 }
 
 #[derive(uniffi::Record, Clone, Debug)]
@@ -46,7 +52,7 @@ pub fn play_history_import_legacy(json: Vec<u8>) {
         last_played_at: Option<f64>,
     }
     let m: HashMap<String, L> = serde_json::from_slice(&json).unwrap_or_default();
-    let out: HashMap<String, Hist> = m.into_iter().map(|(k, v)| (k, Hist { count: v.play_count, last: v.last_played_at.map(|d| d + APPLE_EPOCH) })).collect();
+    let out: HashMap<String, Hist> = m.into_iter().map(|(k, v)| (k, Hist { count: v.play_count, last: v.last_played_at.map(|d| d + APPLE_EPOCH), ..Default::default() })).collect();
     store::save(HISTORY, &out);
 }
 
@@ -131,14 +137,22 @@ pub fn play_history_prune(valid_ids: Vec<String>) {
 // ---- skips ----------------------------------------------------------------------------------
 //
 // Early skips (the listener moved on within the first stretch of a song) per
-// song, local to the device. Smart shuffle plays often-skipped songs later.
+// song. Smart shuffle plays often-skipped songs later; skips fade with age.
+// Entries carry an `updated` time and sync across devices (newer wins); a
+// cleared song stays as a zero-count entry so the clear syncs too.
 
 const SKIPS: &str = "skip_history";
+const SKIP_SYNC: &str = "skip_sync";
+const SKIP_SYNC_BATCH: usize = 5000;
 
 /// A skip counts when it happens before this many seconds…
 pub const SKIP_WINDOW_SECS: f64 = 30.0;
 /// …or before this share of a short song.
 const SKIP_WINDOW_SHARE: f64 = 0.4;
+/// Skips lose half their weight every this many days since the last one.
+const SKIP_HALF_LIFE_DAYS: f64 = 60.0;
+/// Synced zero-count entries are dropped after this long.
+const TOMBSTONE_SECS: f64 = 90.0 * 86_400.0;
 
 /// True when moving on at `position` of a `duration`-long song is an early skip.
 #[uniffi::export]
@@ -160,8 +174,11 @@ pub fn skip_record(song_id: String, position: f64, duration: f64) -> bool {
     let _g = LOCK.lock().unwrap();
     let mut m: HashMap<String, Hist> = store::load(SKIPS);
     let e = m.entry(song_id).or_default();
-    e.count += 1;
-    e.last = Some(now());
+    let t = now();
+    e.count = e.count.max(0) + 1;
+    e.last = Some(t);
+    e.updated = Some(t);
+    e.dirty = true;
     store::save(SKIPS, &m);
     true
 }
@@ -169,24 +186,186 @@ pub fn skip_record(song_id: String, position: f64, duration: f64) -> bool {
 #[uniffi::export]
 pub fn skip_count(song_id: String) -> i64 {
     let m: HashMap<String, Hist> = store::load(SKIPS);
-    m.get(&song_id).map_or(0, |h| h.count)
+    m.get(&song_id).map_or(0, |h| h.count.max(0))
 }
 
-/// Forget a song's skips (the listener played it through, or reset it).
+/// Forget a song's skips (the listener reset it). Syncs as a cleared entry.
 #[uniffi::export]
 pub fn skip_clear(song_id: String) {
     let _g = LOCK.lock().unwrap();
     let mut m: HashMap<String, Hist> = store::load(SKIPS);
-    if m.remove(&song_id).is_some() {
+    if let Some(e) = m.get_mut(&song_id).filter(|e| e.count > 0) {
+        *e = Hist { count: 0, last: None, updated: Some(now()), dirty: true };
         store::save(SKIPS, &m);
     }
 }
 
-/// Play + skip history for shuffling: (plays, last played, skips) per id.
-pub(crate) fn listening_stats() -> (HashMap<String, (i64, Option<f64>)>, HashMap<String, i64>) {
+/// Forget every song's skips.
+#[uniffi::export]
+pub fn skip_clear_all() {
+    let _g = LOCK.lock().unwrap();
+    let mut m: HashMap<String, Hist> = store::load(SKIPS);
+    let t = now();
+    let mut changed = false;
+    for e in m.values_mut().filter(|e| e.count > 0) {
+        *e = Hist { count: 0, last: None, updated: Some(t), dirty: true };
+        changed = true;
+    }
+    if changed {
+        store::save(SKIPS, &m);
+    }
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct SkipRecord {
+    pub song_id: String,
+    pub skips: i64,
+    /// Unix seconds of the latest skip.
+    pub last_skipped_at: Option<f64>,
+    pub plays: i64,
+    /// Skips after fading with age (what Smart Shuffle uses).
+    pub weight: f64,
+}
+
+/// Skips after fading: halves every SKIP_HALF_LIFE_DAYS since the last one.
+fn faded_skips(count: i64, last: Option<f64>, now: f64) -> f64 {
+    if count <= 0 {
+        return 0.0;
+    }
+    let days = last.map_or(0.0, |l| ((now - l) / 86_400.0).max(0.0));
+    count as f64 * 0.5f64.powf(days / SKIP_HALF_LIFE_DAYS)
+}
+
+/// The most-skipped songs, highest faded weight first (count > 0 only).
+#[uniffi::export]
+pub fn skip_top(limit: u32) -> Vec<SkipRecord> {
+    let s: HashMap<String, Hist> = store::load(SKIPS);
+    let h: HashMap<String, Hist> = store::load(HISTORY);
+    let t = now();
+    let mut v: Vec<SkipRecord> = s
+        .into_iter()
+        .filter(|(_, e)| e.count > 0)
+        .map(|(id, e)| {
+            let plays = h.get(&id).map_or(0, |p| p.count);
+            SkipRecord { weight: faded_skips(e.count, e.last, t), skips: e.count, last_skipped_at: e.last, plays, song_id: id }
+        })
+        .collect();
+    v.sort_by(|a, b| b.weight.total_cmp(&a.weight).then(b.skips.cmp(&a.skips)).then(a.song_id.cmp(&b.song_id)));
+    v.truncate(limit as usize);
+    v
+}
+
+/// Play + skip history for shuffling: (plays, last played) and faded skips per id.
+pub(crate) fn listening_stats() -> (HashMap<String, (i64, Option<f64>)>, HashMap<String, f64>) {
     let h: HashMap<String, Hist> = store::load(HISTORY);
     let s: HashMap<String, Hist> = store::load(SKIPS);
-    (h.into_iter().map(|(k, v)| (k, (v.count, v.last))).collect(), s.into_iter().map(|(k, v)| (k, v.count)).collect())
+    let t = now();
+    (
+        h.into_iter().map(|(k, v)| (k, (v.count, v.last))).collect(),
+        s.into_iter().filter(|(_, v)| v.count > 0).map(|(k, v)| (k, faded_skips(v.count, v.last, t))).collect(),
+    )
+}
+
+// Cross-device sync (POST /user/skip-history): the app sends entries that
+// changed since the last successful push plus the server cursor it has seen;
+// the server keeps the newer entry per song and returns everything that
+// changed after that cursor.
+
+#[derive(Serialize, Deserialize, Default)]
+struct SkipSyncState {
+    /// Server revision seen so far.
+    cursor: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SkipWire {
+    song_id: String,
+    count: i64,
+    last: Option<f64>,
+    updated: f64,
+}
+
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct SkipSyncBatch {
+    /// JSON request body.
+    pub body: Vec<u8>,
+    /// Pass back to `skip_sync_apply` once the request succeeded.
+    pub token: f64,
+}
+
+#[uniffi::export]
+pub fn skip_sync_batch() -> SkipSyncBatch {
+    let _g = LOCK.lock().unwrap();
+    let st: SkipSyncState = store::load(SKIP_SYNC);
+    let mut m: HashMap<String, Hist> = store::load(SKIPS);
+    // Skips recorded before sync existed: upload once.
+    let mut upgraded = false;
+    for e in m.values_mut().filter(|e| e.updated.is_none() && e.count > 0) {
+        e.updated = Some(e.last.unwrap_or(0.0));
+        e.dirty = true;
+        upgraded = true;
+    }
+    if upgraded {
+        store::save(SKIPS, &m);
+    }
+    // Oldest changes first, so a capped batch never leaves a gap behind its token.
+    let mut entries: Vec<SkipWire> = m
+        .into_iter()
+        .filter_map(|(id, e)| {
+            let u = e.updated.filter(|_| e.dirty)?;
+            Some(SkipWire { song_id: id, count: e.count.max(0), last: e.last, updated: u })
+        })
+        .collect();
+    entries.sort_by(|a, b| a.updated.total_cmp(&b.updated));
+    entries.truncate(SKIP_SYNC_BATCH);
+    let token = entries.last().map_or(0.0, |e| e.updated);
+    let body = serde_json::to_vec(&serde_json::json!({"since": st.cursor, "entries": entries})).unwrap_or_default();
+    SkipSyncBatch { body, token }
+}
+
+/// Merge the server's reply (newer entry wins). Returns how many songs changed.
+#[uniffi::export]
+pub fn skip_sync_apply(response: Vec<u8>, token: f64) -> u32 {
+    #[derive(Deserialize)]
+    struct Reply {
+        cursor: i64,
+        #[serde(default)]
+        entries: Vec<SkipWire>,
+    }
+    let Ok(r) = serde_json::from_slice::<Reply>(&response) else { return 0 };
+    let _g = LOCK.lock().unwrap();
+    let mut m: HashMap<String, Hist> = store::load(SKIPS);
+    // Sent entries are uploaded unless they changed again since (newer than the token).
+    for e in m.values_mut().filter(|e| e.dirty && e.updated.is_some_and(|u| u <= token)) {
+        e.dirty = false;
+    }
+    let mut changed = 0u32;
+    for w in r.entries {
+        if w.song_id.is_empty() || !w.updated.is_finite() {
+            continue;
+        }
+        let e = m.entry(w.song_id).or_default();
+        if e.updated.is_none_or(|u| u < w.updated) {
+            *e = Hist { count: w.count.max(0), last: w.last, updated: Some(w.updated), dirty: false };
+            changed += 1;
+        }
+    }
+    let mut st: SkipSyncState = store::load(SKIP_SYNC);
+    st.cursor = st.cursor.max(r.cursor);
+    // Uploaded clears older than the tombstone age are no longer needed.
+    let cutoff = now() - TOMBSTONE_SECS;
+    m.retain(|_, e| e.count > 0 || e.dirty || e.updated.is_none_or(|u| u > cutoff));
+    store::save(SKIPS, &m);
+    store::save(SKIP_SYNC, &st);
+    changed
+}
+
+/// Signed out / switched account: the next sync pulls the account's whole
+/// history again. Entries already uploaded stay with the old account.
+#[uniffi::export]
+pub fn skip_sync_reset() {
+    let _g = LOCK.lock().unwrap();
+    store::save(SKIP_SYNC, &SkipSyncState::default());
 }
 
 // ---- bookmarks ------------------------------------------------------------------------------
@@ -351,6 +530,50 @@ mod tests {
         assert_eq!(skip_count("c".into()), 1);
         skip_clear("c".into());
         assert_eq!(skip_count("c".into()), 0);
+
+        // Top list: faded weight, cleared songs left out.
+        for _ in 0..3 {
+            skip_record("d".into(), 1.0, 200.0);
+        }
+        skip_record("e".into(), 1.0, 200.0);
+        let top = skip_top(10);
+        assert_eq!(top.iter().map(|r| r.song_id.as_str()).collect::<Vec<_>>(), ["d", "e"]);
+        assert_eq!(top[0].skips, 3);
+        assert!((top[0].weight - 3.0).abs() < 0.01);
+        assert!((faded_skips(4, Some(0.0), SKIP_HALF_LIFE_DAYS * 86_400.0) - 2.0).abs() < 1e-9);
+        assert_eq!(faded_skips(0, None, 0.0), 0.0);
+
+        // Sync: everything changed so far goes up (oldest first), including the clear of "c".
+        let b = skip_sync_batch();
+        let body: serde_json::Value = serde_json::from_slice(&b.body).unwrap();
+        assert_eq!(body["since"], 0);
+        let sent: Vec<&str> = body["entries"].as_array().unwrap().iter().map(|e| e["song_id"].as_str().unwrap()).collect();
+        assert_eq!(sent.len(), 3);
+        assert!(sent.contains(&"c") && sent.contains(&"d") && sent.contains(&"e"));
+        // Server reply: another device skipped "f", and cleared "d" later than our skip.
+        let later = now() + 10.0;
+        let reply = serde_json::json!({"cursor": 7, "entries": [
+            {"song_id": "f", "count": 2, "last": 100.0, "updated": 100.0},
+            {"song_id": "d", "count": 0, "last": null, "updated": later},
+            {"song_id": "e", "count": 9, "last": 1.0, "updated": 1.0}, // older than ours: ignored
+        ]});
+        assert_eq!(skip_sync_apply(serde_json::to_vec(&reply).unwrap(), b.token), 2);
+        assert_eq!(skip_count("d".into()), 0);
+        assert_eq!(skip_count("e".into()), 1);
+        assert_eq!(skip_count("f".into()), 2);
+        // Nothing new to push, cursor remembered; a new skip goes up alone.
+        let b2: serde_json::Value = serde_json::from_slice(&skip_sync_batch().body).unwrap();
+        assert_eq!(b2["since"], 7);
+        assert!(b2["entries"].as_array().unwrap().is_empty());
+        skip_record("e".into(), 1.0, 200.0);
+        let b3: serde_json::Value = serde_json::from_slice(&skip_sync_batch().body).unwrap();
+        assert_eq!(b3["entries"].as_array().unwrap().len(), 1);
+        skip_clear_all();
+        assert!(skip_top(10).is_empty());
+        skip_sync_reset();
+        let b4: serde_json::Value = serde_json::from_slice(&skip_sync_batch().body).unwrap();
+        assert_eq!(b4["since"], 0);
+        assert!(skip_sync_apply(b"not json".to_vec(), 0.0) == 0);
         let _ = std::fs::remove_dir_all(d);
     }
 }

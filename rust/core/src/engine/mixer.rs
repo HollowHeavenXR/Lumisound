@@ -360,6 +360,14 @@ impl Mixer {
         }
     }
 
+    /// Tests: every audible deck has `frames` buffered (or finished decoding),
+    /// so an offline render can't outrun a slow (debug-build) decoder.
+    #[cfg(test)]
+    pub(crate) fn decks_ready(&self, frames: usize) -> bool {
+        let ok = |d: &super::deck::Deck| d.buffered_frames() >= frames || d.shared.eof.load(Ordering::Acquire);
+        self.cur.as_ref().is_none_or(|d| ok(d)) && self.fading.as_ref().is_none_or(|(d, _)| ok(d))
+    }
+
     pub fn render(&mut self, out: &mut [f32]) {
         let t_start = std::time::Instant::now();
         self.tele.health.last_callback_ns.store(super::health::mono_ns(), Ordering::Relaxed);
@@ -405,8 +413,13 @@ impl Mixer {
             let mut starve: Option<(u64, f64, PlaybackPhase)> = None;
             let mut resumed: Option<(u64, f64)> = None;
             let mut first_audio: Option<(u64, f64, f64)> = None;
+            let prefill = start_prefill_samples(self.rate);
             if let Some(d) = self.cur.as_mut() {
-                if d.ring.slots() >= 2 {
+                // A track starts once a short head start is buffered (or the
+                // decoder finished): starting on the first decoded packet ran
+                // the ring dry a few ms later when the next one was late.
+                let ready = d.frames_played > 0 || d.ring.slots() >= prefill || d.shared.eof.load(Ordering::Acquire);
+                if ready && d.ring.slots() >= 2 {
                     if d.frames_played == 0 {
                         first_audio = Some((d.id, d.position(), d.opened_at.elapsed().as_secs_f64() * 1000.0));
                     }
@@ -617,4 +630,12 @@ impl Mixer {
             }
         }
     }
+}
+
+/// Head start (interleaved samples) a deck buffers before its first frame plays.
+pub(crate) const START_PREFILL_MS: usize = 60;
+
+#[inline]
+pub(crate) fn start_prefill_samples(rate: u32) -> usize {
+    rate as usize * START_PREFILL_MS / 1000 * 2
 }

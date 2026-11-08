@@ -157,6 +157,8 @@ struct LumisoundApp: App {
                     // Core stores write to disk on a background thread; make
                     // sure nothing is pending if iOS suspends or ends us now.
                     coreFlush()
+                    // Skips from this session reach the account's other devices.
+                    Task { await account.syncSkipHistory() }
                     // Do not start full-library tagging or audio conversion
                     // while the app is transitioning to the background.
                     // Those file-heavy passes compete with suspension and

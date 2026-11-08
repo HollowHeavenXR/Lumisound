@@ -30,6 +30,7 @@ pub fn routes() -> Router<AppState> {
         .route("/user/settings", get(get_settings).put(update_settings))
         .route("/user/settings/expanded", get(get_expanded).put(put_expanded))
         .route("/user/appearance", get(get_appearance).put(put_appearance))
+        .route("/user/skip-history", post(sync_skips))
         .route("/user/library/inventory", post(upload_inventory))
         .route("/user/library/duplicates", get(library_duplicates))
         .route("/user/sync", get(sync_pull).post(sync_push))
@@ -991,4 +992,95 @@ async fn put_appearance(State(st): State<AppState>, u: User, J(b): J<AppearanceB
         .await?;
     st.push_live(&u.id, json!({"type": "appearance_changed", "style": b.style, "density": b.density}));
     Ok(Json(v))
+}
+
+// ---- Smart Shuffle skip history (cross-device) -----------------------------------------------
+
+#[derive(Deserialize)]
+struct SkipEntry {
+    song_id: String,
+    count: i64,
+    last: Option<f64>,
+    updated: f64,
+}
+
+#[derive(Deserialize)]
+struct SkipSyncBody {
+    #[serde(default)]
+    since: i64,
+    #[serde(default)]
+    entries: Vec<SkipEntry>,
+}
+
+const SKIP_PUSH_MAX: usize = 5000;
+const SKIP_PULL_MAX: i64 = 20000;
+
+/// Push changed skip entries (newer `updated` wins per song) and get back
+/// every entry that changed after the caller's cursor, minus the ones it
+/// just sent that were kept as-is.
+async fn sync_skips(State(st): State<AppState>, u: User, J(b): J<SkipSyncBody>) -> ApiResult<Json<Value>> {
+    if b.entries.len() > SKIP_PUSH_MAX {
+        return Err(AppError::bad_request("Too many skip entries"));
+    }
+    // One row per song (the newest), or the upsert would touch a row twice.
+    let mut latest: std::collections::HashMap<&str, &SkipEntry> = std::collections::HashMap::with_capacity(b.entries.len());
+    for e in &b.entries {
+        let valid = !e.song_id.is_empty()
+            && e.song_id.len() <= 600
+            && e.updated.is_finite()
+            && (0..=1_000_000).contains(&e.count)
+            && e.last.is_none_or(f64::is_finite);
+        if !valid {
+            return Err(AppError::bad_request("Invalid skip entry"));
+        }
+        let slot = latest.entry(e.song_id.as_str()).or_insert(e);
+        if e.updated > slot.updated {
+            *slot = e;
+        }
+    }
+    let rows: Vec<Value> = latest.values().map(|e| json!({"song_id": e.song_id, "count": e.count, "last": e.last, "updated": e.updated})).collect();
+    let rows = sqlx::types::Json(rows);
+    let since = b.since.max(0);
+    let mut tx = st.db.begin().await?;
+    if !rows.0.is_empty() {
+        sqlx::query(
+            "INSERT INTO ios_user_skip_history (user_id, song_id, count, last_skipped, updated) \
+             SELECT $1, e.song_id, e.count, e.last, e.updated FROM jsonb_to_recordset($2) AS e(song_id text, count int, last float8, updated float8) \
+             ON CONFLICT (user_id, song_id) DO UPDATE SET count = EXCLUDED.count, last_skipped = EXCLUDED.last_skipped, \
+               updated = EXCLUDED.updated, rev = nextval('ios_user_skip_history_rev') \
+             WHERE ios_user_skip_history.updated < EXCLUDED.updated",
+        )
+        .bind(&u.id)
+        .bind(&rows)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let (entries, n, last_rev): (Value, i64, Option<i64>) = sqlx::query_as(
+        "SELECT COALESCE(json_agg(json_build_object('song_id', song_id, 'count', count, 'last', last_skipped, 'updated', updated) ORDER BY rev), '[]'::json), \
+                COUNT(*), MAX(rev) \
+         FROM (SELECT * FROM ios_user_skip_history h WHERE user_id = $1 AND rev > $2 \
+                 AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3) AS p(song_id text, updated float8) \
+                                 WHERE p.song_id = h.song_id AND p.updated = h.updated) \
+               ORDER BY rev LIMIT $4) r",
+    )
+    .bind(&u.id)
+    .bind(since)
+    .bind(&rows)
+    .bind(SKIP_PULL_MAX)
+    .fetch_one(&mut *tx)
+    .await?;
+    // A full page resumes after its last row; otherwise the cursor covers
+    // everything, including this caller's own (unreturned) rows.
+    let cursor = if n >= SKIP_PULL_MAX {
+        last_rev.unwrap_or(since)
+    } else {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(rev) FROM ios_user_skip_history WHERE user_id = $1 AND rev > $2")
+            .bind(&u.id)
+            .bind(since)
+            .fetch_one(&mut *tx)
+            .await?
+            .unwrap_or(since)
+    };
+    tx.commit().await?;
+    Ok(Json(json!({"cursor": cursor, "entries": entries})))
 }

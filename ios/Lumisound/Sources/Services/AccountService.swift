@@ -118,6 +118,7 @@ final class AccountService: ObservableObject {
     func startAutoPushTimer(library: LibraryManager) {
         stopAutoPushTimer()
         startAppearanceSync()
+        Task { @MainActor [weak self] in await self?.syncSkipHistory() }
 
         // Pull the account's favorites once at start-up. This is the half that
         // actually restores them after a reinstall or on a new device — writes
@@ -142,6 +143,7 @@ final class AccountService: ObservableObject {
                 guard let self, self.isLoggedIn else { return }
                 await self.pushSync(library: library)
                 await self.syncLibraryInventory(library: library)
+                await self.syncSkipHistory()
             }
         }
         // Lets iOS batch this wake-up with others (battery).

@@ -1802,3 +1802,19 @@ CREATE INDEX IF NOT EXISTS ios_username_change_log_idx_user_time ON ios_username
 
 -- Interface style chosen in the app (Settings > Appearance): {"style": "...", "density": "..."}.
 ALTER TABLE ios_user_settings ADD COLUMN IF NOT EXISTS appearance_json TEXT NULL;
+
+-- Smart Shuffle skip history, synced across a user's devices (2026-11-07).
+-- One row per song: early-skip count, last skip and the device-side change
+-- time (newer wins). count = 0 is a cleared song. `rev` orders changes so
+-- devices fetch only what changed since their last sync.
+CREATE SEQUENCE IF NOT EXISTS ios_user_skip_history_rev;
+CREATE TABLE IF NOT EXISTS ios_user_skip_history (
+    user_id VARCHAR(36) NOT NULL REFERENCES ios_users(id) ON DELETE CASCADE,
+    song_id VARCHAR(600) NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    last_skipped DOUBLE PRECISION NULL,
+    updated DOUBLE PRECISION NOT NULL,
+    rev BIGINT NOT NULL DEFAULT nextval('ios_user_skip_history_rev'),
+    PRIMARY KEY (user_id, song_id)
+);
+CREATE INDEX IF NOT EXISTS ios_user_skip_history_idx_rev ON ios_user_skip_history (user_id, rev);

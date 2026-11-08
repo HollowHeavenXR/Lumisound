@@ -21,6 +21,8 @@ struct LibraryHealthView: View {
     /// render, and the corrupt-file scan re-renders this view as it runs.
     @State private var missingMetadataSongs: [Song] = []
     @State private var lowBitrateSongs: [Song] = []
+    /// Songs Smart Shuffle currently plays later because of early skips.
+    @State private var oftenSkippedCount = 0
 
     private var missingMetadataCount: Int { missingMetadataSongs.count }
     private var lowBitrateCount: Int { lowBitrateSongs.count }
@@ -29,6 +31,7 @@ struct LibraryHealthView: View {
         let all = songs
         missingMetadataSongs = all.filter { $0.artist.isEmpty || $0.album.isEmpty || $0.genre.isEmpty || $0.year.isEmpty }
         lowBitrateSongs = all.filter { $0.bitrate > 0 && $0.bitrate < 128 }
+        oftenSkippedCount = OftenSkippedView.entries(in: all).count
     }
 
     /// 100 minus the percentage of the library affected by a missing-
@@ -115,6 +118,20 @@ struct LibraryHealthView: View {
                     Text("Downloads")
                 } footer: {
                     Text("These two run on demand — open either one and tap Scan Now for an up-to-date count.")
+                }
+                .listRowBackground(tintedRowBackground(.pink))
+
+                Section {
+                    NavigationLink(destination: OftenSkippedView(onChange: refreshIssueLists)) {
+                        healthRow(
+                            icon: "forward.end",
+                            title: "Often Skipped",
+                            subtitle: "Played later by Smart Shuffle",
+                            count: oftenSkippedCount
+                        )
+                    }
+                } header: {
+                    Text("Listening")
                 }
                 .listRowBackground(tintedRowBackground(.pink))
             }

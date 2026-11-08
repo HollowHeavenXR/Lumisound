@@ -191,6 +191,8 @@ fn click_score(x: &[f64], rate: f64, f: f64, amp: f64) -> f64 {
 struct Row(String, String, f64, String);
 
 #[test]
+// Decode-speed and DSP limits assume an optimised build (see the header).
+#[cfg_attr(debug_assertions, ignore)]
 fn engine_quality_report() {
     let d = dir();
     let rate = 48_000.0;

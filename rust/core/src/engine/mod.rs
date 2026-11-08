@@ -611,10 +611,14 @@ mod tests {
         let chunk = 1024;
         let n = (secs * e.output_rate() as f64) as usize / chunk;
         for _ in 0..n {
+            // Paced by the decoders, not the clock: wait (bounded) until the
+            // decks have this chunk buffered, so slow debug builds and a busy
+            // machine can't starve them and skew timing-based asserts.
+            let t = std::time::Instant::now();
+            while !e.mixer.lock().unwrap().decks_ready(chunk) && t.elapsed() < Duration::from_secs(2) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
             all.extend(e.render_offline(chunk));
-            // ~5x real time: decks (slow in debug builds) keep their buffers
-            // full, so timing-based asserts don't flake under load.
-            std::thread::sleep(Duration::from_millis(4));
         }
         all
     }

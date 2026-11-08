@@ -110,7 +110,7 @@ fn tempo_gap(a: f64, b: f64) -> f64 {
 
 /// How much to favour a song (1 = normal). Recently played and often-skipped
 /// songs get lower weights, so they tend to come later.
-fn weight(id: &str, plays: &HashMap<String, (i64, Option<f64>)>, skips: &HashMap<String, i64>, now: f64) -> f64 {
+fn weight(id: &str, plays: &HashMap<String, (i64, Option<f64>)>, skips: &HashMap<String, f64>, now: f64) -> f64 {
     let (count, last) = plays.get(id).copied().unwrap_or((0, None));
     let mut w = 1.0;
     if let Some(last) = last {
@@ -123,9 +123,10 @@ fn weight(id: &str, plays: &HashMap<String, (i64, Option<f64>)>, skips: &HashMap
             _ => 1.0,
         };
     }
-    let s = skips.get(id).copied().unwrap_or(0);
-    if s >= 2 {
-        let ratio = s as f64 / (s + count.max(0)) as f64;
+    // Faded skips (older skips count for less, see stores::listening_stats).
+    let s = skips.get(id).copied().unwrap_or(0.0);
+    if s >= 1.5 {
+        let ratio = s / (s + count.max(0) as f64);
         w *= (1.0 - 0.85 * ratio).max(0.1);
     }
     w
@@ -135,7 +136,7 @@ pub(crate) fn shuffle_with(
     items: &[ShuffleItem],
     o: &ShuffleOptions,
     plays: &HashMap<String, (i64, Option<f64>)>,
-    skips: &HashMap<String, i64>,
+    skips: &HashMap<String, f64>,
     now: f64,
 ) -> Vec<u32> {
     let n = items.len();
@@ -262,7 +263,7 @@ mod tests {
         let items: Vec<_> = (0..40).map(|i| item(&format!("s{i}"), &format!("A{i}"), "", None)).collect();
         let now = 1_000_000.0;
         let plays: HashMap<_, _> = [("s0".to_string(), (5, Some(now - 600.0)))].into();
-        let skips: HashMap<_, _> = [("s1".to_string(), 6)].into();
+        let skips: HashMap<_, _> = [("s1".to_string(), 6.0)].into();
         let (mut p0, mut p1, mut p2) = (0usize, 0usize, 0usize);
         let runs = 300;
         for seed in 0..runs {

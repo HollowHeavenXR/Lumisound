@@ -130,7 +130,7 @@ async fn server_library(State(st): State<AppState>, Q(q): Q<ServerLibQ>) -> ApiR
         .map(|p| {
             let st = st.clone();
             async move {
-                let abs = std::fs::canonicalize(&p).unwrap_or(p.clone());
+                let abs = tokio::fs::canonicalize(&p).await.unwrap_or_else(|_| p.clone());
                 let readable = storage::readable_copy(&p).await;
                 let m = st.tags.tags(&abs, readable.path()).await;
                 (p, abs, m)
@@ -316,7 +316,7 @@ async fn list_music(State(st): State<AppState>, u: User, Q(q): Q<ServerLibQ>) ->
         .map(|p| {
             let st = st.clone();
             async move {
-                let abs = std::fs::canonicalize(&p).unwrap_or(p.clone());
+                let abs = tokio::fs::canonicalize(&p).await.unwrap_or_else(|_| p.clone());
                 let readable = storage::readable_copy(&p).await;
                 let m = st.tags.tags(&abs, readable.path()).await;
                 (p, m)
@@ -326,55 +326,61 @@ async fn list_music(State(st): State<AppState>, u: User, Q(q): Q<ServerLibQ>) ->
         .collect()
         .await;
     st.tags.flush().await;
-    let dir_real = std::fs::canonicalize(&dir).unwrap_or(dir.clone());
+    // Per-file canonicalize/stat calls block: build the list off the async workers.
     let search = q.search.unwrap_or_default().to_lowercase();
-    let mut tracks: Vec<Value> = Vec::with_capacity(files.len());
-    for (p, locked) in &files {
-        let abs = std::fs::canonicalize(p).unwrap_or(p.clone());
-        let rel = p.strip_prefix(&dir).map(|r| r.to_string_lossy().into_owned()).unwrap_or_else(|_| p.file_name().unwrap().to_string_lossy().into());
-        let name = p.file_name().unwrap().to_string_lossy().into_owned();
-        let empty = (json!({}), None);
-        let (meta, uploaded) = if *locked { stored.get(&rel).cloned().unwrap_or(empty) } else { (tags.get(p).cloned().unwrap_or(json!({})), stored.get(&rel).and_then(|s| s.1.clone())) };
-        let s = |k: &str| meta[k].as_str().filter(|s| !s.is_empty()).map(str::to_string);
-        let (ext, title, track_number) = if *locked {
-            (lock::inner_ext(&name).unwrap_or_default(), s("title").unwrap_or_else(|| lock::display_stem(&name)), String::new())
-        } else {
-            (
-                p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase(),
-                s("title").unwrap_or_else(|| p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string()),
-                s("track_number").unwrap_or_default(),
-            )
-        };
-        let artist = s("artist").unwrap_or_else(|| "Unknown Artist".into());
-        let mut album = s("album").unwrap_or_default();
-        if album.is_empty() {
-            if let Some(parent) = p.parent() {
-                if std::fs::canonicalize(parent).unwrap_or(parent.to_path_buf()) != dir_real {
-                    album = parent.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+    let mut tracks: Vec<Value> = tokio::task::spawn_blocking(move || {
+        let dir_real = std::fs::canonicalize(&dir).unwrap_or(dir.clone());
+        let mut tracks: Vec<Value> = Vec::with_capacity(files.len());
+        for (p, locked) in &files {
+            let abs = std::fs::canonicalize(p).unwrap_or(p.clone());
+            let rel = p.strip_prefix(&dir).map(|r| r.to_string_lossy().into_owned()).unwrap_or_else(|_| p.file_name().unwrap().to_string_lossy().into());
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            let empty = (json!({}), None);
+            let (meta, uploaded) = if *locked { stored.get(&rel).cloned().unwrap_or(empty) } else { (tags.get(p).cloned().unwrap_or(json!({})), stored.get(&rel).and_then(|s| s.1.clone())) };
+            let s = |k: &str| meta[k].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+            let (ext, title, track_number) = if *locked {
+                (lock::inner_ext(&name).unwrap_or_default(), s("title").unwrap_or_else(|| lock::display_stem(&name)), String::new())
+            } else {
+                (
+                    p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase(),
+                    s("title").unwrap_or_else(|| p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string()),
+                    s("track_number").unwrap_or_default(),
+                )
+            };
+            let artist = s("artist").unwrap_or_else(|| "Unknown Artist".into());
+            let mut album = s("album").unwrap_or_default();
+            if album.is_empty() {
+                if let Some(parent) = p.parent() {
+                    if std::fs::canonicalize(parent).unwrap_or(parent.to_path_buf()) != dir_real {
+                        album = parent.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                    }
                 }
             }
+            if !search.is_empty() && !title.to_lowercase().contains(&search) && !artist.to_lowercase().contains(&search) && !album.to_lowercase().contains(&search) {
+                continue;
+            }
+            let uploaded = uploaded.or_else(|| std::fs::metadata(p).ok().and_then(|m| m.modified().ok()).and_then(py_iso_utc));
+            // Plain files are described by their tags (no analysis fields, as in Python); locked ones by their DB row.
+            let pick = |k: &str| if *locked { meta.get(k).cloned().unwrap_or(Value::Null) } else { Value::Null };
+            tracks.push(json!({
+                "id": stable_id(&abs), "title": title, "artist": artist, "album": album,
+                "duration": meta["duration"].as_f64().filter(|d| *d != 0.0).map(|d| json!(d)).unwrap_or(json!(0.0)),
+                "genre": s("genre").unwrap_or_default(), "track_number": track_number,
+                "has_artwork": meta["has_artwork"].as_bool().unwrap_or(false),
+                "bpm": pick("bpm"), "trailing_silence_s": pick("trailing_silence_s"), "outro_slope_db": pick("outro_slope_db"),
+                "outro_cold_stop": pick("outro_cold_stop"), "intro_lead_in_s": pick("intro_lead_in_s"),
+                "intro_onset_hardness": pick("intro_onset_hardness"),
+                "spectral_profile": if *locked { decode_spectral(&meta["spectral_raw"].as_str().map(str::to_string)) } else { Value::Null },
+                "server_path": rel, "filename": name, "ext": ext, "is_locked": locked, "uploaded_at": uploaded,
+                "sample_rate": meta.get("sample_rate").cloned().unwrap_or(Value::Null),
+            }));
         }
-        if !search.is_empty() && !title.to_lowercase().contains(&search) && !artist.to_lowercase().contains(&search) && !album.to_lowercase().contains(&search) {
-            continue;
-        }
-        let uploaded = uploaded.or_else(|| std::fs::metadata(p).ok().and_then(|m| m.modified().ok()).and_then(py_iso_utc));
-        // Plain files are described by their tags (no analysis fields, as in Python); locked ones by their DB row.
-        let pick = |k: &str| if *locked { meta.get(k).cloned().unwrap_or(Value::Null) } else { Value::Null };
-        tracks.push(json!({
-            "id": stable_id(&abs), "title": title, "artist": artist, "album": album,
-            "duration": meta["duration"].as_f64().filter(|d| *d != 0.0).map(|d| json!(d)).unwrap_or(json!(0.0)),
-            "genre": s("genre").unwrap_or_default(), "track_number": track_number,
-            "has_artwork": meta["has_artwork"].as_bool().unwrap_or(false),
-            "bpm": pick("bpm"), "trailing_silence_s": pick("trailing_silence_s"), "outro_slope_db": pick("outro_slope_db"),
-            "outro_cold_stop": pick("outro_cold_stop"), "intro_lead_in_s": pick("intro_lead_in_s"),
-            "intro_onset_hardness": pick("intro_onset_hardness"),
-            "spectral_profile": if *locked { decode_spectral(&meta["spectral_raw"].as_str().map(str::to_string)) } else { Value::Null },
-            "server_path": rel, "filename": name, "ext": ext, "is_locked": locked, "uploaded_at": uploaded,
-            "sample_rate": meta.get("sample_rate").cloned().unwrap_or(Value::Null),
-        }));
-    }
+        tracks
+    })
+    .await
+    .map_err(|e| AppError::internal(e.to_string()))?;
     let k = |t: &Value, f: &str| t[f].as_str().unwrap_or("").to_lowercase();
-    tracks.sort_by(|a, b| (k(a, "album"), k(a, "title")).cmp(&(k(b, "album"), k(b, "title"))));
+    tracks.sort_by_cached_key(|t| (k(t, "album"), k(t, "title")));
     let eq_target = {
         let profiles: Vec<Vec<f64>> = tracks
             .iter()

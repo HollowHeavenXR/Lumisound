@@ -223,10 +223,36 @@ Done:
       every backup pass. A duplicate upload now heals the stored original_filename.
 
 Open / ideas:
-- [ ] Engine test `beatmatched_crossfade_tracks_position_and_returns_to_native_tempo` fails in
-      debug builds only (deck thread can't keep up unoptimised); passes with --release.
-      Make it pump at real-time pace or mark release-only.
-- [ ] Show "often skipped" songs somewhere (Library Health?) with a reset (core `skip_clear`).
-- [ ] Sync skip history across devices (needs a bridge column/route).
-- [ ] Incremental `/user/music/metadata?since=` so the app never pulls the whole list.
+- [x] Engine test `beatmatched_crossfade_...` failing in debug: the test pump now waits for the
+      decks to have each chunk buffered (decoder-paced), so it passes in debug and release.
+- [x] "Often skipped" songs in Library Health with per-song Forget + Reset All (see below).
+- [x] Sync skip history across devices (see below).
+- [ ] Incremental `/user/music/metadata?since=`: deprioritised; the metadata table holds only
+      ~25 rows in production (the heavy list is the file walk `/user/music`, now off the async
+      workers). Revisit if libraries grow.
 - [ ] H. delete superseded Swift (AV graph etc.) — still open from the port.
+
+## 2026-11-07 (evening) upgrade + stability pass
+
+Telemetry check first (ios_app_event_log, last 3 days): no crashes/hangs since 2.0.0.11;
+stream_proxy_auth_rejected stopped after 2.0.0.11; the engine's "clipping" counts are samples
+its look-ahead limiter caught (not audible clipping); remaining issue = 1-10 ms underruns in the
+first 0.5 s of a track (phase "starting", Bluetooth, locked Opus).
+
+Done:
+- [x] Engine start head-start: a deck's first frame plays once 60 ms is buffered (or decoding
+      finished) — mixer.rs `start_prefill_samples`. Fixes the start-of-track underruns.
+      Quality suite (release) unchanged: start/seek click scores 1.07 / 5.26 (limit 8).
+- [x] Deck decode threads run at QOS_CLASS_USER_INTERACTIVE on Apple platforms (deck.rs).
+- [x] Skip learning v2 (core stores.rs): skips fade (half-life 60 days); `skip_top`,
+      `skip_clear_all`; cleared songs kept as zero-count entries so the clear syncs.
+      Smart Shuffle weighs faded skips (threshold 1.5).
+- [x] Skip sync: bridge `POST /user/skip-history` (table ios_user_skip_history, `rev` cursor
+      from a sequence; newer `updated` wins; the caller's own kept rows aren't echoed back).
+      Core `skip_sync_batch` / `skip_sync_apply` / `skip_sync_reset` (per-entry dirty flag,
+      oldest-first batches of 5000). App syncs on start, every 20 min, on backgrounding; the
+      cursor resets on sign-out (AccountService+SkipSync.swift).
+- [x] Often Skipped screen (Library Health > Listening): songs Smart Shuffle holds back, swipe
+      to Forget, Reset All (OftenSkippedView.swift).
+- [x] Bridge `/user/music`: per-file canonicalize/stat loop moved to spawn_blocking (it ran on
+      the async workers), tokio canonicalize for tag reads, sort with cached lowercase keys.
