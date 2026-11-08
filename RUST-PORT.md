@@ -256,3 +256,36 @@ Done:
       to Forget, Reset All (OftenSkippedView.swift).
 - [x] Bridge `/user/music`: per-file canonicalize/stat loop moved to spawn_blocking (it ran on
       the async workers), tokio canonicalize for tag reads, sort with cached lowercase keys.
+
+## 2026-11-08 custom Music Haptics + Skip Silent Intros
+
+Both rebuilt from scratch in the core; Swift only plays cues / applies offsets.
+
+- [x] Music Haptics (rust/core/src/haptics.rs): 3-band onset analysis (low <150 Hz, mid
+      180 Hz-1.8 kHz, high >3.5 kHz) with track-adaptive thresholds, cross-band leakage
+      filter, merged co-hits, density caps (12/s total, 6/s hi-hats), dynamics scaling,
+      continuous rumble with a 50 ms envelope for sustained bass. Long tracks analysed in
+      300 s pieces off one front-to-back decode (decode::mono_pcm_blocks), so memory stays
+      flat. Scores cached (blob cache "haptics_v1", compact binary). HapticScheduler times
+      cues against engine position, output latency and speed, detects seeks.
+      MusicHapticsService.swift rewritten (Core Haptics player, 0.15 s ticks, 0.45 s
+      look-ahead, Subtle/Balanced/Intense); no longer runs the FFT visualizer tap.
+- [x] Skip Silent Intros (rust/core/src/intro.rs): level relative to the track (p90),
+      silence < -66 dBFS avg (~ -60 peak), sound must hold 80 ms (crackle ignored), steady
+      hiss/hum (35 dB under, std < 3 dB) skipped to the music, quiet intros/fades kept,
+      60 ms pre-roll. Engine opens tracks at the cached offset (load, gapless
+      queue_next_at, crossfade); next track analysed ahead; first-play fallback seek only
+      while still in the silence. tvOS TVSilenceTrim uses the same core detector. Old
+      leading_silence removed.
+- [x] Decoder: picks the audio track when an .m4a/.mp4 lists video first (one cloud track
+      couldn't play/analyse in Rust before).
+- Cloud tests (LUMI_CLOUD_DIR = copies of the cloud library, ~/lumisound/test-copies):
+  - tests/haptics_cloud.rs — pass 1: beat recall 68%, 11 "silent" hits (a test indexing
+    bug: 9.977 ms windows read as 10 ms). Pass 2 (sensitivity 2.5 dB, k 0.28, leakage +
+    mix-relative floor): audible-beat recall 82%, 93% of haptics on onsets, 0 in silence,
+    timing +5 ms vs beat grid. Pass 3 (different 61 tracks + 50-min DJ mix): 85% / 91%,
+    chunked = whole within 0.4%, 190-600x real time on desktop.
+  - tests/intro_cloud.rs (all 678 tracks, 288-306 checked against ffmpeg silencedetect) —
+    pass 1: 27 later than ffmpeg (jumped over quiet sounds). Pass 2: start at first sound
+    after silence: 13. Pass 3: silence level -66 dB avg + audio-track fix: green; the 7
+    tracks starting later than ffmpeg only cross a floor 40 dB+ under the music.

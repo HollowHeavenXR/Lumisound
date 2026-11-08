@@ -50,9 +50,17 @@ fn open(path: &Path) -> Option<(Box<dyn symphonia::core::formats::FormatReader>,
     let (mss, hint) = media_source(path).ok()?;
     let probed = symphonia::default::get_probe().format(&hint, mss, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default()).ok()?;
     let fmt = probed.format;
-    let track = fmt.default_track()?;
+    let track = audio_track(&*fmt)?;
     let id = track.id;
     Some((fmt, id))
+}
+
+/// The audio track: the container's default one when it's audio, else the
+/// first track that has a sample rate (an .m4a/.mp4 with a video stream
+/// first lists the video as default).
+pub fn audio_track(fmt: &dyn symphonia::core::formats::FormatReader) -> Option<&symphonia::core::formats::Track> {
+    let is_audio = |t: &&symphonia::core::formats::Track| t.codec_params.sample_rate.is_some() && t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL;
+    fmt.default_track().filter(is_audio).or_else(|| fmt.tracks().iter().find(is_audio))
 }
 
 /// Duration / rate / channels without decoding.
@@ -134,6 +142,68 @@ pub fn mono_pcm(path: &Path, rate: u32, start: Option<f64>, max_len: Option<f64>
         out.truncate(w);
     }
     (!out.is_empty()).then_some(out)
+}
+
+/// Mono i16 PCM at `rate` Hz for the whole file, handed to `f` in blocks of
+/// `block` samples (the last one shorter), decoded once from the top: no
+/// seeking, so block boundaries are sample-exact. `f` returns false to stop.
+pub fn mono_pcm_blocks(path: &Path, rate: u32, block: usize, mut f: impl FnMut(Vec<i16>) -> bool) -> bool {
+    let Some((mut fmt, id)) = open(path) else { return false };
+    let Some(params) = fmt.tracks().iter().find(|t| t.id == id).map(|t| t.codec_params.clone()) else { return false };
+    let Some(src_rate) = params.sample_rate.map(|r| r as f64) else { return false };
+    let Ok(mut dec) = crate::opus::codecs().make(&params, &DecoderOptions::default()) else { return false };
+    let step = src_rate / rate as f64;
+    let block = block.max(1);
+    let mut out: Vec<i16> = Vec::with_capacity(block);
+    let mut mono: Vec<f32> = Vec::new();
+    let mut pos = 0.0f64;
+    let mut buf: Option<SampleBuffer<f32>> = None;
+    let mut any = false;
+    loop {
+        let packet = match fmt.next_packet() {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        if packet.track_id() != id {
+            continue;
+        }
+        let decoded = match dec.decode(&packet) {
+            Ok(d) => d,
+            Err(Error::DecodeError(_)) => continue,
+            Err(_) => break,
+        };
+        let spec = *decoded.spec();
+        let ch = spec.channels.count().max(1);
+        let b = buf.get_or_insert_with(|| SampleBuffer::new(decoded.capacity() as u64, spec));
+        if b.capacity() < decoded.capacity() * ch {
+            *b = SampleBuffer::new(decoded.capacity() as u64, spec);
+        }
+        b.copy_interleaved_ref(decoded);
+        for frame in b.samples().chunks(ch) {
+            mono.push(frame.iter().sum::<f32>() / ch as f32);
+        }
+        while pos + 1.0 < mono.len() as f64 {
+            let i = pos as usize;
+            let fr = (pos - i as f64) as f32;
+            let v = mono[i] * (1.0 - fr) + mono[i + 1] * fr;
+            out.push((v.clamp(-1.0, 1.0) * 32767.0) as i16);
+            pos += step;
+            if out.len() >= block {
+                any = true;
+                if !f(std::mem::replace(&mut out, Vec::with_capacity(block))) {
+                    return true;
+                }
+            }
+        }
+        let used = (pos as usize).min(mono.len());
+        mono.drain(..used);
+        pos -= used as f64;
+    }
+    if !out.is_empty() {
+        any = true;
+        f(out);
+    }
+    any
 }
 
 /// Native-rate float PCM, de-interleaved per channel (max 2 used), from

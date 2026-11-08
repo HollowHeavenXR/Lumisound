@@ -93,10 +93,12 @@ extension AudioPlayerManager {
     }
 
     /// Takes over the current track; false = caller uses the AVAudioEngine path.
-    func scheduleWithRustEngine(url: URL, startTime: TimeInterval) -> Bool {
+    func scheduleWithRustEngine(url: URL, startTime requested: TimeInterval) -> Bool {
         // Locked tracks play straight from the `.lms` file (unmasked on the
         // fly by the core): no whole-file unlock before a cold start.
         let playable = url
+        // From the top: open where the music starts (Skip Silent Intros).
+        let startTime = requested > 0 ? requested : SilenceTrimService.openingOffset(for: url)
         // One backend at a time.
         primaryNode.stop()
         secondaryNode.stop()
@@ -144,9 +146,11 @@ extension AudioPlayerManager {
               let next = peekNextSong(), let url = next.url, url.isFileURL else { return }
         // Locked tracks are read in place by the core: nothing to prewarm.
         let path = url.path
-        guard CoreAudio.canDecode(path: path), let id = try? Self.rust.queueNext(path: path, gainDb: 0) else { return }
+        let start = SilenceTrimService.openingOffset(for: url)
+        guard CoreAudio.canDecode(path: path), let id = try? Self.rust.queueNextAt(path: path, startSecs: start, gainDb: 0) else { return }
         rustNextDeckID = id
         rustNextPath = path
+        rustNextStart = start
     }
 
     func applyRustSettings() {
@@ -287,7 +291,8 @@ extension AudioPlayerManager {
            let oBPM = currentSong.flatMap({ bpmCache[$0.id] }), let iBPM = bpmCache[nextSong.id] {
             tempoMatch = Lumisound.beatmatchRatio(outgoingBpm: oBPM, incomingBpm: iBPM)
         }
-        guard let id = try? Self.rust.crossfadeTo(path: path, secs: fade, startSecs: 0, gainDb: 0,
+        let introStart = SilenceTrimService.openingOffset(for: nextURL)
+        guard let id = try? Self.rust.crossfadeTo(path: path, secs: fade, startSecs: introStart, gainDb: 0,
                                                   equalPower: equalPower, tempoMatch: tempoMatch) else {
             skipToNext(); return
         }
@@ -299,7 +304,7 @@ extension AudioPlayerManager {
         analyzeReplayGain(for: nextURL)
         let probed = probeDuration(path: path, cacheDir: CoreAudio.unlockDir)
         duration = probed > 0 ? probed : nextSong.duration
-        position = 0
+        position = introStart
         updateNowPlaying()
         applyAutoEQIfNeeded(bpm: bpmCache[nextSong.id] ?? nextSong.bpm)
         prewarmBPM(for: peekNextSong())
@@ -327,7 +332,8 @@ extension AudioPlayerManager {
         if let url = currentSong?.url { analyzeReplayGain(for: url) }
         let probed = probeDuration(path: path, cacheDir: CoreAudio.unlockDir)
         duration = probed > 0 ? probed : (currentSong?.duration ?? 0)
-        position = 0
+        position = rustNextStart
+        rustNextStart = 0
         updateNowPlaying()
         prewarmBPM(for: peekNextSong())
         queueRustGaplessNext()

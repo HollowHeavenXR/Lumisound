@@ -11,7 +11,7 @@ use std::sync::Mutex;
 static LOCK: Mutex<()> = Mutex::new(());
 const BPM_CACHE: &str = "bpm_cache";
 
-fn cache_key(path: &str) -> String {
+pub(crate) fn cache_key(path: &str) -> String {
     let m = std::fs::metadata(path).ok();
     let mtime = m.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
     let size = m.map(|m| m.len()).unwrap_or(0);
@@ -207,12 +207,12 @@ pub fn is_valid_audio(path: String, cache_dir: String, min_secs: f64) -> bool {
 
 // ---- cached per-file results (path|mtime|size keys, like the Swift caches) ------------------
 
-fn cached_f64(ns: &str, path: &str) -> Option<f64> {
+pub(crate) fn cached_f64(ns: &str, path: &str) -> Option<f64> {
     let m: HashMap<String, f64> = store::load(ns);
     m.get(&cache_key(path)).copied()
 }
 
-fn put_f64(ns: &str, path: &str, v: f64) {
+pub(crate) fn put_f64(ns: &str, path: &str, v: f64) {
     let _g = LOCK.lock().unwrap();
     let mut m: HashMap<String, f64> = store::load(ns);
     if m.len() > 5000 {
@@ -231,52 +231,6 @@ pub fn analysis_import_legacy(namespace: String, json: Vec<u8>) {
     }
     let m: HashMap<String, f64> = serde_json::from_slice(&json).unwrap_or_default();
     store::save(&namespace, &m);
-}
-
-const SILENCE_CACHE: &str = "silence_trim";
-
-/// Seconds of leading near-silence (20 ms RMS windows below max(1% of the
-/// opening peak, -50 dBFS)); 0 when under 0.25 s, capped at 10 s.
-#[uniffi::export]
-pub fn leading_silence(path: String, cache_dir: String, pcm: Option<Vec<i16>>) -> f64 {
-    if let Some(v) = cached_f64(SILENCE_CACHE, &path) {
-        return v;
-    }
-    let Some(s) = pcm.or_else(|| decode_mono(path.clone(), cache_dir, 11025, 0.0, 15.0)) else { return 0.0 };
-    let v = silence_from(&s, 11025.0);
-    put_f64(SILENCE_CACHE, &path, v);
-    v
-}
-
-pub fn silence_from(s: &[i16], sr: f64) -> f64 {
-    let w = (sr as usize) / 50;
-    if w == 0 || s.is_empty() {
-        return 0.0;
-    }
-    let rms: Vec<f64> = s
-        .chunks_exact(w)
-        .map(|c| (c.iter().map(|x| (*x as f64 / i16::MAX as f64).powi(2)).sum::<f64>() / w as f64).sqrt())
-        .collect();
-    let peak = rms.iter().cloned().fold(0.0, f64::max);
-    if peak <= 0.0 {
-        return 0.0;
-    }
-    let thr = (peak * 0.01).max(0.00316);
-    let silent = rms.iter().take_while(|r| **r < thr).count();
-    let secs = (silent * w) as f64 / sr;
-    if secs < 0.25 { 0.0 } else { secs.min(10.0) }
-}
-
-#[cfg(test)]
-mod silence_tests {
-    #[test]
-    fn detects_leading_silence() {
-        let sr = 11025usize;
-        let mut s = vec![0i16; sr]; // 1 s silence
-        s.extend((0..sr * 2).map(|i| (((i as f64) * 0.1).sin() * 12000.0) as i16));
-        let v = super::silence_from(&s, sr as f64);
-        assert!((v - 1.0).abs() < 0.03, "{v}");
-    }
 }
 
 // ---- beat grid ----------------------------------------------------------------------------------

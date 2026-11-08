@@ -10,6 +10,14 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
 - Skips: fading (60-day half-life), `skip_top`, `skip_clear_all`, cross-device sync
   (`skip_sync_batch` / `skip_sync_apply` / `skip_sync_reset`) in `stores.rs`.
 
+## Done (2026-11-08)
+- `haptics.rs`: custom Music Haptics analysis + scheduler (3 cloud passes, tests/haptics_cloud.rs).
+- `intro.rs`: custom Skip Silent Intros detector (3 cloud passes over all tracks, tests/intro_cloud.rs).
+- `engine::queue_next_at` (gapless start offset); decoder picks the audio track in video containers.
+
 ## Open
 - Engine: join the CoreAudio audio workgroup for deck threads (os_workgroup) instead of plain QoS.
 - Skips: count a song played to the end after earlier skips as forgiveness (decrement).
+- Haptics: downbeat emphasis from the beat grid (bar-level accents).
+- Haptics: tune on a real phone (feel can't be measured on a desktop); strength presets may need adjusting.
+- Intros: optional "skip silent outros" (end the track at its last sound for crossfades).

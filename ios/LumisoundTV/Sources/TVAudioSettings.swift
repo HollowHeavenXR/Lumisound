@@ -86,69 +86,30 @@ final class TVAudioSettings: ObservableObject {
 
 // MARK: - TVSilenceTrim
 //
-// Leading-silence detection, ported from iOS's `SilenceTrimAnalyzer` with the
-// threshold rule corrected.
-//
-// The shipping iOS rule is:
-//
-//     threshold = min(peakWindowRMS * 0.02, 0.00316)
-//
-// `min` is the problem. 0.00316 is -50 dBFS, and `peakWindowRMS * 0.02` only
-// drops below that when the track's loudest 20ms window is under an RMS of
-// 0.158 — which does not happen for mastered music. So the relative term never
-// applies and the threshold is a flat -50 dBFS for every real track: it finds
-// digital silence and misses soft fade-ins entirely.
-//
-// Measured against 40 random tracks from a real cloud library, decoded with
-// ffmpeg:
-//
-//   * the two rules agree on most tracks — the shipping one is not broken, and
-//     this library genuinely has very little leading silence to find (longest
-//     real intro ≈ 1.8s, median ≈ 0.3s);
-//   * they differ on soft fade-ins, where a relative threshold finds the real
-//     start and the flat floor does not — e.g. 0.16s → 0.69s and 0.22s → 0.83s;
-//   * 15 of the 40 tracks produced a trim under 0.25s, which is inaudible and
-//     risks clipping the attack of a quiet opening. Those are now discarded
-//     rather than applied.
-//
-// So the honest summary is: a modest accuracy gain on fade-ins, and stopping the
-// feature from doing pointless work on a third of tracks.
+// Skip Silent Intros on Apple TV: the same detector as the phone, in the Rust
+// core (rust/core/src/intro.rs): silence and steady hiss before the music are
+// skipped, quiet musical intros and fade-ins are kept, and playback starts
+// 60 ms before the first sound. Files the core can read are analysed in
+// place; for streams and anything else, AVFoundation decodes the first 40 s
+// and the core analyses those samples.
 enum TVSilenceTrim {
-    static let maxTrimSeconds: TimeInterval = 10
-    /// Below this, trimming is inaudible and only risks cutting an attack.
-    static let minTrimSeconds: TimeInterval = 0.25
-    /// Window length for the RMS envelope. Raw samples cannot be used for an
-    /// onset test — a waveform crosses zero every cycle, so any "is it loud now"
-    /// check evaluated sample-by-sample flickers constantly.
-    private static let windowSeconds = 0.02
+    private static let analyzeSeconds: Double = 40
     private static let sampleRate: Double = 11025
 
-    /// Cached per track id, since analysis costs a decode of the first seconds.
+    /// Cached per track id for this session (the core also caches per file).
     private static var cache: [String: TimeInterval] = [:]
 
     static func cachedTrim(for id: String) -> TimeInterval? { cache[id] }
 
-    /// Analyses `url` and returns how much to skip, 0 when there is nothing
-    /// worth skipping.
+    /// Where playback should start, 0 when there is nothing worth skipping.
     static func analyze(url: URL, trackID: String) async -> TimeInterval {
         if let hit = cache[trackID] { return hit }
         let result = await Task.detached(priority: .utility) { () -> TimeInterval in
-            guard let env = envelope(url: url), !env.isEmpty else { return 0 }
-            guard let peak = env.max(), peak > 0 else { return 0 }
-
-            // Relative to THIS track's own peak, with an absolute floor so a
-            // very quiet recording cannot have a real intro eaten. `max`, not
-            // `min`: silence is "below the more forgiving of the two bars",
-            // which is what lets a soft fade-in register as a start at all.
-            let threshold = Swift.max(peak * 0.01, 0.0015)
-
-            var silentWindows = 0
-            for value in env {
-                if value < threshold { silentWindows += 1 } else { break }
+            if url.isFileURL, CoreAudio.canDecode(path: url.path) {
+                return introSkip(path: url.path, pcm: nil)
             }
-            let seconds = Double(silentWindows) * windowSeconds
-            if seconds < minTrimSeconds { return 0 }
-            return Swift.min(seconds, maxTrimSeconds)
+            guard let pcm = headPCM(url: url) else { return 0 }
+            return introSkip(path: url.absoluteString, pcm: pcm)
         }.value
         cache[trackID] = result
         TVRemoteLogger.log(category: "audio", event: "silence_trim_analyzed",
@@ -158,15 +119,11 @@ enum TVSilenceTrim {
         return result
     }
 
-    /// Decodes the head of the file and reduces it to a 20ms RMS envelope.
-    /// Uses AVAssetReader, so it works for anything AVFoundation can decode —
-    /// and returns nil rather than guessing for anything it cannot (Opus), where
-    /// the caller simply skips the feature for that track.
-    private static func envelope(url: URL) -> [Double]? {
+    /// Mono 16-bit PCM at 11.025 kHz of the first 40 s, via AVAssetReader.
+    private static func headPCM(url: URL) -> [Int16]? {
         let asset = AVURLAsset(url: url)
-        guard let track = asset.tracks(withMediaType: .audio).first else { return nil }
-        guard let reader = try? AVAssetReader(asset: asset) else { return nil }
-
+        guard let track = asset.tracks(withMediaType: .audio).first,
+              let reader = try? AVAssetReader(asset: asset) else { return nil }
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVLinearPCMBitDepthKey: 16,
@@ -179,15 +136,10 @@ enum TVSilenceTrim {
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
         guard reader.canAdd(output) else { return nil }
         reader.add(output)
-        reader.timeRange = CMTimeRange(start: .zero,
-                                       duration: CMTime(seconds: maxTrimSeconds + 5, preferredTimescale: 600))
+        reader.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: analyzeSeconds, preferredTimescale: 600))
         guard reader.startReading() else { return nil }
-
-        let windowSize = Int(sampleRate * windowSeconds)
-        var envelope: [Double] = []
-        var pending: [Int16] = []
-        pending.reserveCapacity(windowSize * 2)
-
+        var samples: [Int16] = []
+        samples.reserveCapacity(Int(sampleRate * analyzeSeconds))
         while let buffer = output.copyNextSampleBuffer() {
             guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
             var length = 0
@@ -195,20 +147,11 @@ enum TVSilenceTrim {
             guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil,
                                               totalLengthOut: &length, dataPointerOut: &pointer) == noErr,
                   let pointer else { continue }
-            pointer.withMemoryRebound(to: Int16.self, capacity: length / 2) { samples in
-                for i in 0..<(length / 2) { pending.append(samples[i]) }
-            }
-            while pending.count >= windowSize {
-                var sum = 0.0
-                for i in 0..<windowSize {
-                    let v = Double(pending[i]) / Double(Int16.max)
-                    sum += v * v
-                }
-                envelope.append((sum / Double(windowSize)).squareRoot())
-                pending.removeFirst(windowSize)
+            pointer.withMemoryRebound(to: Int16.self, capacity: length / 2) { p in
+                samples.append(contentsOf: UnsafeBufferPointer(start: p, count: length / 2))
             }
         }
         reader.cancelReading()
-        return envelope
+        return samples.isEmpty ? nil : samples
     }
 }

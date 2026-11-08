@@ -6,6 +6,12 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - Library Health > Listening > Often Skipped (`Views/OftenSkippedView.swift`).
 - Skip history sync on start / every 20 min / backgrounding (`Services/AccountService+SkipSync.swift`).
 
+## Done (2026-11-08)
+- `Services/MusicHapticsService.swift`: Core Haptics player for the core's haptic score; Settings feel picker.
+- `Services/SilenceTrimAnalyzer.swift` / `SilenceTrimService.swift`: core intro detector, engine opens tracks at the music.
+- `LumisoundTV/Sources/TVAudioSettings.swift`: TVSilenceTrim on the core detector.
+
 ## Open
 - Phase H: delete superseded Swift (AVAudioEngine graph etc.).
 - tvOS/watchOS: show Often Skipped / use Smart Shuffle there too.
+- Verify Music Haptics feel and timing on device (AirPods vs speaker latency).

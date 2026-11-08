@@ -1,19 +1,15 @@
 import Foundation
 import Combine
 
-/// Reacts to track changes and, when Silence Trim is enabled (Settings →
-/// Audio → Silence Trim), seeks past any detected leading dead air — see
-/// `SilenceTrimAnalyzer` for the actual on-device detection. Observes
-/// `AudioPlayerManager.$currentSong` from the outside rather than being
-/// wired into the crossfade/queue-advance engine itself — no changes
-/// needed to `AudioPlayerManager+Crossfade.swift` — same reasoning as
-/// `AIDJService`.
+/// Skip Silent Intros (Settings → Playback). The audio engine opens each
+/// track at its analysed start (`openingOffset`), including gapless and
+/// crossfaded starts, so there is no audible jump. This service keeps the
+/// analysis one track ahead of playback, and covers a track's very first
+/// play (not analysed yet) by skipping as soon as the result is in — only
+/// while playback is still inside the silence.
 @MainActor
 final class SilenceTrimService: ObservableObject {
     private static let enabledKey = "silenceTrim.enabled"
-    /// Skip the seek for negligible amounts of lead-in — not worth the
-    /// jump for under a third of a second.
-    private static let minimumWorthTrimming: TimeInterval = 0.3
 
     @Published var isEnabled: Bool {
         didSet { UserDefaults.standard.set(isEnabled, forKey: Self.enabledKey) }
@@ -21,15 +17,21 @@ final class SilenceTrimService: ObservableObject {
 
     private var cancellable: AnyCancellable?
     private weak var player: AudioPlayerManager?
+    private var preparedSongID: String?
 
-    /// Mirrors `AccountService.shared`/`LibraryManager.shared` — gives
-    /// non-view code (e.g. `DiagnosticsSnapshotService`) a way to reach the
-    /// live instance without needing it threaded through as a parameter.
+    /// Lets non-view code (the engine, diagnostics) reach the live instance.
     static weak var shared: SilenceTrimService?
 
     init() {
         isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         Self.shared = self
+    }
+
+    /// Where to open `url` when playing it from the top: its cached intro
+    /// skip, or 0 (feature off, not analysed yet, nothing to skip). Instant.
+    static func openingOffset(for url: URL) -> TimeInterval {
+        guard shared?.isEnabled == true, url.isFileURL else { return 0 }
+        return SilenceTrimAnalyzer.cachedStart(for: url) ?? 0
     }
 
     func attach(player: AudioPlayerManager) {
@@ -43,34 +45,27 @@ final class SilenceTrimService: ObservableObject {
     }
 
     private func handleTrackChange(to song: Song) {
-        // Local files only — analyzing a remote stream would mean
-        // downloading it just to measure silence.
         guard isEnabled, let url = song.url, url.isFileURL else { return }
+        prepareNext()
         Task { [weak self] in
-            let silence = await SilenceTrimAnalyzer.shared.leadingSilence(for: url)
-            guard silence >= Self.minimumWorthTrimming,
-                  let self, let player = self.player,
+            let start = await SilenceTrimAnalyzer.start(for: url)
+            guard start > 0, let self, let player = self.player,
                   player.currentSong?.id == song.id,
-                  // BUGFIX (reported: audio goes quiet right after a track
-                  // starts, then comes back up): a cache-miss analysis
-                  // decodes several seconds of audio off-thread and can
-                  // resolve well after playback has already moved past the
-                  // detected silence window — most often on a track's very
-                  // first play, before this result is cached. Seeking at
-                  // that point lands `player.seek(to:)` on its "reseek of
-                  // already-playing audio" path, which mutes the node and
-                  // ramps it back in to avoid a waveform-discontinuity
-                  // click — but by then real, audible music is already
-                  // playing, so that mute/ramp is exactly the "silent, then
-                  // back to regular/boosted" dip being reported. While
-                  // we're still inside the silent window there is nothing
-                  // audible to protect — the node is already producing
-                  // near-silence — so only trim there; once playback has
-                  // caught up past it, skip the trim entirely rather than
-                  // snap into content the listener is already hearing.
-                  player.position < silence
+                  // Opened there already (cached), or past it: the listener is
+                  // hearing music now, so never jump.
+                  player.position + 0.05 < start
             else { return }
-            player.seek(to: silence)
+            player.seek(to: start)
+            appLog(String(format: "Skip Silent Intros: \"%@\" → %.2fs (first play)", song.displayName, start), category: "audio")
         }
+    }
+
+    /// Analyse the next queued track ahead, so it opens at its music.
+    private func prepareNext() {
+        guard let next = player?.peekNextSong(), next.id != preparedSongID,
+              let url = next.url, url.isFileURL else { return }
+        preparedSongID = next.id
+        guard SilenceTrimAnalyzer.cachedStart(for: url) == nil else { return }
+        Task.detached(priority: .utility) { _ = await SilenceTrimAnalyzer.start(for: url) }
     }
 }

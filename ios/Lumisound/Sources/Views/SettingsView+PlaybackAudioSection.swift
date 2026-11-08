@@ -337,27 +337,23 @@ extension SettingsView {
             if player.audioSettings.musicHapticsEnabled ?? false {
                 Text(
                     MusicHapticsService.shared.isAvailable
-                        ? "Adds gentle, audio-reactive vibrations on compatible iPhone hardware. Works with the audio engine path; compatibility-mode streams cannot be synchronized."
+                        ? "Feel the music: deep thumps on kicks, firm taps on snares, light ticks on hi-hats and a rumble under sustained bass, timed to what you hear (Bluetooth delay included). Each song is analysed once on-device; the next one in the queue is prepared ahead."
                         : "Music Haptics needs a device with Core Haptics support."
                 )
                 .font(.caption)
                 .foregroundStyle(AppTheme.textSecondary)
                 .padding(.leading, 16)
                 .transition(.opacity.combined(with: .move(edge: .top)))
+
+                if MusicHapticsService.shared.isAvailable {
+                    MusicHapticsStrengthRow()
+                        .padding(.leading, 16)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
 
-            // Skip Silent Intros — skips near-silent lead-in audio at the start
-            // of a local track. Off by default. Was previously two separate,
-            // independently-toggled implementations that both partially did
-            // this (a weak, hard-coded-threshold 2-second scan gated on
-            // `audioSettings.silenceTrimmingEnabled` and run synchronously in
-            // `scheduleCurrent`, versus this one — `SilenceTrimService` +
-            // `SilenceTrimAnalyzer`, which analyzes up to 10s with a
-            // peak-relative threshold and caches the result on-device) —
-            // confusing to find two nearly-identical rows in Settings, and
-            // the weaker one rarely actually trimmed anything for intros
-            // longer than 2s. Consolidated onto the more robust one; see
-            // `AudioPlayerManager+Scheduling.swift`'s removed call site.
+            // Skip Silent Intros — off by default. Detection is in the Rust core
+            // (rust/core/src/intro.rs); the engine opens each track at its music.
             Toggle(isOn: $silenceTrim.isEnabled) {
                 Label("Skip Silent Intros", systemImage: "forward.end")
                     .foregroundStyle(AppTheme.textPrimary)
@@ -365,7 +361,7 @@ extension SettingsView {
             .tint(.teal)
 
             if silenceTrim.isEnabled {
-                Text("Automatically skips past dead air at the very start of a local track (up to 10 seconds), analyzed on-device the first time each track plays. Doesn't apply to streamed tracks.")
+                Text("Starts each song where the music begins: silence and steady hiss or hum before it are skipped, while quiet musical intros and fade-ins are kept. Analysed on-device and prepared one song ahead, so playback starts right on the music. Doesn't apply to streams until they're downloaded.")
                     .font(.caption)
                     .foregroundStyle(AppTheme.textSecondary)
                     .padding(.leading, 16)
@@ -664,5 +660,19 @@ private struct SmartShuffleToggleRow: View {
             .font(.caption)
             .foregroundStyle(AppTheme.textSecondary)
             .padding(.leading, 16)
+    }
+}
+
+/// Music Haptics feel: Subtle / Balanced / Intense.
+private struct MusicHapticsStrengthRow: View {
+    @AppStorage(MusicHapticsService.strengthKey) private var raw = MusicHapticsService.Strength.balanced.rawValue
+
+    var body: some View {
+        Picker("Feel", selection: $raw) {
+            ForEach(MusicHapticsService.Strength.allCases) { s in
+                Text(s.title).tag(s.rawValue)
+            }
+        }
+        .pickerStyle(.segmented)
     }
 }

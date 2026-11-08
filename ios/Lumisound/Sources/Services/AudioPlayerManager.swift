@@ -545,6 +545,8 @@ final class AudioPlayerManager: ObservableObject {
     @Published var rustDeckID: UInt64?
     var rustNextDeckID: UInt64?
     var rustNextPath: String?
+    /// Where the queued gapless track opens (Skip Silent Intros).
+    var rustNextStart: TimeInterval = 0
     var rustOutputStarted = false
     /// Forces the AVAudioEngine path for one schedule (decode-failure fallback).
     var rustBypassOnce = false

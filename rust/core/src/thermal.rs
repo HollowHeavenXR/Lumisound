@@ -98,7 +98,7 @@ use std::time::{Duration, Instant};
 
 /// Analysis reasons that draw on screen (need a smooth rate); the rest
 /// (auto EQ, smart crossfade) only read slow levels.
-const VISUAL_REASONS: &[&str] = &["liveSpectrumUI", "musicHaptics", "galleryReactiveBackground"];
+const VISUAL_REASONS: &[&str] = &["liveSpectrumUI", "galleryReactiveBackground"];
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
 pub struct ThermalChange {

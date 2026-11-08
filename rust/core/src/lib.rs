@@ -15,6 +15,8 @@ pub mod client;
 pub mod downloads;
 pub mod dropdown;
 pub mod gallery;
+pub mod haptics;
+pub mod intro;
 pub mod duplicates;
 pub mod engine;
 pub mod import;

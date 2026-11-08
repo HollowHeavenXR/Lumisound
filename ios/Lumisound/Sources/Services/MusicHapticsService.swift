@@ -1,45 +1,61 @@
+import AVFoundation
 import CoreHaptics
 import Foundation
 
-/// Provides an audio-reactive haptic accompaniment for local/engine playback.
+/// Music Haptics: plays each track's haptic score in step with what you hear.
 ///
-/// Apple Music's Music Haptics patterns are not a public third-party API. This
-/// service uses the same public Core Haptics framework available to apps.
-/// Its PRIMARY signal is `BeatGridAnalyzerService`'s full-track offline onset
-/// analysis — the same "analyze the whole track up front" approach Apple
-/// Music's own Music Haptics uses — so playback fires a transient at every
-/// beat the analysis actually found, not just whatever a live 60Hz
-/// rise-over-threshold check happens to notice in the moment (which misses
-/// hits under a sustained pad/bassline, or ones below a fixed global
-/// threshold during a quiet passage). The live analyzer's energy is still
-/// used to shape each transient's intensity/sharpness, so it stays
-/// audio-reactive in feel, not a canned pattern.
+/// Everything musical lives in the Rust core (rust/core/src/haptics.rs):
+/// the full-track analysis that turns kicks into deep thumps, snares into
+/// firm taps, hats into light ticks and sustained bass into a rumble that
+/// follows it, and the scheduler that times each event against the engine
+/// position, the output latency (Bluetooth adds ~0.3 s) and the playback
+/// speed, and notices seeks. This class only feeds the scheduled cues to
+/// Core Haptics, a short look-ahead at a time.
 ///
-/// The beat grid is only ready once its (short but non-zero) full-track
-/// analysis finishes, and a small number of tracks won't decode/analyze at
-/// all — for both cases this falls back to the original live-energy
-/// heuristic as a last resort, never silently doing nothing.
-///
-/// Deliberately does not run for the AVPlayer compatibility path: that path
-/// bypasses the AVAudioEngine tap, so there is no reliable audio signal to
-/// synchronize against.
+/// Scores are cached per file; the next track in the queue is analysed
+/// ahead so haptics are there from its first beat.
 @MainActor
 final class MusicHapticsService {
     static let shared = MusicHapticsService()
 
+    /// How strong the haptics feel (Settings → Playback → Music Haptics).
+    enum Strength: String, CaseIterable, Identifiable {
+        case subtle, balanced, intense
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .subtle: "Subtle"
+            case .balanced: "Balanced"
+            case .intense: "Intense"
+            }
+        }
+        var scale: Float {
+            switch self {
+            case .subtle: 0.6
+            case .balanced: 1.0
+            case .intense: 1.35
+            }
+        }
+    }
+
+    static let strengthKey = "musicHaptics.strength"
+    static var strength: Strength {
+        Strength(rawValue: UserDefaults.standard.string(forKey: strengthKey) ?? "") ?? .balanced
+    }
+
+    /// How often cues are handed over, and how far ahead they reach.
+    private static let tickInterval: TimeInterval = 0.15
+    private static let lookahead: Double = 0.45
+
     private var engine: CHHapticEngine?
     private var timer: Timer?
-    private var previousEnergy: Float = 0
-    private var lastTransientDate: Date = .distantPast
     private var isRunning = false
-
-    // MARK: Beat grid state
-
-    private var beatGridTrackURL: URL?
-    private var beatGrid: [Double]?
-    private var nextBeatIndex = 0
-    private var lastSampledPosition: TimeInterval = 0
-    private var beatGridLookupTask: Task<Void, Never>?
+    private var scheduler: HapticScheduler?
+    private var scoreSongID: String?
+    private var scoreTask: Task<Void, Never>?
+    private var prewarmedSongID: String?
+    /// Players handed to Core Haptics with the time their last cue ends.
+    private var players: [(player: CHHapticPatternPlayer, endsAt: Date)] = []
 
     var isAvailable: Bool {
         CHHapticEngine.capabilitiesForHardware().supportsHaptics
@@ -48,96 +64,52 @@ final class MusicHapticsService {
     private init() {}
 
     func updatePlayback(enabled: Bool, isPlaying: Bool, engineAvailable: Bool) {
-        let shouldRun = enabled && isPlaying && engineAvailable && isAvailable
-        if shouldRun {
+        if enabled && isPlaying && engineAvailable && isAvailable {
             startIfNeeded()
         } else {
             stop()
         }
     }
 
+    // MARK: Engine
+
     private func startIfNeeded() {
         guard !isRunning else { return }
-        guard let player = AudioPlayerManager.shared,
-              player.isPlaying,
-              !player.isUsingOpusPlayer else { return }
-
+        guard let player = AudioPlayerManager.shared, player.isPlaying, !player.isUsingOpusPlayer else { return }
         guard let hapticEngine = try? CHHapticEngine() else {
             appWarn("Music Haptics unavailable: Core Haptics engine could not be created", category: "audio")
             return
         }
-
-        engine = hapticEngine
+        // Haptics only: never touch the app's audio session.
+        hapticEngine.playsHapticsOnly = true
+        hapticEngine.isAutoShutdownEnabled = false
         hapticEngine.resetHandler = { [weak self] in
-            Task { @MainActor in
-                self?.restartAfterEngineReset()
-            }
+            Task { @MainActor in self?.restartAfterEngineReset() }
         }
         hapticEngine.stoppedHandler = { [weak self] reason in
-            appLog("Music Haptics engine stopped: \(reason)", category: "audio")
-            Task { @MainActor in
-                self?.isRunning = false
-            }
+            appLog("Music Haptics engine stopped: \(reason.rawValue)", category: "audio")
+            Task { @MainActor in self?.players.removeAll() }
         }
         do {
             try hapticEngine.start()
         } catch {
             appWarn("Music Haptics unavailable: Core Haptics engine failed to start (\(error.localizedDescription))", category: "audio")
-            engine = nil
             return
         }
-
-        previousEnergy = 0
-        lastTransientDate = .distantPast
+        engine = hapticEngine
         isRunning = true
-        AudioVisualizerService.shared.start(for: .musicHaptics)
-        timer = Timer.scheduledTimer(withTimeInterval: 0.06, repeats: true) { [weak self] _ in
-            self?.sampleAudioEnergy()
+        timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
         }
-        loadBeatGrid(for: player.currentSong)
-        appLog("Music Haptics enabled for engine playback", category: "audio")
-    }
-
-    /// Kicks off (or reuses the cached result of) full-track beat analysis
-    /// for whatever's currently playing. Never blocks playback/haptics
-    /// start — `sampleAudioEnergy` uses the live-energy fallback until this
-    /// resolves, then hands off to the precise beat grid mid-track.
-    private func loadBeatGrid(for song: Song?) {
-        guard let url = song?.url else {
-            beatGridTrackURL = nil
-            beatGrid = nil
-            return
-        }
-        guard beatGridTrackURL != url else { return }
-        beatGridTrackURL = url
-        beatGrid = nil
-        nextBeatIndex = 0
-        lastSampledPosition = 0
-
-        beatGridLookupTask?.cancel()
-        beatGridLookupTask = Task { [weak self] in
-            let grid = await BeatGridAnalyzerService.shared.beatGrid(for: url)
-            guard let self, !Task.isCancelled, self.beatGridTrackURL == url else { return }
-            self.beatGrid = grid
-            self.resyncBeatIndex(to: AudioPlayerManager.shared?.position ?? 0)
-            if let grid {
-                appLog("Music Haptics: beat grid ready for \"\(url.lastPathComponent)\" — \(grid.count) onset(s)", category: "audio")
-            } else {
-                appLog("Music Haptics: no beat grid for \"\(url.lastPathComponent)\" — staying on live-energy fallback", category: "audio")
-            }
-        }
-    }
-
-    /// Advances/rewinds `nextBeatIndex` to match `position` — needed after a
-    /// seek/scrub/skip, or once the beat grid first becomes available
-    /// partway through a track that's already playing.
-    private func resyncBeatIndex(to position: TimeInterval) {
-        guard let beatGrid else { return }
-        nextBeatIndex = beatGrid.firstIndex(where: { $0 >= position }) ?? beatGrid.count
+        timer?.tolerance = 0.02
+        loadScore(for: player.currentSong)
+        appLog("Music Haptics on (\(Self.strength.title))", category: "audio")
     }
 
     private func restartAfterEngineReset() {
         guard isRunning else { return }
+        players.removeAll()
+        scheduler?.reset()
         try? engine?.start()
     }
 
@@ -145,103 +117,129 @@ final class MusicHapticsService {
         guard isRunning || timer != nil else { return }
         timer?.invalidate()
         timer = nil
-        AudioVisualizerService.shared.stop(for: .musicHaptics)
+        stopPlayers()
+        scheduler?.reset()
         engine?.stop()
         engine = nil
         isRunning = false
-        previousEnergy = 0
-        beatGridLookupTask?.cancel()
-        beatGridLookupTask = nil
-        beatGridTrackURL = nil
-        beatGrid = nil
-        nextBeatIndex = 0
-        lastSampledPosition = 0
+        scoreTask?.cancel()
+        scoreTask = nil
+        scheduler = nil
+        scoreSongID = nil
     }
 
-    private func sampleAudioEnergy() {
-        guard let player = AudioPlayerManager.shared,
-              player.isPlaying,
-              !player.isUsingOpusPlayer else {
+    // MARK: Scores
+
+    /// Uses the cached score at once, else analyses the track off the main
+    /// thread (haptics join in as soon as it's ready).
+    private func loadScore(for song: Song?) {
+        guard let song, song.id != scoreSongID else { return }
+        scoreSongID = song.id
+        scheduler = nil
+        stopPlayers()
+        scoreTask?.cancel()
+        guard let url = song.url, url.isFileURL else { return }
+        let path = url.standardizedFileURL.path
+        if let score = hapticScoreCached(path: path) {
+            scheduler = HapticScheduler(score: score)
+            prewarmNext()
+            return
+        }
+        let songID = song.id
+        scoreTask = Task { [weak self] in
+            let score = await Self.analyze(url: url)
+            guard let self, !Task.isCancelled, self.scoreSongID == songID else { return }
+            if let score {
+                self.scheduler = HapticScheduler(score: score)
+                let s = score.stats()
+                appLog(String(format: "Music Haptics: \"%@\" — %d hits (%d low / %d mid / %d high), %.0fs rumble, analysed at %.0fx",
+                              url.lastPathComponent, s.transients, s.lowHits, s.midHits, s.highHits, s.continuousSecs, s.analysisXRealtime),
+                       category: "audio")
+            } else {
+                appWarn("Music Haptics: could not analyse \"\(url.lastPathComponent)\"", category: "audio")
+            }
+            self.prewarmNext()
+        }
+    }
+
+    /// Analyse the next queued track ahead of time (cached on disk).
+    private func prewarmNext() {
+        guard let next = AudioPlayerManager.shared?.peekNextSong(), next.id != prewarmedSongID,
+              let url = next.url, url.isFileURL else { return }
+        prewarmedSongID = next.id
+        guard hapticScoreCached(path: url.standardizedFileURL.path) == nil else { return }
+        Task.detached(priority: .utility) { _ = await Self.analyze(url: url) }
+    }
+
+    /// Core decode where it can; AVFoundation PCM for the rest (Opus in WebM).
+    private nonisolated static func analyze(url: URL) async -> HapticScore? {
+        let path = url.standardizedFileURL.path
+        if CoreAudio.canDecode(path: path) {
+            return await Task.detached(priority: .utility) { hapticScore(path: path, pcm: nil) }.value
+        }
+        guard let pcm = await BPMAnalyzerService.decodeMonoAV(url: url, sampleRate: 22_050, maxSeconds: 1_200) else { return nil }
+        return await Task.detached(priority: .utility) { hapticScore(path: path, pcm: pcm) }.value
+    }
+
+    // MARK: Playback
+
+    private func tick() {
+        guard isRunning, let player = AudioPlayerManager.shared, player.isPlaying, !player.isUsingOpusPlayer else {
             stop()
             return
         }
-
-        if player.currentSong?.url != beatGridTrackURL {
-            loadBeatGrid(for: player.currentSong)
+        if player.currentSong?.id != scoreSongID { loadScore(for: player.currentSong) }
+        pruneFinishedPlayers()
+        guard let scheduler, let engine else { return }
+        let session = AVAudioSession.sharedInstance()
+        let latency = session.outputLatency + session.ioBufferDuration
+        let batch = scheduler.next(position: player.preciseRenderedPosition(), outputLatency: latency,
+                                   speed: Double(player.audioSettings.speed), lookahead: Self.lookahead,
+                                   strength: Self.strength.scale)
+        if batch.reset { stopPlayers() }
+        guard !batch.cues.isEmpty else { return }
+        var events: [CHHapticEvent] = []
+        var curves: [CHHapticParameterCurve] = []
+        var end: TimeInterval = 0
+        for cue in batch.cues {
+            let at = max(0, cue.at)
+            let params = [
+                CHHapticEventParameter(parameterID: .hapticIntensity, value: cue.intensity),
+                CHHapticEventParameter(parameterID: .hapticSharpness, value: cue.sharpness),
+            ]
+            if cue.continuous {
+                events.append(CHHapticEvent(eventType: .hapticContinuous, parameters: params, relativeTime: at, duration: cue.duration))
+                // Core Haptics curves take at most 16 points (the core sends ≤ 16).
+                let points = cue.envelope.prefix(16).enumerated().map { i, v in
+                    CHHapticParameterCurve.ControlPoint(relativeTime: Double(i) * cue.envelopeStep, value: v)
+                }
+                if points.count > 1 {
+                    curves.append(CHHapticParameterCurve(parameterID: .hapticIntensityControl, controlPoints: points, relativeTime: at))
+                }
+                end = max(end, at + cue.duration)
+            } else {
+                events.append(CHHapticEvent(eventType: .hapticTransient, parameters: params, relativeTime: at))
+                end = max(end, at + 0.05)
+            }
         }
-
-        let analyzer = AudioVisualizerService.shared
-        // Bass is weighted slightly higher because it produces the most
-        // intelligible tactile pulse while keeping vocals and cymbals present.
-        let energy = min(
-            1,
-            max(0, analyzer.bassLevel * 0.45 + analyzer.midLevel * 0.35 + analyzer.trebleLevel * 0.20)
-        )
-
-        if let beatGrid, !beatGrid.isEmpty {
-            fireBeatGridTransients(position: player.position, beatGrid: beatGrid, energy: energy, analyzer: analyzer)
-        } else {
-            fireLiveEnergyTransient(energy: energy, analyzer: analyzer)
+        do {
+            let pattern = try CHHapticPattern(events: events, parameterCurves: curves)
+            let p = try engine.makePlayer(with: pattern)
+            try p.start(atTime: CHHapticTimeImmediate)
+            players.append((p, Date().addingTimeInterval(end)))
+        } catch {
+            appLog("Music Haptics: pattern failed (\(error.localizedDescription))", category: "audio")
         }
     }
 
-    /// Primary path: fires exactly at each precomputed onset the full-track
-    /// analysis found, as playback position crosses it — not a live guess.
-    /// Handles seeks/scrubs (including looping back to an earlier point)
-    /// by detecting a position jump that doesn't match ordinary forward
-    /// playback and resyncing the index rather than firing every beat
-    /// between the old and new position all at once.
-    private func fireBeatGridTransients(position: TimeInterval, beatGrid: [Double], energy: Float, analyzer: AudioVisualizerService) {
-        defer { lastSampledPosition = position }
-
-        let forwardDelta = position - lastSampledPosition
-        // A jump bigger than a couple of poll intervals, or moving backward,
-        // means a seek/loop/track-relative scrub happened — resync instead
-        // of treating every intervening beat timestamp as "just crossed".
-        if forwardDelta < 0 || forwardDelta > 0.5 {
-            resyncBeatIndex(to: position)
-        }
-
-        while nextBeatIndex < beatGrid.count, beatGrid[nextBeatIndex] <= position {
-            emitTransient(energy: energy, analyzer: analyzer)
-            nextBeatIndex += 1
-        }
-    }
-
-    /// Fallback path — the original real-time rise-over-threshold heuristic,
-    /// used only until the beat grid is ready or for the rare track that
-    /// couldn't be analyzed at all (never silently produces nothing).
-    private func fireLiveEnergyTransient(energy: Float, analyzer: AudioVisualizerService) {
-        let rise = energy - previousEnergy
-        previousEnergy = previousEnergy * 0.82 + energy * 0.18
-
-        // A transient is emitted only for a meaningful onset and is rate
-        // limited so sustained bass does not become an unpleasant buzz.
+    private func pruneFinishedPlayers() {
         let now = Date()
-        guard energy > 0.10,
-              rise > 0.035,
-              now.timeIntervalSince(lastTransientDate) >= 0.11 else { return }
-        lastTransientDate = now
-        emitTransient(energy: energy, analyzer: analyzer)
+        players.removeAll { $0.endsAt < now }
     }
 
-    private func emitTransient(energy: Float, analyzer: AudioVisualizerService) {
-        let intensity = min(1, max(0.15, 0.22 + energy * 0.78))
-        let sharpness = min(1, max(0, 0.18 + analyzer.trebleLevel * 0.55))
-        let parameters = [
-            CHHapticEventParameter(
-                parameterID: .hapticIntensity,
-                value: intensity
-            ),
-            CHHapticEventParameter(
-                parameterID: .hapticSharpness,
-                value: sharpness
-            )
-        ]
-        let event = CHHapticEvent(eventType: .hapticTransient, parameters: parameters, relativeTime: 0)
-        guard let pattern = try? CHHapticPattern(events: [event], parameters: []),
-              let hapticEngine = engine,
-              let hapticPlayer = try? hapticEngine.makePlayer(with: pattern) else { return }
-        try? hapticPlayer.start(atTime: CHHapticTimeImmediate)
+    /// Cancel cues already handed over (seek, pause, track change).
+    private func stopPlayers() {
+        for p in players { try? p.player.stop(atTime: CHHapticTimeImmediate) }
+        players.removeAll()
     }
 }

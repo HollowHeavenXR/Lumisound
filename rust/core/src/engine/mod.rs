@@ -142,7 +142,12 @@ impl AudioEngine {
 
     /// Gapless successor (decoding starts now, plays when the current drains).
     pub fn queue_next(&self, path: String, gain_db: f32) -> Result<u64, EngineError> {
-        let d = self.open(&path, 0.0, gain_db)?;
+        self.queue_next_at(path, 0.0, gain_db)
+    }
+
+    /// Gapless successor that starts `start_secs` in (Skip Silent Intros).
+    pub fn queue_next_at(&self, path: String, start_secs: f64, gain_db: f32) -> Result<u64, EngineError> {
+        let d = self.open(&path, start_secs.max(0.0), gain_db)?;
         let id = d.id;
         self.send(Cmd::QueueNext(Box::new(d)));
         Ok(id)

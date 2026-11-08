@@ -400,6 +400,18 @@ extension AudioPlayerManager {
         }
     }
 
+    /// Exact playback position right now (track seconds rendered), without
+    /// publishing it: for Music Haptics, which reads it several times a second.
+    func preciseRenderedPosition() -> TimeInterval {
+        if isUsingRustEngine { return max(0, Self.rust.position()) }
+        guard !isUsingOpusPlayer, !isSchedulingAsync,
+              let nodeTime = activeNode.lastRenderTime,
+              let playerTime = activeNode.playerTime(forNodeTime: nodeTime),
+              let file = audioFile else { return position }
+        let elapsed = Double(playerTime.sampleTime) - gaplessBaseFrame
+        return max(0, Double(fileStartFrame) / file.processingFormat.sampleRate + elapsed / playerTime.sampleRate)
+    }
+
     func updatePositionFromPlayer() {
         guard !isUsingOpusPlayer else { return }
         if isUsingRustEngine {

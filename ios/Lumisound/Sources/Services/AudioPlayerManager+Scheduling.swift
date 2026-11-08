@@ -414,13 +414,10 @@ extension AudioPlayerManager {
             // for a genuinely higher-rate local/Cloud Library file. Must
             // happen before playCurrent()'s startEngineIfNeeded() below.
             ensureSampleRate(matching: sampleRate)
-            let startFrame = max(0, AVAudioFramePosition(startTime * sampleRate))
-            // Skip Silent Intros (`SilenceTrimService`) nudges playback past any
-            // detected leading dead air itself, via a `player.seek(to:)` right
-            // after `currentSong` changes — see that type's doc comment for why
-            // it lives outside this scheduling path instead of trimming
-            // `startFrame` here directly (its detection is async/cached and
-            // needs the track already scheduled and playing to seek against).
+            // From the top: open where the music starts (Skip Silent Intros,
+            // cached analysis; a first play is covered by `SilenceTrimService`).
+            let openAt = startTime > 0 ? startTime : SilenceTrimService.openingOffset(for: url)
+            let startFrame = min(max(0, AVAudioFramePosition(openAt * sampleRate)), max(0, file.length - 1))
             let framesLeft = max(0, AVAudioFrameCount(file.length - startFrame))
             fileStartFrame = startFrame
             position = Double(startFrame) / sampleRate

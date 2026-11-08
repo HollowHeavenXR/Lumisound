@@ -1,26 +1,25 @@
 import Foundation
 
-/// Leading-silence detection for "Skip Silent Intros" — analysed and cached
-/// by the Rust core (20 ms RMS windows vs 1% of the opening peak / -50 dBFS).
-actor SilenceTrimAnalyzer {
-    static let shared = SilenceTrimAnalyzer()
-
-    private init() {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        if let data = try? Data(contentsOf: caches.appendingPathComponent("silence_trim_cache_v3.json")) {
-            analysisImportLegacy(namespace: "silence_trim", json: data)
-        }
+/// Skip Silent Intros: where each track's music starts, from the Rust core
+/// (rust/core/src/intro.rs). Silence and steady hiss before the music are
+/// skipped; quiet musical intros and fade-ins are kept. Cached per file.
+enum SilenceTrimAnalyzer {
+    /// Cached start offset, never decodes: nil when the file isn't analysed yet.
+    static func cachedStart(for url: URL) -> TimeInterval? {
+        introSkipCached(path: url.standardizedFileURL.path)
     }
 
-    func leadingSilence(for url: URL) async -> TimeInterval {
+    /// Start offset (analysed off the main thread on a cache miss).
+    static func start(for url: URL) async -> TimeInterval {
         let path = url.standardizedFileURL.path
+        if let hit = introSkipCached(path: path) { return hit }
         var pcm: [Int16]? = nil
         if !CoreAudio.canDecode(path: path) {
-            // Opus/WebM: decoded by AVFoundation, analysed by the core.
-            pcm = await BPMAnalyzerService.decodeMonoAV(url: url, sampleRate: 11025, maxSeconds: 15)
+            // Opus in WebM and the like: AVFoundation decodes, the core analyses.
+            pcm = await BPMAnalyzerService.decodeMonoAV(url: url, sampleRate: 11025, maxSeconds: 40)
             if pcm == nil { return 0 }
         }
-        return Lumisound.leadingSilence(path: path, cacheDir: CoreAudio.unlockDir, pcm: pcm)
+        let samples = pcm
+        return await Task.detached(priority: .utility) { introSkip(path: path, pcm: samples) }.value
     }
 }

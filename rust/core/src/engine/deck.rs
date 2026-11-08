@@ -128,7 +128,7 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f6
         .format(&hint, mss, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
         .map_err(|e| format!("unsupported file: {e}"))?;
     let mut fmt = probed.format;
-    let track = fmt.default_track().ok_or("no audio track")?.clone();
+    let track = lumisound_media::decode::audio_track(&*fmt).ok_or("no audio track")?.clone();
     let p = &track.codec_params;
     let src_rate = p.sample_rate.ok_or("unknown sample rate")?;
     let duration = match (p.n_frames, p.time_base) {
