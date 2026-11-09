@@ -124,6 +124,25 @@ async fn start(State(st): State<AppState>, _u: User, Q(q): Q<StartQ>, body: Byte
     Ok((StatusCode::ACCEPTED, Json(json!({"job_id": id}))).into_response())
 }
 
+/// Demucs vocals only (Aria Lyrics): returns `<work>/htdemucs/<stem>/vocals.wav`.
+pub async fn vocals_only(st: &AppState, input: &Path, work: &Path) -> Result<PathBuf, String> {
+    let _permit = st.stem_sem.acquire().await.map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    let args: Vec<String> = ["-m", "demucs", "--two-stems", "vocals", "-n", "htdemucs", "-o"].map(String::from).into_iter()
+        .chain([work.to_string_lossy().into_owned(), input.to_string_lossy().into_owned()]).collect();
+    let out = st.ytdlp.run("python", &args, SEPARATION_TIMEOUT).await.map_err(|e| format!("demucs: {e}"))?;
+    if out.status != Some(0) {
+        return Err("demucs processing failed".into());
+    }
+    let stem = input.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let v = work.join("htdemucs").join(&stem).join("vocals.wav");
+    if !v.exists() {
+        return Err("demucs did not produce vocals".into());
+    }
+    tracing::info!("aria lyrics: vocals separated in {:.1}s", started.elapsed().as_secs_f64());
+    Ok(v)
+}
+
 /// `demucs --two-stems vocals -n htdemucs`, one job at a time, then AAC.
 async fn separate(st: &AppState, input: &Path, work: &Path) -> Result<(PathBuf, PathBuf), String> {
     let _permit = st.stem_sem.acquire().await.map_err(|e| e.to_string())?;

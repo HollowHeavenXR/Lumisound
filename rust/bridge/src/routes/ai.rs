@@ -313,13 +313,60 @@ async fn probe_duration(body: &[u8]) -> Option<f64> {
     (d > 0.0).then_some(d)
 }
 
-async fn run_transcribe(st: AppState, id: String, body: Bytes, mime: String, title: String, artist: String, hint: Option<String>) {
-    set_job(&st, &id, json!({"status": "running"}));
-    let dur = probe_duration(&body).await;
-    let Some(result) = transcribe(&st, &body, &mime, &title, &artist, hint.as_deref(), dur).await else {
-        set_job(&st, &id, json!({"status": "error", "detail": "Lyrics transcription isn't available right now"}));
-        return;
+/// Plain lyrics text to align against: the app's hint, else LRCLIB / our cache.
+async fn reference_text(st: &AppState, title: &str, artist: &str, dur: Option<f64>, hint: Option<String>) -> Option<String> {
+    if let Some(h) = hint.filter(|h| h.lines().filter(|l| !l.trim().is_empty()).count() >= 3) {
+        return Some(h);
+    }
+    let cached: Option<Option<String>> = sqlx::query_scalar("SELECT plain_lyrics FROM ios_lyrics_cache WHERE id = $1 AND is_user_submitted IS NOT TRUE")
+        .bind(lyrics_cache_id(title, artist))
+        .fetch_optional(&st.db)
+        .await
+        .ok()
+        .flatten();
+    if let Some(Some(p)) = cached.filter(|p| p.as_ref().is_some_and(|p| !p.is_empty())) {
+        return Some(p);
+    }
+    let mut params = vec![("track_name", title.to_string()), ("artist_name", artist.to_string())];
+    if let Some(d) = dur {
+        params.push(("duration", (d.round() as i64).to_string()));
+    }
+    let data: Option<Value> = match st.http.get("https://lrclib.net/api/get").query(&params).header("User-Agent", "Lumisound-iOS-Bridge/1.0").timeout(Duration::from_secs(10)).send().await {
+        Ok(r) if r.status().is_success() => r.json().await.ok(),
+        _ => None,
     };
+    data.and_then(|d| d["plainLyrics"].as_str().filter(|s| !s.is_empty()).map(str::to_string))
+}
+
+async fn run_transcribe(st: AppState, id: String, body: Bytes, mime: String, title: String, artist: String, hint: Option<String>) {
+    set_job(&st, &id, json!({"status": "running", "stage": "queued"}));
+    let dur = probe_duration(&body).await;
+    // Aria Lyrics engine (crate::lyricsgen): Demucs vocals, voice phrases,
+    // on-server whisper, alignment to known text when there is any.
+    let ext = match mime.as_str() { m if m.contains("mp4") || m.contains("m4a") || m.contains("aac") => "m4a", m if m.contains("ogg") || m.contains("opus") => "ogg", m if m.contains("wav") => "wav", m if m.contains("flac") => "flac", m if m.contains("webm") => "webm", _ => "mp3" };
+    let tmp = std::env::temp_dir().join(format!("aria-in-{}.{ext}", uuid::Uuid::new_v4().simple()));
+    if tokio::fs::write(&tmp, &body).await.is_err() {
+        set_job(&st, &id, json!({"status": "error", "detail": "Couldn't read the audio"}));
+        return;
+    }
+    let reference = reference_text(&st, &title, &artist, dur, hint).await;
+    let st2 = st.clone();
+    let jid = id.clone();
+    let started = Instant::now();
+    let r = crate::lyricsgen::generate(&st, &tmp, &title, &artist, reference.as_deref(), move |stage| set_job(&st2, &jid, json!({"status": "running", "stage": stage}))).await;
+    let _ = tokio::fs::remove_file(&tmp).await;
+    let result = match r {
+        Ok(o) => {
+            tracing::info!("aria lyrics: {title:?} -> {} line(s), instrumental {}, lang {:?}, aligned {:?}, {:.0}s", o.lines.len(), o.instrumental, o.language, o.aligned, started.elapsed().as_secs_f64());
+            crate::lyricsgen::outcome_json(&o)
+        }
+        Err(e) => {
+            tracing::warn!("aria lyrics failed for {title:?}: {e}");
+            set_job(&st, &id, json!({"status": "error", "detail": "Aria couldn't transcribe this track."}));
+            return;
+        }
+    };
+    let _ = &mime;
     let lines: Vec<Value> = result["lines"].as_array().cloned().unwrap_or_default();
     if result["instrumental"].as_bool().unwrap_or(false) || lines.is_empty() {
         set_job(&st, &id, json!({"status": "done", "lrc": "", "instrumental": result["instrumental"].as_bool().unwrap_or(false), "confidence": result.get("confidence").cloned().unwrap_or(json!("low"))}));
@@ -736,18 +783,13 @@ async fn station_suggestions(State(st): State<AppState>, u: User, Q(q): Q<Statio
     Ok(Json(Value::Array(stations.into_iter().filter(|s| s["tracks"].as_array().is_some_and(|t| !t.is_empty())).collect())))
 }
 
+/// Auto-Radio for older app builds: answered by the Lumisound Radio engine
+/// (routes/radio.rs) — same response shape, plus `session_id`.
 async fn station_auto(State(st): State<AppState>, u: User, Q(q): Q<StationQ>, J(seed): J<StationSeed>) -> ApiResult<Json<Value>> {
     let tl = q.track_limit.unwrap_or(8);
     check_range("track_limit", tl, 3, 15)?;
-    let plans = station_plans(&st.taste_profile(&u.id).await, &seed);
-    let Some(first) = plans.first() else {
-        return Ok(Json(json!({"id": "auto", "title": "Auto-Radio", "subtitle": null, "icon": "sparkles", "tracks": []})));
-    };
-    let mut k = known(&st, &u.id).await;
-    if let Some(s) = &seed.source_track_id {
-        k.insert(signal(Some(s), 180));
-    }
-    let mut s = build_station(&st, &u.id, first, tl as usize, &k).await;
+    let seed = crate::routes::radio::Seed { title: seed.title, artist: seed.artist, album: seed.album, genre: seed.genre, bpm: seed.bpm, source_track_id: seed.source_track_id, local_hour: seed.local_hour };
+    let (_, mut s) = crate::routes::radio::start_session(&st, &u.id, seed, "balanced", tl as usize).await;
     s["id"] = json!("auto");
     Ok(Json(s))
 }

@@ -35,6 +35,17 @@ extension NowPlayingView {
             )
         }
         .buttonStyle(.plain)
+        // Long-press: how adventurous Lumisound Radio is (core RadioSession mode).
+        .contextMenu {
+            ForEach([("balanced", "Balanced", "dial.medium"), ("familiar", "More of what I know", "heart"),
+                     ("discover", "Discover new music", "safari")], id: \.0) { mode in
+                Button {
+                    UserDefaults.standard.set(mode.0, forKey: "radio_mode")
+                } label: {
+                    Label(mode.1, systemImage: (UserDefaults.standard.string(forKey: "radio_mode") ?? "balanced") == mode.0 ? "checkmark" : mode.2)
+                }
+            }
+        }
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: player.autoRadioEnabled)
     }
 }

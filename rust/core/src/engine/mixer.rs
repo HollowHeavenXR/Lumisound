@@ -4,7 +4,7 @@
 
 use super::deck::Deck;
 use super::binaural::Binaural;
-use super::dsp::{Compressor, Eq10, Limiter, Ramp, Reverb};
+use super::dsp::{Biquad, Compressor, Eq10, Limiter, Ramp, Reverb, Shape};
 use super::health::{EngineIncident, Health, IncidentKind, PlaybackPhase, SLOW_START_MS, atomic_max};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -28,7 +28,49 @@ pub enum Cmd {
     ClearNext,
     /// Fade the current deck out and `deck` in over `frames`.
     Crossfade { deck: Box<Deck>, frames: u64, equal_power: bool },
+    /// Queued successor with a planned blend (Smart Crossfade): the fade
+    /// starts the frame the playing deck reaches `cue.at_pos`.
+    QueueBlend { deck: Box<Deck>, cue: BlendCue },
+    /// Same track reopened with new speed/pitch, starting a little ahead of
+    /// the playing position: swapped in with a short crossfade the moment the
+    /// playing deck reaches its start (no gap, no jump back).
+    Retune(Box<Deck>),
     Stop,
+}
+
+/// When and how a queued blend runs.
+#[derive(Clone, Copy, Debug)]
+pub struct BlendCue {
+    /// Playing-deck track time (s) at which the fade starts.
+    pub at_pos: f64,
+    pub frames: u64,
+    pub equal_power: bool,
+    /// Bass swap: (frame into the fade where the bass changes hands, frames it takes).
+    pub swap: Option<(u64, u64)>,
+}
+
+/// Bass swap in progress: each deck is split at 180 Hz (low = low-pass,
+/// high = the rest, so the two always sum back to the input). Highs follow
+/// the fade; the outgoing bass holds until `at`, then the basses trade
+/// places over `len` frames.
+struct Swap {
+    frame: u64,
+    at: u64,
+    len: u64,
+    total: u64,
+    lp_out: Biquad,
+    lp_in: Biquad,
+}
+
+impl Swap {
+    #[inline]
+    fn in_low(&self) -> f32 {
+        if self.frame <= self.at {
+            0.0
+        } else {
+            ((self.frame - self.at) as f32 / self.len.max(1) as f32).min(1.0)
+        }
+    }
 }
 
 pub enum Event {
@@ -96,6 +138,11 @@ pub struct Mixer {
     cur: Option<Box<Deck>>,
     next: Option<Box<Deck>>,
     fading: Option<(Box<Deck>, Ramp)>,
+    /// Pending retune of the playing track (see `Cmd::Retune`).
+    retune: Option<Box<Deck>>,
+    /// Planned blend into `next` (see `Cmd::QueueBlend`).
+    blend: Option<BlendCue>,
+    swap: Option<Swap>,
     fade_in: Ramp,
     equal_power: bool,
     master: Ramp,
@@ -149,7 +196,7 @@ struct Monitor {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), reverb_preset: String::new(), spatial_yaw: 0.0, comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_coef: 1.0 - (-1.0 / (0.03 * rate as f32)).exp(), vib_target: 0.0, vib_wet: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
+        Self { rate, cur: None, next: None, fading: None, retune: None, blend: None, swap: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), reverb_preset: String::new(), spatial_yaw: 0.0, comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_coef: 1.0 - (-1.0 / (0.03 * rate as f32)).exp(), vib_target: 0.0, vib_wet: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -234,6 +281,10 @@ impl Mixer {
                 self.trem_depth = tremolo_depth.clamp(0.0, 1.0);
             }
             Cmd::Replace(d) => {
+                self.swap = None;
+                if let Some(old) = self.retune.take() {
+                    self.retire(old);
+                }
                 if let Some(o) = self.cur.as_ref().map(|o| (o.id, o.position())) {
                     self.end_cur_starve(o.0, o.1);
                 }
@@ -264,16 +315,28 @@ impl Mixer {
                 self.tele.deck_id.store(id, Ordering::Relaxed);
             }
             Cmd::QueueNext(d) => {
+                self.blend = None;
                 if let Some(old) = self.next.replace(d) {
                     self.retire(old);
                 }
             }
+            Cmd::QueueBlend { deck, cue } => {
+                if let Some(old) = self.next.replace(deck) {
+                    self.retire(old);
+                }
+                self.blend = Some(cue);
+            }
             Cmd::ClearNext => {
+                self.blend = None;
                 if let Some(old) = self.next.take() {
                     self.retire(old);
                 }
             }
             Cmd::Crossfade { deck, frames, equal_power } => {
+                self.swap = None;
+                if let Some(old) = self.retune.take() {
+                    self.retire(old);
+                }
                 if let Some(o) = self.cur.as_ref().map(|o| (o.id, o.position())) {
                     self.end_cur_starve(o.0, o.1);
                 }
@@ -296,7 +359,21 @@ impl Mixer {
                 self.tele.deck_id.store(id, Ordering::Relaxed);
                 let _ = self.events.push(Event::Started { id });
             }
+            Cmd::Retune(d) => {
+                if self.cur.as_ref().is_some_and(|c| c.id == d.id) {
+                    if let Some(old) = self.retune.replace(d) {
+                        self.retire(old);
+                    }
+                } else {
+                    self.retire(d);
+                }
+            }
             Cmd::Stop => {
+                self.swap = None;
+                self.blend = None;
+                if let Some(old) = self.retune.take() {
+                    self.retire(old);
+                }
                 if let Some(o) = self.cur.as_ref().map(|o| (o.id, o.position())) {
                     self.end_cur_starve(o.0, o.1);
                 }
@@ -347,10 +424,11 @@ impl Mixer {
 
     /// (id, path, gain, position) of the playing deck and (id, path, gain)
     /// of the queued one, for reopening at a new rate.
-    pub fn reopen_targets(&self) -> (Option<(u64, String, f32, f64)>, Option<(u64, String, f32)>) {
+    pub fn reopen_targets(&self) -> (Option<(u64, String, f32, f64)>, Option<(u64, String, f32, f64)>) {
         (
             self.cur.as_ref().map(|d| (d.id, d.path.clone(), d.gain, d.position())),
-            self.next.as_ref().map(|d| (d.id, d.path.clone(), d.gain)),
+            // A queued deck keeps its start (Skip Silent Intros offset).
+            self.next.as_ref().map(|d| (d.id, d.path.clone(), d.gain, d.start_offset)),
         )
     }
 
@@ -366,6 +444,94 @@ impl Mixer {
     pub(crate) fn decks_ready(&self, frames: usize) -> bool {
         let ok = |d: &super::deck::Deck| d.buffered_frames() >= frames || d.shared.eof.load(Ordering::Acquire);
         self.cur.as_ref().is_none_or(|d| ok(d)) && self.fading.as_ref().is_none_or(|(d, _)| ok(d))
+    }
+
+    /// Swap in a pending retune deck once it is buffered and the playing deck
+    /// has reached its start. If it opened late (start already passed), the
+    /// frames it is behind are dropped from its ring so it lines up exactly.
+    fn step_retune(&mut self) {
+        let Some(cur) = self.cur.as_ref() else {
+            if let Some(d) = self.retune.take() {
+                self.retire(d);
+            }
+            return;
+        };
+        let rt = self.retune.as_mut().unwrap();
+        if rt.shared.failed.load(Ordering::Acquire) || (rt.drained() && rt.frames_played == 0 && rt.ring.slots() == 0) {
+            let d = self.retune.take().unwrap();
+            self.retire(d);
+            return;
+        }
+        if cur.drained() {
+            // Track ended first: the gapless/next logic takes over.
+            let d = self.retune.take().unwrap();
+            self.retire(d);
+            return;
+        }
+        let pos = cur.position();
+        // Catch up: drop what the retune deck has buffered for audio already played.
+        while rt.position() + rt.seg_step_now() * 0.5 < pos && rt.ring.slots() >= 2 {
+            let _ = rt.ring.pop();
+            let _ = rt.ring.pop();
+            rt.advance();
+            rt.frames_played -= 1;
+        }
+        let prefill = start_prefill_samples(self.rate);
+        let ready = rt.ring.slots() >= prefill || rt.shared.eof.load(Ordering::Acquire);
+        if !ready || rt.position() > pos + cur.seg_step_now() * 0.5 {
+            return;
+        }
+        let new = self.retune.take().unwrap();
+        let mut new = new;
+        new.handed_over = self.cur.as_ref().is_some_and(|c| c.handed_over);
+        if let Some(o) = self.cur.as_ref().map(|o| (o.id, o.position())) {
+            self.end_cur_starve(o.0, o.1);
+        }
+        self.mon.fade_starve = 0;
+        if let Some((f, _)) = self.fading.take() {
+            self.retire(f);
+        }
+        // 30 ms equal-power swap: both decks play the same music at the same
+        // spot, so the change of pitch is all that is heard.
+        let xf = (self.rate as u64 * 3) / 100;
+        let gain = self.cur.as_ref().map_or(new.gain, |c| c.gain);
+        new.gain = gain;
+        // Mark as already playing so the start head-start isn't waited for twice.
+        new.frames_played = new.frames_played.max(1);
+        let old = self.cur.replace(new).unwrap();
+        let mut down = Ramp::new(1.0);
+        down.to(0.0, xf);
+        self.fading = Some((old, down));
+        self.equal_power = true;
+        self.fade_in = Ramp::new(0.0);
+        self.fade_in.to(1.0, xf);
+    }
+
+    /// Start a planned blend once the playing deck reaches its cue and the
+    /// incoming deck has its head start buffered.
+    fn step_blend(&mut self) {
+        let cue = self.blend.unwrap();
+        let Some(c) = self.cur.as_ref() else { return };
+        if c.position() + c.seg_step_now() * 0.5 < cue.at_pos {
+            return;
+        }
+        let prefill = start_prefill_samples(self.rate);
+        let Some(n) = self.next.as_ref() else {
+            self.blend = None;
+            return;
+        };
+        if n.ring.slots() < prefill && !n.shared.eof.load(Ordering::Acquire) {
+            return;
+        }
+        self.blend = None;
+        let deck = self.next.take().unwrap();
+        self.apply(Cmd::Crossfade { deck, frames: cue.frames.max(1), equal_power: cue.equal_power });
+        if let Some((at, len)) = cue.swap {
+            let lp = Biquad::new(Shape::LowPass, 180.0, 0.0, std::f32::consts::FRAC_1_SQRT_2, self.rate as f32);
+            let total = cue.frames.max(1);
+            let at = at.min(total);
+            self.swap = Some(Swap { frame: 0, at, len: len.max(1).min(total - at.min(total)).max(1), total, lp_out: lp, lp_in: lp });
+        }
     }
 
     pub fn render(&mut self, out: &mut [f32]) {
@@ -392,6 +558,12 @@ impl Mixer {
             }
             playing_frames += 1;
             let (mut l, mut r) = (0.0f32, 0.0f32);
+            if self.retune.is_some() {
+                self.step_retune();
+            }
+            if self.blend.is_some() {
+                self.step_blend();
+            }
             // Gapless hand-over the moment the current deck drains.
             if self.cur.as_ref().is_some_and(|d| d.drained()) {
                 let old = self.cur.take().unwrap();
@@ -399,6 +571,7 @@ impl Mixer {
                 let id = old.id;
                 self.retire(old);
                 self.end_cur_starve(id, 0.0);
+                self.blend = None;
                 if let Some(mut n) = self.next.take() {
                     let nid = n.id;
                     n.handed_over = true;
@@ -426,8 +599,15 @@ impl Mixer {
                     let a = d.ring.pop().unwrap_or(0.0);
                     let b = d.ring.pop().unwrap_or(0.0);
                     let fi = shape(self.fade_in.next(), self.equal_power) * d.gain;
-                    l += a * fi;
-                    r += b * fi;
+                    if let Some(sw) = self.swap.as_mut() {
+                        let (la, lb) = (sw.lp_in.process(0, a), sw.lp_in.process(1, b));
+                        let gl = sw.in_low() * d.gain;
+                        l += (a - la) * fi + la * gl;
+                        r += (b - lb) * fi + lb * gl;
+                    } else {
+                        l += a * fi;
+                        r += b * fi;
+                    }
                     d.advance();
                     resumed = Some((d.id, d.position()));
                 } else if d.frames_played > 0 && !d.drained() {
@@ -465,8 +645,17 @@ impl Mixer {
             if let Some((d, ramp)) = self.fading.as_mut() {
                 let fg = shape(ramp.next(), self.equal_power) * d.gain;
                 if d.ring.slots() >= 2 {
-                    l += d.ring.pop().unwrap_or(0.0) * fg;
-                    r += d.ring.pop().unwrap_or(0.0) * fg;
+                    let a = d.ring.pop().unwrap_or(0.0);
+                    let b = d.ring.pop().unwrap_or(0.0);
+                    if let Some(sw) = self.swap.as_mut() {
+                        let (la, lb) = (sw.lp_out.process(0, a), sw.lp_out.process(1, b));
+                        let gl = (1.0 - sw.in_low()) * d.gain;
+                        l += (a - la) * fg + la * gl;
+                        r += (b - lb) * fg + lb * gl;
+                    } else {
+                        l += a * fg;
+                        r += b * fg;
+                    }
                     d.advance();
                     if self.mon.fade_starve > 0 {
                         let (frames, id, pos) = (self.mon.fade_starve, d.id, d.position());
@@ -481,7 +670,14 @@ impl Mixer {
                 }
                 fade_done = ramp.done() || d.drained();
             }
+            if let Some(sw) = self.swap.as_mut() {
+                sw.frame += 1;
+                if sw.frame >= sw.total || (self.fading.is_none() && sw.in_low() >= 1.0) {
+                    self.swap = None;
+                }
+            }
             if fade_done {
+                self.swap = None;
                 let (d, _) = self.fading.take().unwrap();
                 self.mon.fade_starve = 0;
                 self.retire(d);

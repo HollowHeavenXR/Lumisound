@@ -142,8 +142,13 @@ extension AudioPlayerManager {
     }
 
     func queueRustGaplessNext() {
-        guard isUsingRustEngine, audioSettings.gaplessEnabled, !audioSettings.crossfadeActive, rustNextDeckID == nil,
+        guard isUsingRustEngine, rustNextDeckID == nil,
               let next = peekNextSong(), let url = next.url, url.isFileURL else { return }
+        if audioSettings.smartCrossfadeEnabled {
+            queueRustBlendNext(next: next, url: url)
+            return
+        }
+        guard audioSettings.gaplessEnabled, !audioSettings.crossfadeActive else { return }
         // Locked tracks are read in place by the core: nothing to prewarm.
         let path = url.path
         let start = SilenceTrimService.openingOffset(for: url)
@@ -151,6 +156,38 @@ extension AudioPlayerManager {
         rustNextDeckID = id
         rustNextPath = path
         rustNextStart = start
+        rustNextBlendSecs = 0
+    }
+
+    /// Smart Crossfade (Lumisound Blend, core `blend.rs`): both tracks'
+    /// ends are profiled off the main thread, the core plans the transition
+    /// (downbeat-aligned start, whole-bar length, beat-match, bass swap) and
+    /// the engine runs it sample-accurately. `rustTrackStarted` fires when
+    /// the fade begins.
+    func queueRustBlendNext(next: Song, url: URL) {
+        guard let outPath = currentSong?.url?.path else { return }
+        let inPath = url.path
+        guard CoreAudio.canDecode(path: inPath) else { return }
+        let gen = scheduleGeneration
+        let base = max(1, audioSettings.crossfadeDuration)
+        let equalPower = (audioSettings.crossfadeCurve ?? .equalPower) == .equalPower
+        let nextID = next.id
+        rustBlendTask?.cancel()
+        rustBlendTask = Task.detached(priority: .utility) { [weak self] in
+            guard let a = blendProfile(path: outPath), let b = blendProfile(path: inPath), !Task.isCancelled else { return }
+            let plan = blendPlan(out: a, inc: b, settings: BlendSettings(baseSecs: base, beatMatch: true, bassSwap: true))
+            await MainActor.run { [weak self] in
+                guard let self, self.scheduleGeneration == gen, self.rustNextDeckID == nil,
+                      self.peekNextSong()?.id == nextID, self.currentSong?.url?.path == outPath else { return }
+                guard let id = try? Self.rust.queueBlend(path: inPath, plan: plan, gainDb: 0, equalPower: equalPower) else { return }
+                self.rustNextDeckID = id
+                self.rustNextPath = inPath
+                self.rustNextStart = plan.inStart
+                self.rustNextBlendSecs = plan.fadeSecs
+                appLog(String(format: "Blend planned: %.1fs at %.1fs → %@ from %.1fs (%@)", plan.fadeSecs, plan.outStart,
+                              next.displayName, plan.inStart, plan.reason), category: "audio")
+            }
+        }
     }
 
     func applyRustSettings() {
@@ -262,7 +299,10 @@ extension AudioPlayerManager {
     }
 
     private func setRustCrossfadeTrigger() {
-        if audioSettings.crossfadeActive && audioSettings.crossfadeDuration > 0 {
+        if audioSettings.smartCrossfadeEnabled {
+            // The engine starts planned blends itself (queueRustBlendNext).
+            crossfadeTriggerPosition = nil
+        } else if audioSettings.crossfadeActive && audioSettings.crossfadeDuration > 0 {
             let trigger = duration - transitionLead()
             crossfadeTriggerPosition = trigger > 0 ? trigger : nil
         } else {
@@ -334,6 +374,17 @@ extension AudioPlayerManager {
         duration = probed > 0 ? probed : (currentSong?.duration ?? 0)
         position = rustNextStart
         rustNextStart = 0
+        if rustNextBlendSecs > 0 {
+            let fade = rustNextBlendSecs
+            rustNextBlendSecs = 0
+            isCrossfading = true
+            let gen = scheduleGeneration
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(fade * 1_000_000_000))
+                guard let self, self.scheduleGeneration == gen else { return }
+                self.isCrossfading = false
+            }
+        }
         updateNowPlaying()
         prewarmBPM(for: peekNextSong())
         queueRustGaplessNext()

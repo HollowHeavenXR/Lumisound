@@ -47,3 +47,5 @@ crc32fast = "1"
 libc = "0.2"
 md-5 = "0.10"
 roxmltree = "0.20"
+# Aria Lyrics: whisper.cpp speech recognition (statically linked) on isolated vocals.
+whisper-rs = "0.16"

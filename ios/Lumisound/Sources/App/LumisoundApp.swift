@@ -550,39 +550,34 @@ struct LumisoundApp: App {
                     Task {
                         appLog("Auto-radio: seeding from \"\(seed.displayName)\" by \(seed.artistName)", category: "audio")
                         let seedBPM = await libraryManager.bpm(for: seed)
-                        let station = await account.fetchAutomaticStation(
-                            seed: StationSeed(song: seed, bpm: seedBPM)
-                        )
-                        // Preserve the signed-out/offline behavior of the
-                        // original Auto-Radio path; the richer station API is
-                        // an enhancement, not a prerequisite for playback.
-                        let tracks: [StreamTrack]
-                        let stationTitle: String
-                        if let station {
-                            tracks = station.tracks
-                            stationTitle = station.title
-                        } else {
-                            tracks = await streaming.relatedTracks(
+                        // Lumisound Radio: a station session that keeps refilling
+                        // and steers by skips/completions (RadioService + core).
+                        var appendedCount = 0
+                        var stationTitle = "Lumisound Radio"
+                        if account.isLoggedIn {
+                            appendedCount = await RadioService.shared.start(seed: seed, bpm: seedBPM, player: player,
+                                                                            library: libraryManager, streaming: streaming,
+                                                                            account: account)
+                        }
+                        if appendedCount == 0 {
+                            // Signed out / offline / engine miss: one-off related search.
+                            let tracks = await streaming.relatedTracks(
                                 query: "\(seed.artistName) \(seed.displayName)",
                                 source: "youtube",
                                 limit: 5
                             )
                             stationTitle = "fallback radio"
+                            for track in tracks {
+                                guard let url = try? await streaming.streamURL(for: track) else { continue }
+                                player.appendToQueue(song: streaming.toSong(track: track, streamURL: url), source: .autoContinuation)
+                                appendedCount += 1
+                            }
                         }
-                        guard !tracks.isEmpty else {
+                        guard appendedCount > 0 else {
                             appLog("Auto-radio: no results", category: "audio")
                             return
                         }
-                        var appendedCount = 0
-                        for track in tracks {
-                            guard let url = try? await streaming.streamURL(for: track) else { continue }
-                            // Tagged `.autoContinuation` (not the default `.manual`) so these
-                            // land in the Queue UI's "Up Next" section, not "Manually Queued" —
-                            // see QueueSource / AudioPlayerManager+Queue.appendToQueue.
-                            player.appendToQueue(song: streaming.toSong(track: track, streamURL: url), source: .autoContinuation)
-                            appendedCount += 1
-                        }
-                        if appendedCount > 0, !player.isPlaying { player.skipToNext() }
+                        if !player.isPlaying { player.skipToNext() }
                         appLog("Auto-radio: appended \(appendedCount) track(s) from \(stationTitle)", category: "audio")
                     }
                 }

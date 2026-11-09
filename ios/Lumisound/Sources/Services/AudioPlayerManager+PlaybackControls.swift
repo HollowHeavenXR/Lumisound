@@ -328,6 +328,7 @@ extension AudioPlayerManager {
     /// an early skip is remembered so Smart Shuffle plays the song later.
     /// Automatic advances (song ended, load failed) call `skipToNext()`.
     func userSkipToNext() {
+        lastUserSkipAt = Date()
         if let song = currentSong, repeatMode != .one {
             let length = song.duration > 0 ? song.duration : duration
             if skipRecord(songId: song.id, position: position, duration: length) {

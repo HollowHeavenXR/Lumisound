@@ -143,6 +143,7 @@ final class AudioPlayerManager: ObservableObject {
         set {
             positionValue = newValue
             if !isProgressPublishingPaused { progress.position = newValue }
+            RadioService.shared.positionTick(newValue)
         }
     }
 
@@ -547,6 +548,12 @@ final class AudioPlayerManager: ObservableObject {
     var rustNextPath: String?
     /// Where the queued gapless track opens (Skip Silent Intros).
     var rustNextStart: TimeInterval = 0
+    /// When the listener last skipped by hand (Radio feedback).
+    var lastUserSkipAt: Date = .distantPast
+    /// Fade length of the queued Smart Crossfade blend (0 = plain gapless).
+    var rustNextBlendSecs: TimeInterval = 0
+    /// Background profiling for the next blend (cancelled when the queue changes).
+    var rustBlendTask: Task<Void, Never>?
     var rustOutputStarted = false
     /// Forces the AVAudioEngine path for one schedule (decode-failure fallback).
     var rustBypassOnce = false

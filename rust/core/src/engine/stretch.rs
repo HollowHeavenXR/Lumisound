@@ -17,7 +17,12 @@
 //!   inter-channel phase (stereo image) instead of letting it drift.
 //! * Transients: a frame whose spectrum suddenly gains energy across many
 //!   bins (a drum hit) resets synthesis phase to the analysis phase, so
-//!   attacks stay sharp instead of being smeared ("phasiness").
+//!   attacks stay sharp instead of being smeared ("phasiness"). Only the
+//!   bins that jumped (6 dB+) are reset: resetting the whole frame put the
+//!   notes still ringing under the hit out of phase with the 7 overlapping
+//!   frames before it, which cancelled them for ~85 ms — the "stutter dips"
+//!   heard at every pitch (sustained bass fell 4-8 dB on each drum hit;
+//!   ~320 dips a minute on cloud tracks).
 //! * At ratio 1 every frame is a phase reset: the overlap-add reconstructs
 //!   the input exactly, so a stretch that returns to 1 (beat-matched
 //!   crossfades) never jumps.
@@ -39,6 +44,10 @@ const BINS: usize = N / 2 + 1;
 const OLA_GAIN: f32 = 3.0;
 /// Fraction of rising bins that marks a transient.
 const TRANSIENT_FRACTION: f32 = 0.38;
+/// A bin "jumped" when its magnitude at least doubled (+6 dB): what was
+/// there before is then at most a quarter of the power, so resetting its
+/// phase can't audibly cancel it.
+const BIN_JUMP: f32 = 2.0;
 
 pub struct Wsola {
     /// Input frames per output frame (> 1 = faster).
@@ -77,6 +86,19 @@ pub struct Wsola {
     phase: Vec<f32>,
     peaks: Vec<usize>,
     new_synth: Vec<f32>,
+    /// Bins that jumped this frame (transient frames only).
+    jumped: Vec<bool>,
+}
+
+/// First bin of the region after peak `a`: the quietest bin between `a` and `b`.
+fn trough(mags: &[f32], a: usize, b: usize) -> usize {
+    let mut best = a + 1;
+    for k in a + 1..b {
+        if mags[k] < mags[best] {
+            best = k;
+        }
+    }
+    best
 }
 
 fn wrap(x: f32) -> f32 {
@@ -116,6 +138,7 @@ impl Wsola {
             phase: vec![0.0; BINS],
             peaks: Vec::with_capacity(BINS / 2),
             new_synth: vec![0.0; BINS],
+            jumped: vec![false; BINS],
         }
     }
 
@@ -237,7 +260,12 @@ impl Wsola {
             }
         }
         let transient = considered > 16 && rising as f32 / considered as f32 > TRANSIENT_FRACTION;
-        let reset = !self.started || exact || transient;
+        let reset = !self.started || exact;
+        if transient {
+            for k in 0..BINS {
+                self.jumped[k] = mags[k] > floor && mags[k] > self.prev_mag[k] * BIN_JUMP + 1e-9;
+            }
+        }
 
         let mut phase = std::mem::take(&mut self.phase);
         for k in 0..BINS {
@@ -259,6 +287,11 @@ impl Wsola {
             }
             let mut new_synth = std::mem::take(&mut self.new_synth);
             for &p in &peaks {
+                if transient && self.jumped[p] {
+                    // New energy (the hit itself): take its own phase, sharp attack.
+                    new_synth[p] = phase[p];
+                    continue;
+                }
                 let omega = 2.0 * PI * p as f32 / N as f32;
                 let dev = wrap(phase[p] - self.prev_phase[p] - omega * ha);
                 let inst = omega + dev / ha;
@@ -271,10 +304,17 @@ impl Wsola {
                     new_synth[k] = self.synth_phase[k] + omega * hs;
                 }
             } else {
+                // Regions split at the quietest bin between neighbouring
+                // peaks (Laroche & Dolson): a strong partial's skirt stays
+                // with that partial. Nearest-peak split handed the skirt of a
+                // loud bass note to a tiny noise peak next to it, so a drum
+                // hit's reset of that noise peak dragged the bass with it.
                 let mut pi = 0;
+                let mut bound = if peaks.len() > 1 { trough(&mags, peaks[0], peaks[1]) } else { BINS };
                 for k in 0..BINS {
-                    while pi + 1 < peaks.len() && (peaks[pi + 1] as isize - k as isize).abs() <= (peaks[pi] as isize - k as isize).abs() {
+                    while pi + 1 < peaks.len() && k >= bound {
                         pi += 1;
+                        bound = if pi + 1 < peaks.len() { trough(&mags, peaks[pi], peaks[pi + 1]) } else { BINS };
                     }
                     let p = peaks[pi];
                     if k != p {

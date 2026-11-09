@@ -1818,3 +1818,15 @@ CREATE TABLE IF NOT EXISTS ios_user_skip_history (
     PRIMARY KEY (user_id, song_id)
 );
 CREATE INDEX IF NOT EXISTS ios_user_skip_history_idx_rev ON ios_user_skip_history (user_id, rev);
+
+-- Lumisound Radio sessions (2026-11-09): seed, candidate pool and learned
+-- artist/source weights per station (routes/radio.rs). Expire after 7 days.
+CREATE TABLE IF NOT EXISTS ios_radio_sessions (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL REFERENCES ios_users(id) ON DELETE CASCADE,
+    seed JSONB NULL,
+    state JSONB NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS ios_radio_sessions_idx_user ON ios_radio_sessions (user_id, updated_at);

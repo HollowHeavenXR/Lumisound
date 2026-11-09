@@ -88,6 +88,12 @@ impl Deck {
         self.track_secs += self.seg_step;
     }
 
+    /// Track seconds per output frame right now.
+    #[inline]
+    pub fn seg_step_now(&self) -> f64 {
+        self.seg_step
+    }
+
     pub fn duration(&self) -> f64 {
         f64::from_bits(self.shared.duration_bits.load(Ordering::Relaxed))
     }

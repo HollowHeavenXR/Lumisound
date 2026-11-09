@@ -136,6 +136,9 @@ impl AudioEngine {
         let d = self.open(&path, start_secs, gain_db)?;
         let id = d.id;
         *self.current.lock().unwrap() = Some((path, gain_db));
+        // A new track: whatever was queued after the old one (gapless deck,
+        // planned blend and its cue) belongs to the old one.
+        self.send(Cmd::ClearNext);
         self.send(Cmd::Replace(Box::new(d)));
         Ok(id)
     }
@@ -175,6 +178,30 @@ impl AudioEngine {
         Ok(id)
     }
 
+    /// Queue `path` as the next track with a planned blend (Smart
+    /// Crossfade, `crate::blend::blend_plan`): the deck opens and buffers
+    /// now; the mixer starts the fade the frame the playing track reaches
+    /// `plan.out_start`, so a bar-locked fade lands exactly on the downbeat.
+    /// `on_track_started` fires when the fade begins.
+    pub fn queue_blend(&self, path: String, plan: crate::blend::BlendPlan, gain_db: f32, equal_power: bool) -> Result<u64, EngineError> {
+        let speed = self.tempo.lock().unwrap().0.clamp(0.25, 4.0);
+        let frames = ((plan.fade_secs.max(0.05) / speed) * self.output_rate() as f64) as u64;
+        let nudge = ((plan.tempo_match - 1.0).abs() > 1e-4 && frames > 0).then(|| {
+            let hold = frames * 3 / 5;
+            deck::Nudge { start: plan.tempo_match.clamp(0.9, 1.1), hold_frames: hold, ramp_frames: frames - hold }
+        });
+        let d = self.open_with(&path, plan.in_start.max(0.0), gain_db, nudge)?;
+        let id = d.id;
+        let swap = (plan.style == crate::blend::BlendStyle::BassSwap).then(|| {
+            // The basses trade places over one beat-ish (1/8 of the fade, 120-500 ms).
+            let len = (frames / 8).clamp(self.output_rate() as u64 / 8, self.output_rate() as u64 / 2);
+            ((frames as f64 * plan.swap_at.clamp(0.1, 0.9)) as u64, len)
+        });
+        let equal_power = equal_power || plan.style != crate::blend::BlendStyle::EqualPower;
+        self.send(Cmd::QueueBlend { deck: Box::new(d), cue: mixer::BlendCue { at_pos: plan.out_start, frames, equal_power, swap } });
+        Ok(id)
+    }
+
     /// Note which deck is current after a gapless hand-over (Swift tells us
     /// the new path so seeks reopen the right file).
     pub fn adopt_current(&self, path: String, gain_db: f32) {
@@ -191,11 +218,29 @@ impl AudioEngine {
             }
             *t = (speed, pitch_semitones);
         }
-        if self.current.lock().unwrap().is_none() {
+        let Some((path, gain)) = self.current.lock().unwrap().clone() else {
+            return Ok(None);
+        };
+        self.clear_next();
+        // Reopen the same track (same deck id: the app's bookkeeping is by
+        // id) a short lead ahead of the playing position. The mixer swaps it
+        // in with a 30 ms crossfade when playback reaches that spot, so a
+        // pitch change has no gap and no jump. (It used to seek: the track
+        // went silent until the new deck had buffered.)
+        let id = self.tele.deck_id.load(Ordering::Relaxed);
+        if !self.is_playing() || id == 0 {
+            return self.seek(self.position()).map(Some);
+        }
+        let lead = 0.25 * speed.clamp(0.25, 4.0);
+        let start = self.position() + lead;
+        let dur = self.duration();
+        if dur > 0.0 && start >= dur - 0.5 {
             return Ok(None);
         }
-        self.clear_next();
-        self.seek(self.position()).map(Some)
+        let (sp, pi) = *self.tempo.lock().unwrap();
+        let d = deck::open(id, &path, start, self.output_rate(), db_to_lin(gain), sp, pi, None, self.tele.clone()).map_err(|m| EngineError::Open { message: m })?;
+        self.send(Cmd::Retune(Box::new(d)));
+        Ok(Some(id))
     }
 
     pub fn seek(&self, secs: f64) -> Result<u64, EngineError> {
@@ -377,8 +422,8 @@ impl AudioEngine {
                 self.send(Cmd::Replace(Box::new(d)));
             }
         }
-        if let Some((id, path, gain)) = next {
-            if let Ok(d) = deck::open(id, &path, 0.0, dev_rate, gain, speed, pitch, None, self.tele.clone()) {
+        if let Some((id, path, gain, start)) = next {
+            if let Ok(d) = deck::open(id, &path, start.max(0.0), dev_rate, gain, speed, pitch, None, self.tele.clone()) {
                 self.send(Cmd::QueueNext(Box::new(d)));
             }
         }

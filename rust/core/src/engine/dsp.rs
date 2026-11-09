@@ -18,6 +18,8 @@ pub struct Biquad {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Shape {
+    /// 2nd-order low-pass (Q 0.707 = Butterworth); gain ignored.
+    LowPass,
     LowShelf,
     Peak,
     HighShelf,
@@ -33,6 +35,7 @@ impl Biquad {
         let alpha = sw / (2.0 * q);
         let (b0, b1, b2, a0, a1, a2) = match shape {
             Shape::Peak => (1.0 + alpha * a, -2.0 * cw, 1.0 - alpha * a, 1.0 + alpha / a, -2.0 * cw, 1.0 - alpha / a),
+            Shape::LowPass => ((1.0 - cw) / 2.0, 1.0 - cw, (1.0 - cw) / 2.0, 1.0 + alpha, -2.0 * cw, 1.0 - alpha),
             Shape::LowShelf => {
                 let s = 2.0 * a.sqrt() * alpha;
                 (

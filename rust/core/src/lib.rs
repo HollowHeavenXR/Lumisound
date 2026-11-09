@@ -6,6 +6,7 @@
 uniffi::setup_scaffolding!();
 
 pub mod aidj;
+pub mod blend;
 pub mod analysis;
 pub mod blobcache;
 pub mod appearance;
@@ -28,6 +29,7 @@ pub mod lyrics;
 pub mod lua;
 pub mod metadata;
 pub mod mood;
+pub mod radio;
 pub mod error;
 pub mod retry;
 pub mod shuffle;
