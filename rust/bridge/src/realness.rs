@@ -85,7 +85,7 @@ WITH acts AS (
     UNION SELECT user_id, played_at::date FROM ios_play_history
     UNION SELECT user_id, created_at::date FROM ios_user_sessions
     UNION SELECT user_id, last_seen_at::date FROM ios_push_tokens WHERE last_seen_at IS NOT NULL
-    UNION SELECT user_id, last_login::date FROM ios_users WHERE last_login IS NOT NULL
+    UNION SELECT id, last_login::date FROM ios_users WHERE last_login IS NOT NULL
 ),
 act AS (SELECT user_id,
             count(*) FILTER (WHERE d > now()::date - 7) a7,
