@@ -9,3 +9,7 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
 ## Open
 - Incremental `/user/music/metadata?since=` (low priority: table is tiny today).
 - Prune zero-count skip rows older than ~1 year.
+
+## 2026-11-09
+- [x] routes/radio.rs (Lumisound Radio), routes/haptics.rs (Haptics Brain), lyricsgen.rs (Aria Lyrics), realness.rs.
+- [ ] Aria Lyrics: cache Demucs vocals per track hash (re-runs skip separation).

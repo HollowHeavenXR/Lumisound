@@ -141,7 +141,8 @@ final class MusicHapticsService {
         guard let url = song.url, url.isFileURL else { return }
         let path = url.standardizedFileURL.path
         if let score = hapticScoreCached(path: path) {
-            scheduler = HapticScheduler(score: score)
+            // The Haptics Brain's corrections (learned per track and globally).
+            scheduler = HapticScheduler(score: hapticBrainApply(score: score))
             prewarmNext()
             return
         }
@@ -150,7 +151,7 @@ final class MusicHapticsService {
             let score = await Self.analyze(url: url)
             guard let self, !Task.isCancelled, self.scoreSongID == songID else { return }
             if let score {
-                self.scheduler = HapticScheduler(score: score)
+                self.scheduler = HapticScheduler(score: hapticBrainApply(score: score))
                 let s = score.stats()
                 appLog(String(format: "Music Haptics: \"%@\" — %d hits (%d low / %d mid / %d high), %.0fs rumble, analysed at %.0fx",
                               url.lastPathComponent, s.transients, s.lowHits, s.midHits, s.highHits, s.continuousSecs, s.analysisXRealtime),

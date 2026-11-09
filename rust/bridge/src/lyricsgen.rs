@@ -589,13 +589,12 @@ async fn generate_in(st: &crate::state::AppState, audio: &Path, work: &Path, tit
     progress("listening");
     let t = Instant::now();
     let wins = windows(&segs, 25.0);
-    let mut prompt = format!("Song lyrics: \"{title}\"{}.", if artist.is_empty() { String::new() } else { format!(" by {artist}") });
-    if let Some(r) = reference {
-        let head: String = r.lines().filter_map(lyric_line).collect::<Vec<_>>().join(" ").chars().take(220).collect();
-        prompt.push(' ');
-        prompt.push_str(&head);
-    }
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 4) as i32;
+    // Only known lyrics prime the recognizer: a title/artist prompt got
+    // echoed back as an invented closing line ("The Jackson 5 song is about...").
+    let prompt: String = reference.map(|r| r.lines().filter_map(lyric_line).collect::<Vec<_>>().join(" ").chars().take(220).collect()).unwrap_or_default();
+    let _ = (title, artist);
+    // The container gets 3 CPUs: whisper takes two, leaving room for requests.
+    let threads = std::env::var("ARIA_LYRICS_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
     let vocals2 = vocals.clone();
     let asr = tokio::task::spawn_blocking(move || recognize(&vocals2, &wins, &prompt, threads)).await.map_err(|e| e.to_string())??;
     stages.push(("recognize".into(), t.elapsed().as_secs_f64()));

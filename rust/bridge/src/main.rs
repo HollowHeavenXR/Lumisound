@@ -24,6 +24,7 @@ mod lock;
 mod notify;
 mod perf;
 mod lyricsgen;
+mod realness;
 mod probe;
 mod push;
 mod routes;
@@ -56,6 +57,17 @@ async fn main() -> anyhow::Result<()> {
         let (_, v) = routes::radio::start_session(&state, &g(2).unwrap_or_default(), seed, &g(6).unwrap_or_else(|| "balanced".into()), 10).await;
         println!("{}", serde_json::to_string_pretty(&v)?);
         eprintln!("radio-probe: {:.1}s", t.elapsed().as_secs_f64());
+        return Ok(());
+    }
+    if args.get(1).map(String::as_str) == Some("realness-report") {
+        // realness-report [store]: every account's realness verdict and activity.
+        let v = if args.get(2).map(String::as_str) == Some("store") {
+            realness::scan_and_store(&state).await?;
+            realness::scan(&state).await?
+        } else {
+            realness::scan(&state).await?
+        };
+        println!("{}", serde_json::to_string(&serde_json::json!({"summary": realness::summary(&v), "accounts": v}))?);
         return Ok(());
     }
     if args.get(1).map(String::as_str) == Some("lyrics-probe") {

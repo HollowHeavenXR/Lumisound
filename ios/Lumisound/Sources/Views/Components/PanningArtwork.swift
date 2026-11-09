@@ -21,7 +21,7 @@ struct PanningArtwork: UIViewRepresentable {
     }
 
     func updateUIView(_ view: PanningImageView, context: Context) {
-        if view.image !== image { view.image = image }
+        if view.image !== image { view.image = image } else { view.ensurePanning() }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: PanningImageView, context: Context) -> CGSize? {
@@ -34,6 +34,8 @@ final class PanningImageView: UIView {
     private let imageLayer = CALayer()
     private static let panKey = "lumisound.pan"
     private var laidOutFor: (CGSize, ObjectIdentifier)?
+    /// The last layout added a pan (the art overflows the frame).
+    private var panExpected = false
 
     var image: UIImage? {
         didSet {
@@ -53,6 +55,7 @@ final class PanningImageView: UIView {
         layer.addSublayer(imageLayer)
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(restart), name: UIApplication.didBecomeActiveNotification, object: nil)
+        nc.addObserver(self, selector: #selector(restart), name: UIApplication.willEnterForegroundNotification, object: nil)
         nc.addObserver(self, selector: #selector(restart), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
     }
 
@@ -63,9 +66,25 @@ final class PanningImageView: UIView {
         if window != nil { restart() }
     }
 
+    override func layoutSublayers(of layer: CALayer) {
+        super.layoutSublayers(of: layer)
+        if layer === self.layer { ensurePanning() }
+    }
+
     @objc private func restart() {
         laidOutFor = nil
         setNeedsLayout()
+    }
+
+    /// The slide stopped under random conditions: layout only re-added the
+    /// pan when the size or image changed, so anything that removed the
+    /// layer animation with both unchanged (the app suspending, a list
+    /// re-rendering the cell, an interrupted transaction) left the cover
+    /// frozen until it scrolled off screen. Called on every SwiftUI update
+    /// of the cell: puts a missing pan back.
+    func ensurePanning() {
+        guard window != nil, wantsPan, panExpected, laidOutFor != nil, imageLayer.animation(forKey: Self.panKey) == nil else { return }
+        restart()
     }
 
     override func layoutSubviews() {
@@ -76,6 +95,7 @@ final class PanningImageView: UIView {
             return
         }
         laidOutFor = key
+        panExpected = false
 
         // Fill: scale so the image covers the frame on both axes.
         let b = bounds.size
@@ -112,6 +132,7 @@ final class PanningImageView: UIView {
         // Random phase, so a grid of covers doesn't slide in lockstep.
         anim.timeOffset = Double.random(in: 0..<(anim.duration * 2))
         imageLayer.add(anim, forKey: Self.panKey)
+        panExpected = true
     }
 
     private var wantsPan: Bool { !UIAccessibility.isReduceMotionEnabled }
@@ -129,7 +150,6 @@ struct SwiftUIPanningArtwork: View {
     let size: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var atEnd = false
 
     var body: some View {
         let w = max(image.size.width, 1), h = max(image.size.height, 1)
@@ -139,20 +159,21 @@ struct SwiftUIPanningArtwork: View {
         let horizontal = overflowX >= overflowY
         let travel = max(overflowX, overflowY)
         let pans = travel > 2 && !reduceMotion
-        let shift: CGFloat = pans ? (atEnd ? -travel / 2 : travel / 2) : 0
+        let leg = max(5, Double(travel / (size * 0.06)))
 
-        Image(uiImage: image)
-            .resizable()
-            .frame(width: fill.width, height: fill.height)
-            .offset(x: horizontal ? shift : 0, y: horizontal ? 0 : shift)
-            .frame(width: size, height: size)
-            .clipped()
-            .onAppear {
-                guard pans else { return }
-                atEnd = false
-                withAnimation(.easeInOut(duration: max(5, Double(travel / (size * 0.06)))).repeatForever(autoreverses: true)) {
-                    atEnd = true
-                }
-            }
+        // Position from the clock, not a `repeatForever` started once in
+        // onAppear: the animated Now Playing styles redraw this every frame,
+        // and a re-render froze that animation mid-slide (the cover stopped
+        // moving until the screen was reopened). Same easing and pace.
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !pans)) { timeline in
+            let phase = pans ? CGFloat(ArtworkClock.pingPong(timeline.date, legDuration: leg)) : 0.5
+            let shift: CGFloat = travel / 2 - travel * phase
+            Image(uiImage: image)
+                .resizable()
+                .frame(width: fill.width, height: fill.height)
+                .offset(x: horizontal ? shift : 0, y: horizontal ? 0 : shift)
+                .frame(width: size, height: size)
+                .clipped()
+        }
     }
 }

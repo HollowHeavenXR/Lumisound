@@ -456,6 +456,9 @@ struct LumisoundApp: App {
                     // header comment for why this exists (no Xcode/device
                     // debugger in this project's dev environment).
                     DiagnosticsSnapshotService.start()
+                    // Haptics Brain: learns every track's beats in the background
+                    // (haptics on or off) and shares it through the bridge.
+                    HapticsBrainService.shared.start(player: player, account: account)
                 }
                 .onAppear {
                     bgService.loadSettings()

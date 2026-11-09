@@ -1,9 +1,12 @@
 # Lumisound bridge (Rust). The runtime image carries only the external CLIs the
 # server drives as child processes: yt-dlp (+ deno for YouTube's JS challenge,
 # the bgutil PO-token plugin and aria2c), ffmpeg/ffprobe, AtomicParsley and
-# fpcalc, plus Demucs (htdemucs) for stem separation. No Python application
+# fpcalc, plus Demucs (htdemucs) for stem separation and the whisper model
+# Aria Lyrics runs (whisper.cpp itself is linked into the bridge binary). No Python application
 # code runs in it; the bridge only spawns these tools.
 FROM rust:1-bookworm AS build
+# whisper.cpp (Aria Lyrics, linked through whisper-rs) needs CMake + Clang.
+RUN apt-get update && apt-get install -y --no-install-recommends cmake clang libclang-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY bridge bridge
@@ -12,7 +15,7 @@ COPY media media
 COPY rpc rpc
 COPY vendor vendor
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target \
-    CARGO_BUILD_JOBS=3 cargo build --release -p lumisound-bridge && cp target/release/lumisound-bridge /lumisound-bridge
+    CARGO_BUILD_JOBS=2 CMAKE_BUILD_PARALLEL_LEVEL=2 cargo build --release -p lumisound-bridge && cp target/release/lumisound-bridge /lumisound-bridge
 
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl unzip ca-certificates atomicparsley aria2 \
@@ -28,6 +31,10 @@ RUN python -c "from demucs.pretrained import get_model; get_model('htdemucs'); p
 # yt-dlp[default] brings mutagen (thumbnail/metadata embedding into
 # Opus/M4A), pycryptodomex, brotli, websockets and certifi.
 RUN pip install --no-cache-dir "yt-dlp[default]" yt-dlp-ejs bgutil-ytdlp-pot-provider
+# Aria Lyrics speech model (whisper small, multilingual, q5_1 ~190 MB).
+RUN mkdir -p /app/models && curl -fsSL -o /app/models/ggml-small-q5_1.bin \
+      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin \
+    && test "$(stat -c %s /app/models/ggml-small-q5_1.bin)" -gt 150000000
 WORKDIR /app
 COPY --from=build /lumisound-bridge /usr/local/bin/lumisound-bridge
 COPY bridge/schema.sql /app/schema.sql

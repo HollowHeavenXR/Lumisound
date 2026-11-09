@@ -118,7 +118,9 @@ extension StreamingService {
         // approaches the tunnel's edge timeout regardless of how long the
         // Gemini call actually takes server-side (bounded separately by the
         // 240s http_options timeout on lyrics_ai.py's generate_content call).
-        let deadline = Date().addingTimeInterval(300)
+        // Aria Lyrics now runs on the bridge (vocal separation + speech
+        // recognition): a long song can take several minutes.
+        let deadline = Date().addingTimeInterval(900)
         while true {
             if Date() > deadline {
                 appWarn("transcribeLyrics: job poll timed out for \"\(song.displayName)\"", category: "network")

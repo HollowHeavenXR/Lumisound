@@ -28,6 +28,7 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/api/logs", get(logs))
         .route("/admin/api/events", get(events))
         .route("/admin/api/users", get(users))
+        .route("/admin/api/realness", get(realness))
         .route("/admin/api/users/{id}/quota", put(set_quota))
         .route("/admin/api/storage-integrity", get(storage_integrity))
         .route("/admin/api/users/{id}/deactivate", post(deactivate))
@@ -516,4 +517,21 @@ async fn log_event(State(st): State<AppState>, h: HeaderMap, J(b): J<LogEventBod
     let user = token_sub(&st, &h);
     crate::db::log_event_from(&st.db, "ios_client", &b.category, &b.event, user.as_deref(), &b.level, &b.message, b.detail.map(Value::Object)).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Account realness (crate::realness): stored verdicts, or a fresh scan with ?fresh=1.
+async fn realness(State(st): State<AppState>, _a: Admin, Q(q): Q<std::collections::HashMap<String, String>>) -> ApiResult<Json<Value>> {
+    if q.get("fresh").is_some_and(|v| v == "1") {
+        let s = crate::realness::scan_and_store(&st).await.map_err(|e| crate::error::AppError::new(500, e.to_string()))?;
+        let _ = s;
+    }
+    let rows: Vec<Value> = sqlx::query_scalar(
+        "SELECT json_build_object('user_id', r.user_id, 'username', u.username, 'score', r.score, 'verdict', r.verdict, 'reasons', r.reasons, \
+           'flags', r.flags, 'active_days_7', r.active_days_7, 'active_days_30', r.active_days_30, 'days_per_week', r.days_per_week, \
+           'frequency', r.frequency, 'last_seen', r.last_seen, 'checked_at', lumi_iso(r.checked_at)) \
+         FROM ios_user_realness r JOIN ios_users u ON u.id = r.user_id ORDER BY r.score ASC",
+    )
+    .fetch_all(&st.db)
+    .await?;
+    Ok(Json(json!({"accounts": rows})))
 }

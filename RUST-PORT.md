@@ -289,3 +289,44 @@ Both rebuilt from scratch in the core; Swift only plays cues / applies offsets.
     pass 1: 27 later than ffmpeg (jumped over quiet sounds). Pass 2: start at first sound
     after silence: 13. Pass 3: silence level -66 dB avg + audio-track fix: green; the 7
     tracks starting later than ffmpeg only cross a floor 40 dB+ under the music.
+
+## 2026-11-09 engine, Blend, Radio, Aria Lyrics, Haptics Brain, realness
+
+Done:
+- [x] Pitch "stutter dips" fixed (engine/stretch.rs): transient phase resets now only touch bins
+      that jumped 6 dB+ (the whole-frame reset cancelled notes still ringing under each drum hit),
+      and peak regions split at the quietest bin between peaks. Cloud tracks: 320 -> ~41 dips/min
+      (Rubber Band scores 300 on the same metric); sustained bass under hits 4-8 dB dips -> <1.6 dB.
+      tests/pitch_cloud.rs.
+- [x] Pitch/speed changes are seamless: `set_speed_pitch` opens a retune deck 0.25 s ahead under the
+      same deck id; the mixer swaps it in with a 30 ms crossfade at the exact track position
+      (Cmd::Retune). It used to seek (silent gap). `load` now clears the queued next deck.
+- [x] Lumisound Blend = new Smart Crossfade (core blend.rs): cached head/tail profile (music start/end,
+      beat grid + downbeat, 3-band envelopes, outro/intro kind, key) -> plan (downbeat-aligned start,
+      whole-bar length, incoming downbeat alignment, beat-match, bass swap / equal power / cut).
+      Engine `queue_blend` starts the fade sample-accurately (cue error < 5 ms on cloud pairs).
+      tests/blend_cloud.rs. iOS uses it (queueRustBlendNext); tvOS still uses TVAutoCrossfade
+      (AVPlayer streaming, no Rust engine there).
+- [x] Lumisound Radio (bridge routes/radio.rs + core radio.rs + RadioService.swift): session radio
+      from YouTube Mix + global co-listen graph + the listener's library + search; scoring, skips and
+      completions steer it, liked/finished songs expand the pool; artist spacing; modes
+      balanced/familiar/discover (long-press Auto-Radio). /user/stations/auto answers from it.
+      Operator check: `docker exec ios_bridge lumisound-bridge radio-probe <user> <artist> <title> [ytid]`.
+- [x] Aria Lyrics (bridge lyricsgen.rs): Demucs vocals -> voice phrases -> whisper.cpp (whisper-rs,
+      ggml-small-q5_1 baked into the image) -> alignment to known text (hint / LRCLIB plain) or lines
+      from phrases; instrumental detection; hallucination filter. No Gemini.
+      Probe: `lumisound-bridge lyrics-probe <audio> <title> <artist> [truth.lrc] [aligned|asr]`.
+      ABC (asr mode): median line error 1.1 s, 54 lines, 8.7 min on 1.5 CPUs (bridge now 3 CPUs,
+      app waits 15 min).
+- [x] Haptics Brain (core haptic_brain.rs, bridge routes/haptics.rs, HapticsBrainService.swift):
+      every played track observed in the background (haptics on or off): pulse fit, timing offset,
+      drop/fill tuning; global model + per-track consensus aggregated on the bridge from all users.
+- [x] Thumbnail slides that stopped: SwiftUIPanningArtwork is clock-driven (repeatForever froze on
+      re-render); PanningImageView re-adds a missing pan on any update/foreground.
+- [x] Account realness (bridge realness.rs): daily scan, score/verdict/reasons/frequency per account in
+      ios_user_realness; GET /admin/api/realness; `lumisound-bridge realness-report`.
+
+Open:
+- [ ] Strata (third interface, composed in Rust: core/src/strata.rs drafted, not wired yet).
+- [ ] Aria Lyrics: test aligned mode on more songs; speed (Demucs dominates).
+- [ ] tvOS Smart Crossfade on Blend (needs bridge-side profiles for streamed tracks).

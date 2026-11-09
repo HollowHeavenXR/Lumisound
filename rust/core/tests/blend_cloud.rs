@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-struct Events(Mutex<Vec<(String, f64)>>, Mutex<Option<Arc<AudioEngine>>>);
+struct Events(Mutex<Vec<(String, f64)>>);
 impl EngineListener for Events {
     fn on_track_ended(&self, id: u64) {
         self.0.lock().unwrap().push((format!("end{id}"), 0.0));
@@ -81,7 +81,7 @@ struct Outcome {
 
 /// Play `a` from `from`, queue the blend into `b`, render until `secs` past the cue.
 fn run(a: &str, b: &str, from: f64, plan: &lumisound_core::blend::BlendPlan, tail_secs: f64) -> Outcome {
-    let ev = Arc::new(Events(Mutex::new(vec![]), Mutex::new(None)));
+    let ev = Arc::new(Events(Mutex::new(vec![])));
     let e = AudioEngine::new(ev.clone());
     e.load(a.into(), from, 0.0).unwrap();
     std::thread::sleep(Duration::from_millis(300));

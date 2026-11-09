@@ -15,3 +15,13 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - Phase H: delete superseded Swift (AVAudioEngine graph etc.).
 - tvOS/watchOS: show Often Skipped / use Smart Shuffle there too.
 - Verify Music Haptics feel and timing on device (AirPods vs speaker latency).
+
+## Done (2026-11-09)
+- `Services/RadioService.swift`: Lumisound Radio sessions (start/refill/feedback), mode picker on Auto-Radio long-press.
+- `Services/HapticsBrainService.swift`: background observation of every track + global model sync.
+- Smart Crossfade on the core Blend planner (`queueRustBlendNext`).
+- `Views/Components/PanningArtwork.swift`: thumbnail slide no longer freezes.
+- Aria lyrics poll deadline 15 min (server-side engine).
+
+## Open
+- Strata interface (Rust-composed screens + generic SwiftUI renderer).

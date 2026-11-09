@@ -85,6 +85,10 @@ impl HapticScore {
     pub fn events(&self) -> &[HapticEvent] {
         &self.events
     }
+    /// A score from already-built events (the Haptics Brain's corrections).
+    pub fn from_events(events: Vec<HapticEvent>, stats: HapticStats) -> Self {
+        Self { events, stats }
+    }
     fn range(&self, from: f64, to: f64) -> &[HapticEvent] {
         let a = self.events.partition_point(|e| e.time < from);
         let b = self.events.partition_point(|e| e.time < to);

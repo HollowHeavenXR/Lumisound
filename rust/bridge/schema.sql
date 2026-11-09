@@ -1830,3 +1830,49 @@ CREATE TABLE IF NOT EXISTS ios_radio_sessions (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS ios_radio_sessions_idx_user ON ios_radio_sessions (user_id, updated_at);
+
+-- Artist key for Lumisound Radio (same rule as routes/radio.rs artist_key):
+-- lowercase, first credited artist, no "- Topic"/"VEVO"/"official", letters and digits only.
+CREATE OR REPLACE FUNCTION lumi_artist_key(a TEXT) RETURNS TEXT LANGUAGE SQL IMMUTABLE AS $$
+  SELECT regexp_replace(
+           split_part(split_part(split_part(split_part(
+             regexp_replace(regexp_replace(lower(coalesce(a, '')), ' - topic$', ''), '(vevo| official)$', ''),
+             ',', 1), '&', 1), ' feat', 1), ' ft.', 1),
+           '[^[:alnum:]]', '', 'g')
+$$;
+
+-- Haptics Brain (2026-11-09): one global model learned from every listener's
+-- devices, a consensus lesson per analyzed track, and who contributed (so a
+-- listener counts once per track). routes/haptics.rs.
+CREATE TABLE IF NOT EXISTS ios_haptic_model (
+    id INTEGER PRIMARY KEY,
+    model JSONB NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ios_haptic_tracks (
+    content_key VARCHAR(32) PRIMARY KEY,
+    track_key TEXT NULL,
+    lesson JSONB NOT NULL,
+    contributors INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ios_haptic_contrib (
+    content_key VARCHAR(32) NOT NULL,
+    user_id VARCHAR(36) NOT NULL REFERENCES ios_users(id) ON DELETE CASCADE,
+    PRIMARY KEY (content_key, user_id)
+);
+
+-- Account realness (2026-11-09, src/realness.rs): daily verdict per account.
+CREATE TABLE IF NOT EXISTS ios_user_realness (
+    user_id VARCHAR(36) PRIMARY KEY REFERENCES ios_users(id) ON DELETE CASCADE,
+    score INTEGER NOT NULL,
+    verdict VARCHAR(20) NOT NULL,
+    reasons JSONB NOT NULL,
+    flags JSONB NOT NULL,
+    active_days_7 INTEGER NOT NULL DEFAULT 0,
+    active_days_30 INTEGER NOT NULL DEFAULT 0,
+    days_per_week DOUBLE PRECISION NOT NULL DEFAULT 0,
+    frequency VARCHAR(40) NOT NULL,
+    last_seen VARCHAR(20) NULL,
+    checked_at TIMESTAMP NOT NULL DEFAULT NOW()
+);

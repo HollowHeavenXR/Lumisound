@@ -165,8 +165,13 @@ fn cand_from(e: &Value, from: &str, rank: u32) -> Option<Cand> {
 }
 
 async fn ytdlp(st: &AppState, user: &str, target: String, limit: u32) -> Vec<Value> {
-    let mut a: Vec<String> = vec![target, "--dump-json".into(), "--flat-playlist".into(), "--playlist-end".into(), limit.to_string(), "--cache-dir".into(), st.cfg.ytdlp_cache_dir.clone()];
-    a.extend(st.ytdlp.cookie_args(Some(user), false).await);
+    let mut a: Vec<String> = vec![target.clone(), "--dump-json".into(), "--flat-playlist".into(), "--playlist-end".into(), limit.to_string(), "--cache-dir".into(), st.cfg.ytdlp_cache_dir.clone()];
+    // A Mix needs no account, and with cookies + the tab extractor's
+    // skip=webpage yt-dlp refuses it ("Playlists that require
+    // authentication..."): mixes go without cookies.
+    if !target.contains("&list=RD") {
+        a.extend(st.ytdlp.cookie_args(Some(user), false).await);
+    }
     st.ytdlp.run_json(&a, Duration::from_secs(40)).await.unwrap_or_else(|e| {
         tracing::warn!("radio: yt-dlp failed: {e:?}");
         vec![]
@@ -208,19 +213,19 @@ async fn colisten(st: &AppState, seed_title: &str, seed_artist: &str, seed_vid: 
     let rows: Vec<(String, String, Option<String>, i64, i64)> = sqlx::query_as(
         "WITH seeds AS ( \
             SELECT user_id, played_at FROM ios_play_history \
-            WHERE (lower(title) = lower($1) AND lower(coalesce(artist,'')) = lower($2)) OR ($3::text IS NOT NULL AND local_song_id = $3) \
+            WHERE (lower(title) = lower($1) AND lumi_artist_key(artist) = $2) OR ($3::text IS NOT NULL AND local_song_id = $3) \
          ), nexts AS ( \
             SELECT h.user_id, h.title, coalesce(h.artist,'') AS artist, h.local_song_id, h.track_url \
             FROM seeds s JOIN ios_play_history h ON h.user_id = s.user_id \
              AND h.played_at > s.played_at AND h.played_at < s.played_at + INTERVAL '30 minutes' \
-            WHERE NOT (lower(h.title) = lower($1) AND lower(coalesce(h.artist,'')) = lower($2)) \
+            WHERE NOT (lower(h.title) = lower($1) AND lumi_artist_key(h.artist) = $2) \
          ) \
          SELECT title, artist, max(CASE WHEN local_song_id ~ '^[A-Za-z0-9_-]{11}$' THEN local_song_id END), \
                 count(DISTINCT user_id)::bigint, count(*)::bigint \
          FROM nexts GROUP BY lower(title), lower(artist), title, artist ORDER BY 4 DESC, 5 DESC LIMIT 40",
     )
     .bind(seed_title)
-    .bind(seed_artist)
+    .bind(artist_key(seed_artist))
     .bind(seed_vid)
     .fetch_all(&st.db)
     .await
@@ -255,17 +260,20 @@ async fn library(st: &AppState, user: &str, artist: &str) -> Vec<Cand> {
     }
     let rows: Vec<(String, String, String, f64)> = sqlx::query_as(
         "SELECT song_id, coalesce(title,''), coalesce(artist,''), 2.0::float8 FROM ios_user_favorites \
-           WHERE user_id = $1 AND lower(artist) = lower($2) \
+           WHERE user_id = $1 AND lumi_artist_key(artist) = $2 \
          UNION ALL \
          SELECT DISTINCT ON (local_song_id) local_song_id, title, coalesce(artist,''), 1.0::float8 FROM ios_play_history \
-           WHERE user_id = $1 AND lower(artist) = lower($2) AND local_song_id IS NOT NULL AND listen_seconds >= 30 \
+           WHERE user_id = $1 AND lumi_artist_key(artist) = $2 AND local_song_id IS NOT NULL AND listen_seconds >= 30 \
          LIMIT 60",
     )
     .bind(user)
-    .bind(artist)
+    .bind(artist_key(artist))
     .fetch_all(&st.db)
     .await
-    .unwrap_or_default();
+    .unwrap_or_else(|e| {
+        tracing::warn!("radio library: {e}");
+        vec![]
+    });
     let mut seen = HashSet::new();
     rows.into_iter()
         .filter(|r| seen.insert(r.0.clone()) && !r.1.is_empty())
@@ -426,6 +434,10 @@ fn add_pool(s: &mut Session, cands: Vec<Cand>) {
     let mut have: HashSet<String> = s.pool.iter().map(|c| song_key(&c.title, &c.artist)).collect();
     have.extend(s.served.iter().cloned());
     for c in cands {
+        // Not songs: shorter than a minute or longer than 15 minutes (mixes, albums, streams).
+        if c.duration > 0 && (c.duration < 60 || c.duration > 900) {
+            continue;
+        }
         if c.id.is_empty() && c.local.is_none() {
             // Co-listen rows from another listener's local files: resolve by search when picked.
             if c.from != "colisten" {

@@ -22,7 +22,8 @@
 //!   notes still ringing under the hit out of phase with the 7 overlapping
 //!   frames before it, which cancelled them for ~85 ms — the "stutter dips"
 //!   heard at every pitch (sustained bass fell 4-8 dB on each drum hit;
-//!   ~320 dips a minute on cloud tracks).
+//!   ~320 dips a minute on cloud tracks). Trade-off measured: drum attacks
+//!   at 1.25x speed are a little softer (pre-echo -13.8 dB vs -25 before).
 //! * At ratio 1 every frame is a phase reset: the overlap-add reconstructs
 //!   the input exactly, so a stretch that returns to 1 (beat-matched
 //!   crossfades) never jumps.
@@ -88,17 +89,6 @@ pub struct Wsola {
     new_synth: Vec<f32>,
     /// Bins that jumped this frame (transient frames only).
     jumped: Vec<bool>,
-}
-
-/// First bin of the region after peak `a`: the quietest bin between `a` and `b`.
-fn trough(mags: &[f32], a: usize, b: usize) -> usize {
-    let mut best = a + 1;
-    for k in a + 1..b {
-        if mags[k] < mags[best] {
-            best = k;
-        }
-    }
-    best
 }
 
 fn wrap(x: f32) -> f32 {
@@ -304,17 +294,10 @@ impl Wsola {
                     new_synth[k] = self.synth_phase[k] + omega * hs;
                 }
             } else {
-                // Regions split at the quietest bin between neighbouring
-                // peaks (Laroche & Dolson): a strong partial's skirt stays
-                // with that partial. Nearest-peak split handed the skirt of a
-                // loud bass note to a tiny noise peak next to it, so a drum
-                // hit's reset of that noise peak dragged the bass with it.
                 let mut pi = 0;
-                let mut bound = if peaks.len() > 1 { trough(&mags, peaks[0], peaks[1]) } else { BINS };
                 for k in 0..BINS {
-                    while pi + 1 < peaks.len() && k >= bound {
+                    while pi + 1 < peaks.len() && (peaks[pi + 1] as isize - k as isize).abs() <= (peaks[pi] as isize - k as isize).abs() {
                         pi += 1;
-                        bound = if pi + 1 < peaks.len() { trough(&mags, peaks[pi], peaks[pi + 1]) } else { BINS };
                     }
                     let p = peaks[pi];
                     if k != p {

@@ -18,6 +18,7 @@ pub mod music;
 pub mod social;
 pub mod media;
 pub mod radio;
+pub mod haptics;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -34,6 +35,7 @@ pub fn router(state: AppState) -> Router {
         .merge(integrations::routes())
         .merge(media::routes())
         .merge(radio::routes())
+        .merge(haptics::routes())
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024))
