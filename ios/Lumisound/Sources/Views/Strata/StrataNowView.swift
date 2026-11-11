@@ -53,7 +53,7 @@ struct StrataNowView: View {
             Spacer()
             Text("NOW").font(.system(size: 11, weight: .heavy, design: .monospaced)).tracking(3).foregroundStyle(StrataPalette.accent)
             Spacer()
-            AirPlayRoutePicker()
+            AirPlayRoutePicker(tint: UIColor(StrataPalette.inkDim), activeTint: UIColor(StrataPalette.accent))
                 .frame(width: 40, height: 40)
                 .background(StrataPalette.raised, in: RoundedRectangle(cornerRadius: 8))
         }
