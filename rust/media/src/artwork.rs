@@ -113,9 +113,94 @@ pub fn process_full(bytes: &[u8], max_short: u32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Aspect (long / short) above which `presence_square` shows the whole frame
+/// instead of centre-cropping it; below it the art is treated as square.
+pub const PRESENCE_WIDE_ASPECT: f64 = 1.2;
+
+/// True when `bytes` is an image that isn't square yet (reads only the
+/// header), i.e. Rich Presence art stored before it was shaped on upload.
+pub fn presence_needs_shaping(bytes: &[u8]) -> bool {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok())
+        .is_some_and(|(w, h)| w != h)
+}
+
+/// Art for Discord Rich Presence, which always draws a square. Letterbox bars
+/// are trimmed first, so a YouTube `hqdefault` (4:3 with black bars) or an
+/// auto-generated "Topic" thumbnail (square cover in a 16:9 frame) comes back
+/// to its real shape. Square-ish art is centre-cropped as usual; wide art such
+/// as a 16:9 music video frame is kept whole, fitted across the square over a
+/// blurred, darkened fill of itself, so nothing of the frame is cut off.
+/// Output is a `side`×`side` JPEG.
+pub fn presence_square(bytes: &[u8], side: u32) -> Option<Vec<u8>> {
+    let mut img = image::load_from_memory(bytes).ok()?;
+    if let Some((x, y, w, h)) = letterbox(&img) {
+        img = img.crop_imm(x, y, w, h);
+    }
+    let (w, h) = img.dimensions();
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let aspect = w.max(h) as f64 / w.min(h) as f64;
+    let out_img = if aspect <= PRESENCE_WIDE_ASPECT {
+        let s = w.min(h);
+        img.crop_imm((w - s) / 2, (h - s) / 2, s, s).resize_exact(side, side, FilterType::Lanczos3).to_rgb8()
+    } else {
+        // Fill: the frame scaled to cover, blurred cheaply by shrinking to a
+        // few pixels and scaling back up, then darkened so the sharp frame
+        // reads as the subject.
+        let tiny = img.resize_to_fill(12, 12, FilterType::Triangle);
+        let mut canvas = tiny.resize_exact(side, side, FilterType::CatmullRom).to_rgb8();
+        for p in canvas.pixels_mut() {
+            for c in p.0.iter_mut() {
+                *c = (*c as u32 * 55 / 100) as u8;
+            }
+        }
+        let scale = side as f64 / w.max(h) as f64;
+        let (fw, fh) = (((w as f64 * scale).round() as u32).clamp(1, side), ((h as f64 * scale).round() as u32).clamp(1, side));
+        let fg = img.resize_exact(fw, fh, FilterType::Lanczos3).to_rgb8();
+        image::imageops::overlay(&mut canvas, &fg, ((side - fw) / 2) as i64, ((side - fh) / 2) as i64);
+        canvas
+    };
+    let mut out = Vec::new();
+    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 88);
+    out_img.write_with_encoder(enc).ok()?;
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presence_square_keeps_wide_frames_whole() {
+        let enc = |w: u32, h: u32, bar: u32| {
+            let mut im = image::RgbImage::new(w, h);
+            for (x, y, p) in im.enumerate_pixels_mut() {
+                *p = if y < bar || y >= h - bar { image::Rgb([0, 0, 0]) } else { image::Rgb([200, (x % 200) as u8 + 40, 90]) };
+            }
+            let mut png = Vec::new();
+            DynamicImage::ImageRgb8(im).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+            png
+        };
+        // A 16:9 frame: square output, the frame spans the full width and the
+        // fill above it is darker than the frame itself.
+        let r = image::load_from_memory(&presence_square(&enc(1280, 720, 0), 512).unwrap()).unwrap().to_rgb8();
+        assert_eq!(r.dimensions(), (512, 512));
+        let (top, mid) = (r.get_pixel(256, 20)[0], r.get_pixel(256, 256)[0]);
+        assert!(top < mid, "fill {top} should be darker than frame {mid}");
+        // A 4:3 hqdefault with black letterbox bars around a 16:9 picture is
+        // treated as wide, not cropped to a square of its middle.
+        let r = image::load_from_memory(&presence_square(&enc(480, 360, 45), 512).unwrap()).unwrap().to_rgb8();
+        assert!(r.get_pixel(256, 20)[0] < r.get_pixel(256, 256)[0]);
+        assert!(presence_needs_shaping(&enc(1280, 720, 0)));
+        assert!(!presence_needs_shaping(&presence_square(&enc(1280, 720, 0), 64).unwrap()));
+        // Square art fills the square.
+        let r = image::load_from_memory(&presence_square(&enc(600, 600, 0), 512).unwrap()).unwrap().to_rgb8();
+        assert!(r.get_pixel(256, 10)[0] > 150);
+    }
 
     #[test]
     fn full_keeps_aspect_and_caps_it() {

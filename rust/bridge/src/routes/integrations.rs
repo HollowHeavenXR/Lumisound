@@ -1040,7 +1040,9 @@ async fn transfer(State(st): State<AppState>, u: User, J(b): J<TransferBody>) ->
         "INSERT INTO ios_playback_state (user_id, song_id, title, artist, track_url, source, position_seconds, duration_seconds, is_playing, bpm, updated_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP) ON CONFLICT (user_id) DO UPDATE SET song_id = EXCLUDED.song_id, title = EXCLUDED.title, \
            artist = EXCLUDED.artist, track_url = EXCLUDED.track_url, source = EXCLUDED.source, position_seconds = EXCLUDED.position_seconds, \
-           duration_seconds = EXCLUDED.duration_seconds, is_playing = EXCLUDED.is_playing, bpm = EXCLUDED.bpm, updated_at = EXCLUDED.updated_at",
+           duration_seconds = EXCLUDED.duration_seconds, is_playing = EXCLUDED.is_playing, bpm = EXCLUDED.bpm, \
+           artwork_url = CASE WHEN ios_playback_state.song_id IS NOT DISTINCT FROM EXCLUDED.song_id THEN ios_playback_state.artwork_url END, \
+           engine = NULL, updated_at = EXCLUDED.updated_at",
     )
     .bind(&u.id)
     .bind(&b.song_id)

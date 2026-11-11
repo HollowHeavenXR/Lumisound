@@ -22,6 +22,15 @@ all live on the Lumisound server (`/user/discord-rpc-config`, set from
 **Account → Discord Rich Presence**) and the daemon fetches them
 automatically. Locally you just **sign in and run one script** — see below.
 
+## What the card shows
+
+- **Title** and **by Artist** on the first two lines.
+- **Third line**: how it is playing — engine, format, sample rate and BPM (for example
+  `Rust engine · LMS OPUS · 48 kHz · 124 BPM`). It used to repeat the title.
+- **Artwork**: Discord always draws a square. Music-video thumbnails (16:9) are shown whole on a blurred fill
+  instead of being cropped to their middle; square album art fills the square.
+- **Progress bar** with elapsed and total time, re-synced immediately after a seek or track change.
+
 ## 1. Register your Discord app (once)
 
 In the app, go to **Account → Discord Rich Presence** and enter a **Discord

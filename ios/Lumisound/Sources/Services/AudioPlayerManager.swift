@@ -40,28 +40,15 @@ final class AudioPlayerManager: ObservableObject {
                 nowPlayingArtworkSongID = nil
                 updateNowPlaying()
                 let isFavoriteNow = currentSong.flatMap { LibraryManager.shared?.isFavorite(songID: $0.id) } ?? false
-                // Push the Live Activity's title/artist/anchorDate right away
-                // rather than waiting on `updateNowPlayingArtwork`'s async
-                // artwork load below — that load is a real disk/decode op
-                // that can take long enough to be visible as "the Live
-                // Activity is a few seconds behind the actual track". The
-                // Live Activity's `ContentState` doesn't carry artwork at all
-                // (read straight off the shared App Group file instead — see
-                // LumisoundActivityAttributes), so there's nothing it needs
-                // to wait on here; the artwork file gets written moments
-                // later by the same `WidgetDataService.update` call inside
-                // `updateNowPlayingArtwork`.
-                if #available(iOS 16.1, *) {
-                    LiveActivityManager.update(song: currentSong, isPlaying: isPlaying, position: position, duration: duration, isFavorite: isFavoriteNow)
-                }
+                // Widgets and the Live Activity get the new title/artist now;
+                // artwork follows from `updateNowPlayingArtwork` below once it
+                // has loaded (a real disk/decode op), and the per-tick resync
+                // corrects position/duration as soon as the engine reports them.
+                WidgetDataService.shared.trackChanged(song: currentSong, isPlaying: isPlaying, isFavorite: isFavoriteNow)
                 Task { await updateNowPlayingArtwork(for: currentSong) }
                 applyTrackAudioSettings(previousID: oldValue?.id)
                 pushPlaybackStateToBridge()
                 scheduleHistoryLog()
-                // Keep the widget's heart badge in sync with the new track
-                // immediately, rather than waiting for the next play/pause
-                // toggle or backgrounding event to catch up.
-                WidgetDataService.shared.updateFavoriteState(isFavorite: isFavoriteNow)
                 // If a SharePlay "listen together" session is active, let the
                 // other participants know the track changed — no-ops when no
                 // session is active or when this change came FROM applying a
@@ -73,6 +60,7 @@ final class AudioPlayerManager: ObservableObject {
                 // republishes on playback changes now, so tell it this counts.
                 invalidateNowPlaying()
                 updateNowPlaying()
+                if let currentSong { WidgetDataService.shared.retitle(song: currentSong) }
             }
         }
     }
@@ -662,7 +650,11 @@ final class AudioPlayerManager: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.isProgressPublishingPaused = false }
+            MainActor.assumeIsolated {
+                self?.isProgressPublishingPaused = false
+                // A Live Activity can only be started from the foreground.
+                WidgetDataService.shared.republish()
+            }
         }
 
         backgroundObserver = NotificationCenter.default.addObserver(

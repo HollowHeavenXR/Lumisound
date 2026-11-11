@@ -46,6 +46,7 @@ pub fn routes() -> Router<AppState> {
         .route("/user/music/{*filepath}", axum::routing::delete(delete_music))
         .route("/user/rp-artwork-upload", post(rp_artwork_upload))
         .route("/api/rp-artwork/{file}", get(rp_artwork_get))
+        .route("/api/rp-art/yt/{file}", get(rp_art_youtube))
         .route("/user/gallery/images", get(list_gallery).post(upload_gallery))
         .route("/user/gallery/images/{id}", get(get_gallery).delete(delete_gallery))
         .route("/user/library/acoustic-duplicates", get(acoustic_duplicates))
@@ -778,9 +779,59 @@ async fn artwork_upload(State(st): State<AppState>, u: User, Q(q): Q<IdQ>, req: 
         return Err(AppError::bad_request("Invalid or oversized thumbnail (max 2 MB)"));
     }
     let dest = locked_artwork_path(&dir, &id);
+    // Discord draws presence art square: store it pre-shaped (16:9 frames
+    // kept whole over a blurred fill) so every daemon version shows it right.
+    let shaped = tokio::task::spawn_blocking(move || lumisound_media::artwork::presence_square(&body, RP_ART_SIDE).unwrap_or_else(|| body.to_vec()))
+        .await
+        .map_err(|e| AppError::new(500, e.to_string()))?;
     tokio::fs::create_dir_all(dest.parent().unwrap()).await?;
-    tokio::fs::write(&dest, &body).await?;
+    tokio::fs::write(&dest, &shaped).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Side of the square Rich Presence art the bridge serves.
+const RP_ART_SIDE: u32 = 512;
+
+/// `/api/rp-art/yt/{video_id}.jpg` — a YouTube video's thumbnail shaped for
+/// Discord's square art slot (see `presence_square`). Public like
+/// `/api/rp-artwork`, since Discord's media proxy fetches it without auth.
+/// Only YouTube's own thumbnail host is ever fetched, and results are cached
+/// on disk, so a track costs one upstream fetch.
+async fn rp_art_youtube(State(st): State<AppState>, AxPath(file): AxPath<String>) -> ApiResult<Response> {
+    let id = file.strip_suffix(".jpg").filter(|id| id.len() == 11 && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'));
+    let id = id.ok_or_else(|| AppError::not_found("Not Found"))?;
+    let dest = Path::new(&st.cfg.ytdlp_cache_dir).join("rp-art-yt").join(&id[..2]).join(format!("{id}.jpg"));
+    let reply = |data: Vec<u8>| ([(header::CONTENT_TYPE, "image/jpeg"), (header::CACHE_CONTROL, "public, max-age=86400")], data).into_response();
+    if let Ok(data) = tokio::fs::read(&dest).await {
+        return Ok(reply(data));
+    }
+    let mut src = None;
+    // maxres is a true 16:9 frame when the video has one; hqdefault always
+    // exists but is 4:3 with bars, which presence_square trims away.
+    for name in ["maxresdefault", "hqdefault"] {
+        let Ok(r) = st.http.get(format!("https://i.ytimg.com/vi/{id}/{name}.jpg")).send().await else { continue };
+        if r.status().is_success() {
+            if let Ok(b) = r.bytes().await {
+                if b.len() > 1500 {
+                    src = Some(b);
+                    break;
+                }
+            }
+        }
+    }
+    let src = src.ok_or_else(|| AppError::not_found("No thumbnail"))?;
+    let shaped = tokio::task::spawn_blocking(move || lumisound_media::artwork::presence_square(&src, RP_ART_SIDE))
+        .await
+        .map_err(|e| AppError::new(500, e.to_string()))?
+        .ok_or_else(|| AppError::not_found("Unreadable thumbnail"))?;
+    if let Some(dir) = dest.parent() {
+        let _ = tokio::fs::create_dir_all(dir).await;
+        let tmp = dest.with_extension("tmp");
+        if tokio::fs::write(&tmp, &shaped).await.is_ok() {
+            let _ = tokio::fs::rename(&tmp, &dest).await;
+        }
+    }
+    Ok(reply(shaped))
 }
 
 async fn music_artwork(State(st): State<AppState>, u: User, Q(q): Q<IdQ>) -> ApiResult<Response> {
@@ -998,7 +1049,15 @@ async fn rp_artwork_upload(State(st): State<AppState>, u: User, Q(q): Q<IdQ>, re
 async fn rp_artwork_get(State(st): State<AppState>, AxPath(file): AxPath<String>) -> ApiResult<Response> {
     let key = file.strip_suffix(".jpg").ok_or_else(|| AppError::not_found("Not Found"))?;
     let p = rp_path(&st, key).filter(|p| p.exists()).ok_or_else(|| AppError::not_found("Not found"))?;
-    let data = tokio::fs::read(&p).await?;
+    let mut data = tokio::fs::read(&p).await?;
+    // Uploaded before art was shaped on upload: shape once, keep the result.
+    if lumisound_media::artwork::presence_needs_shaping(&data) {
+        let raw = std::mem::take(&mut data);
+        data = tokio::task::spawn_blocking(move || lumisound_media::artwork::presence_square(&raw, RP_ART_SIDE).unwrap_or(raw))
+            .await
+            .map_err(|e| AppError::new(500, e.to_string()))?;
+        let _ = tokio::fs::write(&p, &data).await;
+    }
     Ok(([(header::CONTENT_TYPE, "image/jpeg"), (header::CACHE_CONTROL, "public, max-age=3600")], data).into_response())
 }
 

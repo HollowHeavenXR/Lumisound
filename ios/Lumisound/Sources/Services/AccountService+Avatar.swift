@@ -224,7 +224,7 @@ extension AccountService {
     /// for this account. Best-effort and silent on failure — this runs on
     /// every play/pause/track-change and periodically during playback, so it
     /// shouldn't spam logs or interrupt playback if the network is down.
-    func pushPlaybackState(song: Song?, position: TimeInterval, duration: TimeInterval, isPlaying: Bool, bpm: Double? = nil) {
+    func pushPlaybackState(song: Song?, position: TimeInterval, duration: TimeInterval, isPlaying: Bool, bpm: Double? = nil, engine: String? = nil) {
         guard isLoggedIn else { return }
         struct Body: Encodable {
             let song_id: String?
@@ -237,6 +237,9 @@ extension AccountService {
             let is_playing: Bool
             let bpm: Double?
             let artwork_url: String?
+            /// "Rust engine · LMS OPUS · 48 kHz" — the Rich Presence card's
+            /// third line (it used to repeat the title).
+            let engine: String?
         }
         // NOT song?.url — for anything downloaded/imported that's a local
         // `file:///...` path, not a real web URL. This is specifically what
@@ -270,7 +273,10 @@ extension AccountService {
         // sides derive the same key — sha256(userID + ":" + song.id) — so
         // the URL reported here is guaranteed to match whatever the upload
         // (below) ends up actually storing, whichever of this call or a
-        // previous one gets there first.
+        // previous one gets there first. The daemon swaps a YouTube URL for
+        // the bridge's /api/rp-art/yt copy, which keeps a 16:9 frame whole
+        // inside Discord's square art slot; uploaded art is shaped the same
+        // way by the bridge.
         let youtubeArt = song?.youtubeThumbnailURL?.absoluteString
         let localArtKey: String? = (youtubeArt == nil && song != nil && currentUser?.id != nil)
             ? Self.sha256Hex("\(currentUser!.id):\(song!.id)") : nil
@@ -292,7 +298,8 @@ extension AccountService {
             // which case the Discord RPC daemon falls back to the
             // configured static image (build_activity in
             // lumisound_discord_rpc.py).
-            artwork_url: youtubeArt ?? localArtURL
+            artwork_url: youtubeArt ?? localArtURL,
+            engine: song == nil ? nil : engine
         )
         playbackStatePushTask?.cancel()
         playbackStatePushTask = Task { [weak self] in
@@ -320,7 +327,7 @@ extension AccountService {
         Self.rpArtworkUploadedKeys.insert(key)
 
         guard let image = await ArtworkService.shared.loadArtwork(for: song),
-              let data = ImageDownsampler.downscaled(image, maxPixelSize: 300).jpegData(compressionQuality: 0.7)
+              let data = ImageDownsampler.downscaled(image, maxPixelSize: 640).jpegData(compressionQuality: 0.8)
         else { return }
 
         let base = bridgeURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))

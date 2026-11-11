@@ -32,6 +32,11 @@ extension AudioPlayerManager {
         // reading of where the audio actually is.
         checkCrossfadeTrigger()
 
+        // Keeps widgets and the Live Activity on the player's real timeline
+        // (engine details are rechecked every 5 s, with the bridge push).
+        WidgetDataService.shared.resync(isPlaying: isPlaying, position: position, duration: duration,
+                                        detail: bridgePushTickCounter == 0 ? engineSummary : nil)
+
         bridgePushTickCounter += 1
         if bridgePushTickCounter >= 10 {
             bridgePushTickCounter = 0
@@ -327,7 +332,8 @@ extension AudioPlayerManager {
             position: position,
             duration: duration,
             isPlaying: isPlaying,
-            bpm: currentSong.flatMap { $0.bpm ?? bpmCache[$0.id] }
+            bpm: currentSong.flatMap { $0.bpm ?? bpmCache[$0.id] },
+            engine: engineSummary
         )
         pushPodcastProgressIfNeeded()
 
@@ -436,5 +442,30 @@ extension AudioPlayerManager {
         let computed = Double(fileStartFrame) / file.processingFormat.sampleRate
             + elapsedFrames / playerTime.sampleRate
         position = min(duration, max(0, computed))
+    }
+
+    // MARK: - Engine summary
+
+    /// How the current track is being played, e.g. "Rust engine · LMS OPUS ·
+    /// 48 kHz" — shown on the widgets, the Live Activity and the Discord Rich
+    /// Presence card.
+    var engineSummary: String? {
+        guard let song = currentSong else { return nil }
+        var parts: [String] = []
+        parts.append(isUsingRustEngine ? "Rust engine" : isUsingOpusPlayer ? "Compatibility player" : "System engine")
+        if let tag = song.formatTag {
+            parts.append(tag)
+        } else if song.sourceTrackID?.hasPrefix("youtube:") == true {
+            parts.append("Stream")
+        }
+        if song.sampleRate > 0 {
+            let khz = Double(song.sampleRate) / 1000
+            parts.append(khz == khz.rounded() ? "\(Int(khz)) kHz" : String(format: "%.1f kHz", khz))
+        }
+        let speed = Double(audioSettings.speed)
+        if speed.isFinite, abs(speed - 1) > 0.01 {
+            parts.append(NowPlayingFormat.rate(speed))
+        }
+        return parts.joined(separator: " · ")
     }
 }

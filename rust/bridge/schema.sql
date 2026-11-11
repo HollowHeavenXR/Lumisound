@@ -342,6 +342,10 @@ ALTER TABLE ios_playback_state ADD COLUMN IF NOT EXISTS bpm FLOAT NULL;
 -- of a single static image for every track.
 ALTER TABLE ios_playback_state ADD COLUMN IF NOT EXISTS artwork_url TEXT NULL;
 
+-- Feature: which engine/format is playing the track, shown on the Discord
+-- Rich Presence card in place of a repeated title.
+ALTER TABLE ios_playback_state ADD COLUMN IF NOT EXISTS engine TEXT NULL;
+
 -- Feature: server-side loudness normalization (ReplayGain-style)
 ALTER TABLE ios_user_music_metadata ADD COLUMN IF NOT EXISTS loudness_lufs FLOAT NULL;
 

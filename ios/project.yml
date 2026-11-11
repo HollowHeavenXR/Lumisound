@@ -59,6 +59,7 @@ targets:
       # Shared with LumisoundWidget so both targets agree on the Live
       # Activity's data shape without needing a framework target.
       - path: Shared/LiveActivity/LumisoundActivityAttributes.swift
+      - path: Shared/NowPlaying/NowPlayingSnapshot.swift
       # Shared with LumisoundWidget so the widget and Live Activity transport
       # buttons run in this app's process — see the file's header.
       - path: Shared/LiveActivity/LumisoundPlaybackIntents.swift
@@ -130,6 +131,7 @@ targets:
     sources:
       - path: LumisoundWidget/Sources
       - path: Shared/LiveActivity/LumisoundActivityAttributes.swift
+      - path: Shared/NowPlaying/NowPlayingSnapshot.swift
       - path: Shared/LiveActivity/LumisoundPlaybackIntents.swift
       - path: Shared/AppGroup.swift
     settings:

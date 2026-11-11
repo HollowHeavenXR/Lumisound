@@ -131,10 +131,11 @@ struct ToggleFavoriteIntent: LiveActivityIntent {
     static let isDiscoverable: Bool = false
 
     func perform() async throws -> some IntentResult {
-        let ud = UserDefaults(suiteName: AppGroup.id)
-        let newValue = !(ud?.bool(forKey: "widget_is_favorite") ?? false)
-        ud?.set(newValue, forKey: "widget_is_favorite")
-        WidgetCenter.shared.reloadAllTimelines()
+        if var snapshot = NowPlayingSnapshot.load() {
+            snapshot.isFavorite.toggle()
+            snapshot.save()
+            WidgetCenter.shared.reloadAllTimelines()
+        }
 
         await LumisoundPlaybackCommandRouter.perform(.toggleFavorite)
         return .result()

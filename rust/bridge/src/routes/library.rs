@@ -905,7 +905,7 @@ async fn get_playback(State(st): State<AppState>, u: User) -> ApiResult<Json<Val
         "SELECT json_build_object('song_id', song_id, 'title', title, 'artist', artist, 'track_url', track_url, 'source', source, \
            'position_seconds', position_seconds, 'duration_seconds', duration_seconds, \
            'updated_at', CASE WHEN updated_at IS NULL THEN NULL ELSE lumi_iso(updated_at) || '+00:00' END, \
-           'is_playing', COALESCE(is_playing, false), 'bpm', bpm, 'artwork_url', artwork_url) FROM ios_playback_state WHERE user_id = $1",
+           'is_playing', COALESCE(is_playing, false), 'bpm', bpm, 'artwork_url', artwork_url, 'engine', engine) FROM ios_playback_state WHERE user_id = $1",
     )
     .bind(&u.id)
     .fetch_optional(&st.db)
@@ -928,6 +928,9 @@ struct PlaybackBody {
     is_playing: bool,
     bpm: Option<f64>,
     artwork_url: Option<String>,
+    /// What is playing it, e.g. "Rust engine · LMS OPUS · 48 kHz"; shown by
+    /// the Rich Presence daemon.
+    engine: Option<String>,
 }
 
 fn yes() -> bool {
@@ -938,11 +941,11 @@ fn yes() -> bool {
 
 async fn put_playback(State(st): State<AppState>, u: User, J(b): J<PlaybackBody>) -> ApiResult<StatusCode> {
     sqlx::query(
-        "INSERT INTO ios_playback_state (user_id, song_id, title, artist, track_url, source, position_seconds, duration_seconds, is_playing, bpm, artwork_url, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP) ON CONFLICT (user_id) DO UPDATE SET \
+        "INSERT INTO ios_playback_state (user_id, song_id, title, artist, track_url, source, position_seconds, duration_seconds, is_playing, bpm, artwork_url, engine, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP) ON CONFLICT (user_id) DO UPDATE SET \
            song_id = EXCLUDED.song_id, title = EXCLUDED.title, artist = EXCLUDED.artist, track_url = EXCLUDED.track_url, source = EXCLUDED.source, \
            position_seconds = EXCLUDED.position_seconds, duration_seconds = EXCLUDED.duration_seconds, is_playing = EXCLUDED.is_playing, \
-           bpm = EXCLUDED.bpm, artwork_url = EXCLUDED.artwork_url, updated_at = EXCLUDED.updated_at",
+           bpm = EXCLUDED.bpm, artwork_url = EXCLUDED.artwork_url, engine = EXCLUDED.engine, updated_at = EXCLUDED.updated_at",
     )
     .bind(&u.id)
     .bind(&b.song_id)
@@ -955,6 +958,7 @@ async fn put_playback(State(st): State<AppState>, u: User, J(b): J<PlaybackBody>
     .bind(b.is_playing)
     .bind(b.bpm)
     .bind(&b.artwork_url)
+    .bind(b.engine.as_deref().map(|e| e.chars().take(120).collect::<String>()))
     .execute(&st.db)
     .await?;
     Ok(StatusCode::NO_CONTENT)

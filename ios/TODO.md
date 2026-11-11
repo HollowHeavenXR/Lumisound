@@ -36,3 +36,18 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 ## Open
 - Strata: verify on device; rare advanced settings (API keys, app lock, notifications) still open the classic Settings.
 - tvOS has no Strata.
+
+## Done (2026-11-11, widgets + Live Activity revamp)
+- `Shared/NowPlaying/NowPlayingSnapshot.swift`: one atomic now-playing record (title, art file, timing, speed,
+  tint, engine line) read by the widgets and carried as the Live Activity's ContentState.
+- `Services/WidgetDataService.swift`: per-track artwork files (no more old art beside a new title), trailing
+  reload throttle (bursts used to drop the last reload), per-tick resync re-anchors on drift > 1 s, duration,
+  speed or play-state changes; 1 s grace after a track change while the engine loads.
+- `Services/LiveActivityManager.swift`: publishes the snapshot with a stale date at track end.
+- `LumisoundWidget/Sources/`: new `NowPlayingViews.swift`; widgets and Live Activity redesigned — live system
+  progress bars (the widget bar used to be frozen), 16:9 art shown wide, artwork-tinted backdrop, engine/BPM
+  line, speed-aware time labels, Watch Smart Stack / CarPlay (`.small`) layout.
+- `engineSummary` ("Rust engine · LMS OPUS · 48 kHz") sent with playback state for Discord Rich Presence.
+
+## Open (widgets)
+- Verify on device: widget sizes, Dynamic Island layout, Smart Stack, tinted/clear Home Screen modes.
