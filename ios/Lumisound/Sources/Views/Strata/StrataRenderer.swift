@@ -53,7 +53,12 @@ struct StrataScreenHost: View {
         case .home, .queue: followsPlayback = true
         default: followsPlayback = false
         }
-        return TaskKey(route: route, data: store.dataRevision, now: followsPlayback ? store.nowRevision : 0)
+        let followsSettings: Bool
+        switch route {
+        case .settings, .account: followsSettings = true
+        default: followsSettings = false
+        }
+        return TaskKey(route: route, data: store.dataRevision, now: (followsPlayback ? store.nowRevision : 0) &+ (followsSettings ? store.settingsRevision &* 7919 : 0))
     }
 
     private struct TaskKey: Equatable {
@@ -142,7 +147,7 @@ struct StrataScreenView: View {
                 case .ledger:
                     let rows = model.items(of: section)
                     ForEach(Array(rows.enumerated()), id: \.element.id) { i, item in
-                        StrataLedgerRow(item: item)
+                        StrataLedgerRow(item: item, route: screen.route)
                             .padding(.trailing, section.index.count > 3 ? 18 : 0)
                             .onAppear { if i == rows.count - 1 { model.loadMore(section, route: screen.route, store: store) } }
                     }
@@ -295,6 +300,7 @@ struct StrataSectionBody: View {
         case .chips: StrataChipsSection(items: section.items)
         case .stats: StrataStatsSection(items: section.items)
         case .note: StrataNoteSection(items: section.items)
+        case .controls: StrataControlsSection(items: section.items, caption: section.caption)
         case .ledger, .grid: EmptyView()
         }
     }
@@ -448,6 +454,7 @@ struct StrataRibbonSection: View {
 
 struct StrataLedgerRow: View {
     let item: StrataItem
+    var route: StrataRoute = .home
     @EnvironmentObject private var store: StrataStore
 
     var body: some View {
@@ -462,7 +469,8 @@ struct StrataLedgerRow: View {
                         .frame(width: 26, alignment: .leading)
                 }
                 if item.art != nil || item.glyph != nil {
-                    StrataArt(song: item.art.flatMap { store.song($0) }, size: 44, radius: 4, glyph: item.glyph)
+                    let remote = item.art.flatMap { $0.hasPrefix("remote:") ? URL(string: String($0.dropFirst(7))) : nil }
+                    StrataArt(song: remote == nil ? item.art.flatMap { store.song($0) } : nil, size: 44, radius: 4, glyph: item.glyph, remote: remote)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
@@ -486,7 +494,7 @@ struct StrataLedgerRow: View {
             .overlay(Rectangle().fill(StrataPalette.rule.opacity(0.6)).frame(height: 1), alignment: .bottom)
         }
         .buttonStyle(StrataPress())
-        .contextMenu { StrataItemMenu(item: item) }
+        .contextMenu { StrataItemMenu(item: item, route: route) }
     }
 }
 
@@ -618,18 +626,23 @@ struct StrataNoteSection: View {
 
 struct StrataItemMenu: View {
     let item: StrataItem
+    var route: StrataRoute = .home
     @EnvironmentObject private var store: StrataStore
 
     var body: some View {
-        if let s = item.secondary {
-            Button { store.perform(s) } label: { Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward") }
-        }
-        if case .play(let ids, let index, _) = item.action, ids.indices.contains(Int(index)) {
-            let id = ids[Int(index)]
-            Button { store.perform(.addToQueue(ids: [id])) } label: { Label("Add to queue", systemImage: "text.badge.plus") }
-            Button { store.perform(.toggleFavorite(id: id)) } label: { Label("Favorite", systemImage: "heart") }
-            if let song = store.song(id) {
-                Button { store.perform(.open(route: .artist(name: song.artist))) } label: { Label("Go to artist", systemImage: "person") }
+        // Song rows carry the song id; long-press acts on that song.
+        if let song = store.song(item.id) {
+            Button { store.perform(.playNext(ids: [song.id])) } label: { Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward") }
+            Button { store.perform(.addToQueue(ids: [song.id])) } label: { Label("Add to queue", systemImage: "text.badge.plus") }
+            Button { store.perform(.open(route: .addToPlaylist(ids: [song.id]))) } label: { Label("Add to playlist", systemImage: "music.note.list") }
+            Button { store.perform(.toggleFavorite(id: song.id)) } label: { Label("Favorite", systemImage: "heart") }
+            if case .playlist(let pid) = route {
+                Button(role: .destructive) { store.perform(.removeFromPlaylist(playlist: pid, id: song.id)) } label: { Label("Remove from playlist", systemImage: "minus.circle") }
+            }
+            Button { store.perform(.open(route: .artist(name: song.artist))) } label: { Label("Go to artist", systemImage: "person") }
+        } else if let s = item.secondary {
+            Button { store.perform(s) } label: {
+                if case .streamDownload = s { Label("Download", systemImage: "arrow.down.circle") } else { Label("Play next", systemImage: "text.line.first.and.arrowtriangle.forward") }
             }
         }
     }
@@ -641,10 +654,14 @@ struct StrataArt: View {
     var radius: CGFloat = 6
     var glyph: String? = nil
 
+    var remote: URL? = nil
+
     var body: some View {
         Group {
             if let song {
                 ArtworkThumbnail(song: song, size: size, showsScrim: false)
+            } else if let remote {
+                AsyncImage(url: remote) { img in img.resizable().scaledToFill() } placeholder: { StrataPalette.layer }
             } else {
                 ZStack {
                     LinearGradient(colors: [StrataPalette.raised, StrataPalette.layer], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -702,6 +719,117 @@ struct StrataFlow: Layout {
             s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
             x += size.width + spacing
             line = max(line, size.height)
+        }
+    }
+}
+
+// MARK: - Settings controls
+
+struct StrataControlsSection: View {
+    let items: [StrataItem]
+    let caption: String?
+    @EnvironmentObject private var store: StrataStore
+
+    var body: some View {
+        let t = store.theme
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(items, id: \.id) { item in
+                StrataControlRow(item: item)
+                if item.id != items.last?.id {
+                    Rectangle().fill(StrataPalette.rule.opacity(0.6)).frame(height: 1).padding(.leading, 14)
+                }
+            }
+        }
+        .background(StrataPalette.layer, in: RoundedRectangle(cornerRadius: t.radiusLarge, style: .continuous))
+        if let caption {
+            Text(caption).font(.system(size: t.typeScale[4], weight: .semibold)).foregroundStyle(StrataPalette.accent).padding(.top, 8)
+        }
+    }
+}
+
+struct StrataControlRow: View {
+    let item: StrataItem
+    @EnvironmentObject private var store: StrataStore
+    @State private var sliding: Double?
+
+    var body: some View {
+        let t = store.theme
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                if let g = item.glyph, item.control == nil {
+                    Image(systemName: g).font(.system(size: 15, weight: .bold)).foregroundStyle(item.emphasis ? StrataPalette.danger : StrataPalette.accent).frame(width: 22)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title).font(.system(size: t.typeScale[3], weight: .semibold)).foregroundStyle(item.emphasis && item.control == nil ? StrataPalette.danger : StrataPalette.ink)
+                    if let s = item.subtitle {
+                        Text(s).font(.system(size: t.typeScale[5])).foregroundStyle(StrataPalette.inkFaint).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 8)
+                trailing
+            }
+            if case let .slider(key, value, min, max, step, _) = item.control {
+                Slider(value: Binding(get: { sliding ?? value }, set: { sliding = $0 }), in: min...max, step: step) { editing in
+                    if !editing, let v = sliding {
+                        store.perform(.setSetting(key: key, value: .number(value: v)))
+                        sliding = nil
+                    }
+                }
+                .tint(StrataPalette.accent)
+            }
+            if case let .swatches(key, selected, colors) = item.control {
+                HStack(spacing: 10) {
+                    ForEach(colors, id: \.self) { c in
+                        Button { store.perform(.setSetting(key: key, value: .text(value: c))) } label: {
+                            Circle().fill(Color(strataHex: c)).frame(width: 30, height: 30)
+                                .overlay(Circle().strokeBorder(StrataPalette.ink, lineWidth: c.lowercased() == selected.lowercased() ? 3 : 0))
+                        }
+                        .buttonStyle(StrataPress())
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if item.control == nil { store.perform(item.action) }
+        }
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        let t = store.theme
+        switch item.control {
+        case let .toggle(key, on):
+            Toggle("", isOn: Binding(get: { on }, set: { store.perform(.setSetting(key: key, value: .flag(on: $0))) }))
+                .labelsHidden()
+                .tint(StrataPalette.accent)
+        case let .choice(key, selected, options):
+            Menu {
+                ForEach(options, id: \.value) { o in
+                    Button { store.perform(.setSetting(key: key, value: .text(value: o.value))) } label: {
+                        if o.value == selected { Label(o.label, systemImage: "checkmark") } else { Text(o.label) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(options.first(where: { $0.value == selected })?.label ?? selected).lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .bold))
+                }
+                .font(.system(size: t.typeScale[4], weight: .bold))
+                .foregroundStyle(StrataPalette.accent)
+            }
+        case .slider:
+            if let m = item.meta {
+                Text(sliding.map { String(format: "%.2f", $0) } ?? m).font(.system(size: t.typeScale[4], weight: .bold).monospacedDigit()).foregroundStyle(StrataPalette.inkDim)
+            }
+        default:
+            if let m = item.meta {
+                Text(m).font(.system(size: t.typeScale[4], weight: .medium)).foregroundStyle(StrataPalette.inkFaint)
+            } else if item.control == nil, item.action != .none {
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(StrataPalette.inkFaint)
+            }
         }
     }
 }

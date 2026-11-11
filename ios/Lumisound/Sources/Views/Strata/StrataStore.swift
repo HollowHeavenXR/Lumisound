@@ -29,10 +29,24 @@ final class StrataStore: ObservableObject {
     @Published var path: [StrataRoute] = []
     @Published var layer: StrataLayer = .home
     @Published var showNow = false
-    @Published var showCloud = false
+    /// Bumped when a setting changed (settings/account screens reload).
+    @Published private(set) var settingsRevision = 0
+
+    // Presentation the Rust actions ask for.
+    @Published var sheetRoute: StrataRoute?
+    @Published var classicPage: StrataClassicPage?
+    @Published var prompt: StrataPrompt?
+    @Published var confirmDelete: StrataPlaylistRef?
 
     private weak var library: LibraryManager?
     private weak var player: AudioPlayerManager?
+    private weak var streaming: StreamingService?
+    private weak var account: AccountService?
+    private weak var sleep: SleepTimerService?
+    /// Online results by id (StreamPlay / StreamDownload look them up).
+    private var results: [String: StreamTrack] = [:]
+    private var cloudCount = 0
+    private var searchTask: Task<Void, Never>?
     private var bag = Set<AnyCancellable>()
     private var songsByID: [String: Song] = [:]
     private var syncTask: Task<Void, Never>?
@@ -41,10 +55,18 @@ final class StrataStore: ObservableObject {
 
     // MARK: Library hand-over
 
-    func attach(library: LibraryManager, player: AudioPlayerManager) {
+    func attach(library: LibraryManager, player: AudioPlayerManager, streaming: StreamingService, account: AccountService, sleep: SleepTimerService) {
         guard self.library == nil else { return }
         self.library = library
         self.player = player
+        self.streaming = streaming
+        self.account = account
+        self.sleep = sleep
+        // Library sort orders chosen earlier.
+        for tab in ["songs", "albums", "artists"] {
+            if let s = UserDefaults.standard.string(forKey: "strata_sort_\(tab)") { core.setSort(tab: tab, sort: s) }
+        }
+        account.$isLoggedIn.sink { [weak self] _ in self?.settingsRevision &+= 1 }.store(in: &bag)
         library.$allSongs.combineLatest(library.$playlists, library.$favoriteSongIDs)
             .debounce(for: .milliseconds(400), scheduler: RunLoop.main)
             .sink { [weak self] songs, playlists, favs in self?.sync(songs: songs, playlists: playlists, favorites: favs) }
@@ -101,6 +123,8 @@ final class StrataStore: ObservableObject {
         return "#FF5A3C"
     }
 
+    func refreshTheme() { retheme(for: player?.currentSong) }
+
     private func retheme(for song: Song?) {
         let accent = Self.accentHex()
         guard let song else {
@@ -125,9 +149,10 @@ final class StrataStore: ObservableObject {
         let current = player?.currentSong?.id
         let queue = player?.queue.map(\.id) ?? []
         let index = UInt32(max(0, player?.currentIndex ?? 0))
+        let values = StrataSettings.values(player: player, account: account, sleep: sleep, cloudCount: cloudCount)
         let core = core
         return await Task.detached(priority: .userInitiated) {
-            core.screen(route: route, now: now, hour: hour, current: current, queue: queue, queueIndex: index)
+            core.screen(route: route, now: now, hour: hour, current: current, queue: queue, queueIndex: index, values: values)
         }.value
     }
 
@@ -178,8 +203,133 @@ final class StrataStore: ObservableObject {
             let i = Int(index)
             guard player.queue.indices.contains(i) else { return }
             player.setQueue(player.queue, startIndex: i, autoplay: true, playlistID: player.currentPlaylistID)
+        case let .createPlaylist(name, ids):
+            if let name, !name.isEmpty {
+                let p = library.createPlaylist(name: name, songIDs: ids)
+                ToastCenter.shared.show("Created \"\(p.name)\"", icon: "music.note.list")
+                sheetRoute = nil
+                bumpData()
+            } else {
+                prompt = StrataPrompt(title: "New playlist", placeholder: "Playlist name", value: "") { [weak self] text in
+                    self?.perform(.createPlaylist(name: text, ids: ids))
+                }
+            }
+        case let .renamePlaylist(id):
+            guard let p = library.playlists.first(where: { $0.id.uuidString == id }) else { return }
+            prompt = StrataPrompt(title: "Rename playlist", placeholder: "Name", value: p.name) { text in
+                guard !text.isEmpty else { return }
+                library.renamePlaylist(p, to: text)
+            }
+        case let .deletePlaylist(id):
+            if let p = library.playlists.first(where: { $0.id.uuidString == id }) { confirmDelete = StrataPlaylistRef(id: id, name: p.name) }
+        case let .addToPlaylist(playlist, ids):
+            guard let uuid = UUID(uuidString: playlist), let p = library.playlists.first(where: { $0.id == uuid }) else { return }
+            library.addSongs(ids: Set(ids), toPlaylistID: uuid)
+            ToastCenter.shared.show("Added to \"\(p.name)\"", icon: "checkmark.circle")
+            sheetRoute = nil
+        case let .removeFromPlaylist(playlist, id):
+            if let uuid = UUID(uuidString: playlist) { library.removeSong(id: id, fromPlaylistID: uuid) }
+        case let .setSort(tab, sort):
+            core.setSort(tab: tab, sort: sort)
+            UserDefaults.standard.set(sort, forKey: "strata_sort_\(tab)")
+            UISelectionFeedbackGenerator().selectionChanged()
+            bumpData()
+        case let .setSetting(key, value):
+            StrataSettings.apply(key: key, value: value, player: player, library: library, account: account, sleep: sleep)
+            settingsRevision &+= 1
+        case let .promptSetting(key, title, value):
+            prompt = StrataPrompt(title: title, placeholder: title, value: value) { [weak self] text in
+                self?.perform(.setSetting(key: key, value: .text(value: text)))
+            }
+        case let .streamPlay(id):
+            guard let t = results[id], let streaming else { return }
+            Task {
+                do {
+                    let url = try await streaming.streamURL(for: t)
+                    let song = streaming.toSong(track: t, streamURL: url)
+                    player.play(song: song, in: [song], uiSource: "strata-cloud")
+                } catch {
+                    ToastCenter.shared.show("Couldn't stream \"\(t.title)\"", category: .error)
+                }
+            }
+        case let .streamDownload(id):
+            guard let t = results[id] else { return }
+            download(t)
+        case let .cloudPlay(id):
+            guard let streaming, let token = account?.token, let t = streaming.userMusicTracks.first(where: { $0.id == id }) else { return }
+            let song = streaming.toSong(userMusicTrack: t, token: token)
+            player.play(song: song, in: [song], uiSource: "strata-cloud")
+        case let .openClassic(page):
+            classicPage = StrataClassicPage(page: page)
+        case .signIn:
+            classicPage = StrataClassicPage(page: "signin")
+        case .signOut:
+            Task { await account?.logout() }
         case .none:
             break
+        }
+    }
+
+    private func bumpData() { dataRevision &+= 1 }
+
+    func deletePlaylist(_ ref: StrataPlaylistRef) {
+        guard let library, let p = library.playlists.first(where: { $0.id.uuidString == ref.id }) else { return }
+        library.deletePlaylist(p)
+        if case .playlist(let id) = path.last, id == ref.id { path.removeLast() }
+    }
+
+    // MARK: Cloud
+
+    /// Your cloud uploads, for the Cloud screen.
+    func loadCloud() async {
+        guard let streaming, let token = account?.token else { return }
+        await streaming.fetchUserMusic(token: token)
+        let local = Set(songsByID.values.map { "\($0.title.lowercased())|\($0.artist.lowercased())" })
+        let tracks = streaming.userMusicTracks.map {
+            StrataRemote(id: $0.id, title: $0.title, artist: $0.artist, duration: $0.duration, thumbnail: "", source: "cloud",
+                         downloaded: local.contains("\($0.title.lowercased())|\($0.artist.lowercased())"))
+        }
+        cloudCount = tracks.count
+        core.setCloud(tracks: tracks)
+        bumpData()
+    }
+
+    /// Online search for the Cloud screen (results go to Rust, which composes them).
+    func searchOnline(_ query: String) {
+        searchTask?.cancel()
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty, let streaming else { return }
+        core.setResults(query: query, results: [], searching: true)
+        bumpData()
+        searchTask = Task {
+            let found = await streaming.searchSilently(query: q)
+            guard !Task.isCancelled else { return }
+            let have = Set(songsByID.values.compactMap(\.sourceTrackID))
+            for t in found { results[t.id] = t }
+            core.setResults(query: query, results: found.map {
+                StrataRemote(id: $0.id, title: $0.title, artist: $0.artist, duration: $0.duration, thumbnail: $0.thumbnailURL,
+                             source: $0.source, downloaded: have.contains($0.sourceTrackID))
+            }, searching: false)
+            bumpData()
+        }
+    }
+
+    private func download(_ t: StreamTrack) {
+        guard let streaming, let library else { return }
+        ToastCenter.shared.show("Downloading \"\(t.title)\"", category: .download, icon: "arrow.down.circle")
+        Task {
+            do {
+                await library.scanLocalDocumentsAsync()
+                if library.isAlreadyImported(title: t.title, artist: t.artist, duration: t.duration) {
+                    ToastCenter.shared.show("\"\(t.title)\" is already in your library", icon: "checkmark.circle")
+                    return
+                }
+                _ = try await streaming.downloadToLibrary(track: t, existingSongs: library.allSongs)
+                library.scanLocalDocuments()
+                ToastCenter.shared.show("Downloaded \"\(t.title)\"", category: .download, icon: "checkmark.circle.fill")
+            } catch {
+                ToastCenter.shared.show("Download failed: \(error.localizedDescription)", category: .error)
+            }
         }
     }
 
@@ -188,7 +338,7 @@ final class StrataStore: ObservableObject {
         case .home: selectLayer(.home)
         case .search: if path.isEmpty, layer != .search { selectLayer(.search) } else { path.append(route) }
         case .you: selectLayer(.you)
-        case .cloud: showCloud = true
+        case .addToPlaylist: sheetRoute = route
         case .library(let tab) where path.isEmpty && layer == .library:
             libraryTab = tab
         default:
@@ -274,4 +424,28 @@ enum StrataPalette {
     static var onAccent: Color { Color(strataHex: theme.onAccent) }
     static var glow: Color { Color(strataHex: theme.glow) }
     static var danger: Color { Color(strataHex: theme.danger) }
+}
+
+// MARK: - Presentation models
+
+struct StrataPrompt: Identifiable {
+    let id = UUID()
+    let title: String
+    let placeholder: String
+    var value: String
+    let submit: (String) -> Void
+}
+
+struct StrataClassicPage: Identifiable {
+    var id: String { page }
+    let page: String
+}
+
+struct StrataPlaylistRef: Identifiable {
+    let id: String
+    let name: String
+}
+
+extension StrataRoute: Identifiable {
+    public var id: String { "\(self)" }
 }

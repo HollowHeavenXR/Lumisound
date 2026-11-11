@@ -16,6 +16,7 @@ struct StrataNowView: View {
     @State private var drag: CGFloat = 0
     @State private var showTools = false
     @State private var artAspect: CGFloat = 1
+    @State private var tab = "now"
 
     var body: some View {
         let t = store.theme
@@ -25,7 +26,16 @@ struct StrataNowView: View {
                     .ignoresSafeArea()
                 VStack(alignment: .leading, spacing: 0) {
                     header
-                    StrataNowBody(width: geo.size.width - t.gutter * 2, artAspect: artAspect, showTools: $showTools)
+                    tabs
+                    switch tab {
+                    case "lyrics":
+                        StrataLyricsPanel(progress: player.progress)
+                    case "queue":
+                        StrataScreenHost(route: .queue)
+                            .padding(.horizontal, -t.gutter)
+                    default:
+                        StrataNowBody(width: geo.size.width - t.gutter * 2, artAspect: artAspect, showTools: $showTools)
+                    }
                 }
                 .padding(.horizontal, t.gutter)
             }
@@ -58,6 +68,31 @@ struct StrataNowView: View {
                 .background(StrataPalette.raised, in: RoundedRectangle(cornerRadius: 8))
         }
         .padding(.top, 8)
+    }
+
+    /// Now / Lyrics / Queue: three layers of the player.
+    private var tabs: some View {
+        let t = store.theme
+        return HStack(spacing: 18) {
+            ForEach([("now", "Now"), ("lyrics", "Lyrics"), ("queue", "Queue")], id: \.0) { key, label in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { tab = key }
+                    UISelectionFeedbackGenerator().selectionChanged()
+                } label: {
+                    VStack(spacing: 4) {
+                        Text(label.uppercased())
+                            .font(.system(size: t.typeScale[5], weight: .heavy, design: .monospaced))
+                            .tracking(1.8)
+                            .foregroundStyle(tab == key ? StrataPalette.ink : StrataPalette.inkFaint)
+                        Rectangle().fill(tab == key ? StrataPalette.accent : Color.clear).frame(height: 2)
+                    }
+                    .fixedSize()
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(.top, 10)
     }
 
     private func close() {

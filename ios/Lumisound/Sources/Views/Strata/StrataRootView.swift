@@ -20,6 +20,7 @@ struct StrataRootView: View {
     @EnvironmentObject private var streaming: StreamingService
     @EnvironmentObject private var folderService: MusicFolderService
     @EnvironmentObject private var bridgeHealth: BridgeHealthService
+    @EnvironmentObject private var sleepTimer: SleepTimerService
     @ObservedObject private var toastCenter = ToastCenter.shared
     @StateObject private var presenceService = PresenceService.shared
     @StateObject private var store = StrataStore.shared
@@ -62,22 +63,31 @@ struct StrataRootView: View {
         .tint(StrataPalette.accent)
         .acoustIDConfirmSheet()
         .clipMakerSheet()
-        .fullScreenCover(isPresented: $store.showCloud) {
-            ZStack(alignment: .topTrailing) {
-                StreamSearchView()
-                Button { store.showCloud = false } label: {
-                    Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).padding(10)
-                        .background(StrataPalette.raised, in: Circle())
-                }
-                .padding(.trailing, 16)
-                .padding(.top, 4)
+        // Pickers the Rust screens ask for (Add to playlist).
+        .sheet(item: $store.sheetRoute) { route in
+            NavigationStack { StrataScreenHost(route: route) }
+                .environmentObject(store)
+                .presentationDetents([.medium, .large])
+                .presentationBackground(StrataPalette.ground)
+        }
+        // Rare advanced screens that aren't part of Strata.
+        .sheet(item: $store.classicPage) { page in
+            StrataClassicSheet(page: page.page)
+        }
+        .alert(store.prompt?.title ?? "", isPresented: Binding(get: { store.prompt != nil }, set: { if !$0 { store.prompt = nil } })) {
+            StrataPromptField()
+        }
+        .confirmationDialog("Delete \"\(store.confirmDelete?.name ?? "")\"?", isPresented: Binding(get: { store.confirmDelete != nil }, set: { if !$0 { store.confirmDelete = nil } }), titleVisibility: .visible) {
+            Button("Delete playlist", role: .destructive) {
+                if let ref = store.confirmDelete { store.deletePlaylist(ref) }
+                store.confirmDelete = nil
             }
         }
         .fullScreenCover(isPresented: $showCarMode) {
             CarModeView().environmentObject(player)
         }
         .onAppear {
-            store.attach(library: library, player: player)
+            store.attach(library: library, player: player, streaming: streaming, account: account, sleep: sleepTimer)
             bootstrap()
         }
         .onChange(of: library.allSongs.count) { _, _ in scheduleBackupSync() }
@@ -114,20 +124,8 @@ struct StrataRootView: View {
     @ViewBuilder
     private func destination(_ route: StrataRoute) -> some View {
         switch route {
-        case .settings(let page):
-            Group {
-                switch page {
-                case "account": AccountView()
-                case "audio", "haptics": SettingsView(lumenPage: .audio)
-                case "appearance": SettingsView(lumenPage: .app)
-                case "downloads": SettingsView(lumenPage: .ytdlp)
-                default: LumenSettingsView()
-                }
-            }
-            .toolbar(.visible, for: .navigationBar)
-            .background(StrataPalette.ground.ignoresSafeArea())
-        default:
-            StrataScreenHost(route: route)
+        case .cloud: StrataCloudLayer()
+        default: StrataScreenHost(route: route)
         }
     }
 
@@ -293,7 +291,7 @@ struct StrataCapsule: View {
                 Image(systemName: "list.number").font(.system(size: 15, weight: .bold)).foregroundStyle(StrataPalette.inkDim).frame(width: 40, height: 44)
             }
             .buttonStyle(StrataPress())
-            Button { store.showCloud = true } label: {
+            Button { store.open(.cloud(query: "")) } label: {
                 Image(systemName: "icloud").font(.system(size: 15, weight: .bold)).foregroundStyle(StrataPalette.inkDim).frame(width: 40, height: 44)
             }
             .buttonStyle(StrataPress())
@@ -302,5 +300,81 @@ struct StrataCapsule: View {
         .background(StrataPalette.raised.opacity(0.97), in: RoundedRectangle(cornerRadius: t.radiusLarge, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: t.radiusLarge, style: .continuous).strokeBorder(StrataPalette.rule, lineWidth: 1))
         .shadow(color: .black.opacity(0.5), radius: 18, y: 8)
+    }
+}
+
+// MARK: - Cloud layer
+
+/// Cloud: your uploads, and online search (stream / download). Results are
+/// fetched here and composed by Rust (strata.rs `cloud`).
+struct StrataCloudLayer: View {
+    @EnvironmentObject private var store: StrataStore
+    @State private var text = ""
+    @State private var query = ""
+
+    var body: some View {
+        let t = store.theme
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button { _ = store.path.popLast() } label: {
+                    Image(systemName: "arrow.left").font(.system(size: 15, weight: .bold)).foregroundStyle(StrataPalette.inkDim)
+                }
+                .buttonStyle(.plain)
+                Image(systemName: "globe").foregroundStyle(StrataPalette.accent)
+                TextField("", text: $text, prompt: Text("Search to stream or download").foregroundColor(StrataPalette.inkFaint))
+                    .font(.system(size: t.typeScale[3], weight: .bold))
+                    .foregroundStyle(StrataPalette.ink)
+                    .submitLabel(.search)
+                    .autocorrectionDisabled()
+                    .onSubmit { query = text; store.searchOnline(text) }
+                if !text.isEmpty {
+                    Button { text = ""; query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(StrataPalette.inkFaint) }
+                }
+            }
+            .padding(.horizontal, t.gutter)
+            .frame(height: 56)
+            .overlay(Rectangle().fill(StrataPalette.accent).frame(height: 2), alignment: .bottom)
+            StrataScreenHost(route: .cloud(query: query))
+        }
+        .background(StrataPalette.ground)
+        .toolbar(.hidden, for: .navigationBar)
+        .task { await store.loadCloud() }
+    }
+}
+
+// MARK: - Prompts and classic sheets
+
+struct StrataPromptField: View {
+    @EnvironmentObject private var store: StrataStore
+    @State private var text = ""
+
+    var body: some View {
+        TextField(store.prompt?.placeholder ?? "", text: $text)
+            .onAppear { text = store.prompt?.value ?? "" }
+        Button("Cancel", role: .cancel) { store.prompt = nil }
+        Button("OK") {
+            let p = store.prompt
+            store.prompt = nil
+            p?.submit(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+}
+
+/// The few classic screens Strata links to (rare advanced settings, sign-in,
+/// profile and password, help).
+struct StrataClassicSheet: View {
+    let page: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Group {
+            switch page {
+            case "signin": NavigationStack { LoginView() }
+            case "account": NavigationStack { AccountView() }
+            case "help": NavigationStack { SettingsHelpView() }
+            default: SettingsView()
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }

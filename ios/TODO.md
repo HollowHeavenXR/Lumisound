@@ -26,5 +26,11 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 ## Done (2026-11-11)
 - Strata interface: `Views/Strata/` (StrataStore, StrataRenderer, StrataRootView, StrataNowView) on core `strata.rs`.
 
+## Done (2026-11-12)
+- Strata: Library crash fixed (rows play long lists by reference); playlists (create/rename/delete/add/remove),
+  Library sorting, player Now/Lyrics/Queue tabs, Settings (8 pages), Account and Cloud composed in Rust
+  (`StrataSettings.swift` adapter, `StrataLyrics.swift`).
+
 ## Open
-- Strata: verify on device (layer switching, paging, theme tint); tvOS has no Strata.
+- Strata: verify on device; rare advanced settings (API keys, app lock, notifications) still open the classic Settings.
+- tvOS has no Strata.

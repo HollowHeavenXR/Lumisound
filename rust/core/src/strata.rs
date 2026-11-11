@@ -66,8 +66,12 @@ pub enum StrataRoute {
     History,
     Queue,
     You,
-    Cloud,
+    /// Cloud: your uploaded library (empty query) or online search results.
+    Cloud { query: String },
     Settings { page: String },
+    Account,
+    /// Pick a playlist for these songs.
+    AddToPlaylist { ids: Vec<String> },
 }
 
 #[derive(uniffi::Enum, Clone, Debug, PartialEq)]
@@ -85,7 +89,52 @@ pub enum StrataAction {
     ToggleFavorite { id: String },
     /// Jump to queue position.
     QueueJump { index: u32 },
+    /// New playlist (Swift asks for the name when `name` is None), with songs.
+    CreatePlaylist { name: Option<String>, ids: Vec<String> },
+    RenamePlaylist { id: String },
+    DeletePlaylist { id: String },
+    AddToPlaylist { playlist: String, ids: Vec<String> },
+    RemoveFromPlaylist { playlist: String, id: String },
+    /// Library tab sort order (kept by the core, persisted by Swift).
+    SetSort { tab: String, sort: String },
+    /// A setting changed (key as in the settings screens).
+    SetSetting { key: String, value: StrataValue },
+    /// Ask for text, then SetSetting(key, text).
+    PromptSetting { key: String, title: String, value: String },
+    /// Online result: stream now / download to the library.
+    StreamPlay { id: String },
+    StreamDownload { id: String },
+    /// Play from the cloud library.
+    CloudPlay { id: String },
+    /// Open one of the full classic screens (rare advanced settings).
+    OpenClassic { page: String },
+    SignIn,
+    SignOut,
     None,
+}
+
+#[derive(uniffi::Enum, Clone, Debug, PartialEq)]
+pub enum StrataValue {
+    Flag { on: bool },
+    Number { value: f64 },
+    Text { value: String },
+}
+
+/// One option of a choice control.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct StrataOption {
+    pub value: String,
+    pub label: String,
+}
+
+/// The control a settings row carries.
+#[derive(uniffi::Enum, Clone, Debug, PartialEq)]
+pub enum StrataControl {
+    Toggle { key: String, on: bool },
+    Slider { key: String, value: f64, min: f64, max: f64, step: f64, unit: String },
+    Choice { key: String, selected: String, options: Vec<StrataOption> },
+    /// Colour swatches ("#RRGGBB" values).
+    Swatches { key: String, selected: String, colors: Vec<String> },
 }
 
 #[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +147,8 @@ pub enum StrataStyle {
     Chips,
     Stats,
     Note,
+    /// Settings rows (title, help, control).
+    Controls,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -115,6 +166,8 @@ pub struct StrataItem {
     pub action: StrataAction,
     /// Long-press / swipe action.
     pub secondary: Option<StrataAction>,
+    /// Settings rows: the control drawn on the right.
+    pub control: Option<StrataControl>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -191,7 +244,7 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 }
 
 fn item(id: impl Into<String>, title: impl Into<String>) -> StrataItem {
-    StrataItem { id: id.into(), title: title.into(), subtitle: None, meta: None, art: None, glyph: None, number: None, emphasis: false, action: StrataAction::None, secondary: None }
+    StrataItem { id: id.into(), title: title.into(), subtitle: None, meta: None, art: None, glyph: None, number: None, emphasis: false, action: StrataAction::None, secondary: None, control: None }
 }
 
 fn section(id: &str, style: StrataStyle, title: Option<&str>, items: Vec<StrataItem>) -> StrataSection {
@@ -214,12 +267,37 @@ struct Lib {
     genres: BTreeMap<String, Vec<usize>>,
     /// Search tokens per song.
     tokens: Vec<Vec<String>>,
+    /// Sort order per Library tab (SetSort).
+    sorts: HashMap<String, String>,
+}
+
+/// An online search result or a cloud-library track (Cloud screens).
+#[derive(uniffi::Record, Clone, Debug, Default, PartialEq)]
+pub struct StrataRemote {
+    pub id: String,
+    pub title: String,
+    pub artist: String,
+    pub duration: f64,
+    pub thumbnail: String,
+    /// "youtube" / "soundcloud" ... for results, "cloud" for your uploads.
+    pub source: String,
+    /// Already in the local library.
+    pub downloaded: bool,
+}
+
+#[derive(Default)]
+struct Remote {
+    cloud: Vec<StrataRemote>,
+    query: String,
+    results: Vec<StrataRemote>,
+    searching: bool,
 }
 
 /// The Strata interface engine (one per app).
 #[derive(uniffi::Object, Default)]
 pub struct StrataCore {
     lib: RwLock<Lib>,
+    remote: RwLock<Remote>,
 }
 
 const PAGE: usize = 120;
@@ -233,7 +311,8 @@ impl StrataCore {
 
     /// Hand over the library (replaces it). Builds every index once.
     pub fn set_library(&self, songs: Vec<StrataSong>, playlists: Vec<StrataPlaylist>) {
-        let mut l = Lib { songs, playlists, ..Default::default() };
+        let sorts = std::mem::take(&mut self.lib.write().unwrap().sorts);
+        let mut l = Lib { songs, playlists, sorts, ..Default::default() };
         for (i, s) in l.songs.iter().enumerate() {
             l.by_id.insert(s.id.clone(), i);
             let artist = if s.artist.trim().is_empty() { "Unknown Artist".to_string() } else { s.artist.trim().to_string() };
@@ -271,8 +350,9 @@ impl StrataCore {
 
     /// The screen for a route. `now` = unix seconds, `hour` = local hour,
     /// `current` = the playing song, `queue` + `queue_index` for Queue.
-    pub fn screen(&self, route: StrataRoute, now: f64, hour: u32, current: Option<String>, queue: Vec<String>, queue_index: u32) -> StrataScreen {
+    pub fn screen(&self, route: StrataRoute, now: f64, hour: u32, current: Option<String>, queue: Vec<String>, queue_index: u32, values: HashMap<String, StrataValue>) -> StrataScreen {
         let l = self.lib.read().unwrap();
+        let v = Values(&values);
         match route.clone() {
             StrataRoute::Home => home(&l, now, hour, current.as_deref()),
             StrataRoute::Library { tab } => library(&l, &tab),
@@ -285,8 +365,29 @@ impl StrataCore {
             StrataRoute::History => history(&l),
             StrataRoute::Queue => queue_screen(&l, &queue, queue_index as usize),
             StrataRoute::You => you(&l, now),
-            StrataRoute::Cloud | StrataRoute::Settings { .. } => StrataScreen { route, kicker: None, title: String::new(), subtitle: None, art: None, actions: vec![], sections: vec![] },
+            StrataRoute::Cloud { query } => cloud(&l, &self.remote.read().unwrap(), &query),
+            StrataRoute::Settings { page } => settings(&page, &v),
+            StrataRoute::Account => account(&l, &v),
+            StrataRoute::AddToPlaylist { ids } => add_to_playlist(&l, &ids),
         }
+    }
+
+    /// Library tab sort order (persisted by Swift, restored at launch).
+    pub fn set_sort(&self, tab: String, sort: String) {
+        self.lib.write().unwrap().sorts.insert(tab, sort);
+    }
+
+    /// Your uploaded cloud library (Cloud screen with no query).
+    pub fn set_cloud(&self, tracks: Vec<StrataRemote>) {
+        self.remote.write().unwrap().cloud = tracks;
+    }
+
+    /// Online results for `query` (`searching` while the request is out).
+    pub fn set_results(&self, query: String, results: Vec<StrataRemote>, searching: bool) {
+        let mut r = self.remote.write().unwrap();
+        r.query = query;
+        r.results = results;
+        r.searching = searching;
     }
 
     /// More items of a paged section (`offset` onward).
@@ -522,15 +623,32 @@ fn stats_section(l: &Lib) -> StrataSection {
 
 pub const LIBRARY_TABS: [(&str, &str); 7] = [("songs", "Songs"), ("albums", "Albums"), ("artists", "Artists"), ("playlists", "Playlists"), ("genres", "Genres"), ("recent", "Recently added"), ("favorites", "Favorites")];
 
+fn sort_of<'a>(l: &'a Lib, tab: &str, default: &'a str) -> &'a str {
+    l.sorts.get(tab).map(String::as_str).unwrap_or(default)
+}
+
+/// All songs in the Library "songs" tab order.
 fn sorted_songs(l: &Lib) -> Vec<usize> {
     let mut v: Vec<usize> = (0..l.songs.len()).collect();
-    v.sort_by_cached_key(|&i| sort_key(&l.songs[i].title));
+    let s = &l.songs;
+    match sort_of(l, "songs", "title") {
+        "artist" => v.sort_by_cached_key(|&i| (sort_key(&s[i].artist), sort_key(&s[i].album), sort_key(&s[i].title))),
+        "album" => v.sort_by_cached_key(|&i| (sort_key(&s[i].album), sort_key(&s[i].title))),
+        "added" => v.sort_by(|&a, &b| s[b].added.total_cmp(&s[a].added)),
+        "plays" => v.sort_by(|&a, &b| s[b].plays.cmp(&s[a].plays).then(s[b].last_played.total_cmp(&s[a].last_played))),
+        "duration" => v.sort_by(|&a, &b| s[b].duration.total_cmp(&s[a].duration)),
+        _ => v.sort_by_cached_key(|&i| sort_key(&s[i].title)),
+    }
     v
 }
 
 fn album_items(l: &Lib) -> Vec<StrataItem> {
     let mut keys: Vec<(&String, &Vec<usize>)> = l.albums.iter().collect();
-    keys.sort_by_cached_key(|(_, v)| sort_key(&l.songs[v[0]].album));
+    match sort_of(l, "albums", "title") {
+        "artist" => keys.sort_by_cached_key(|(_, v)| (sort_key(&l.songs[v[0]].artist), sort_key(&l.songs[v[0]].album))),
+        "year" => keys.sort_by_cached_key(|(_, v)| (std::cmp::Reverse(l.songs[v[0]].year.clone()), sort_key(&l.songs[v[0]].album))),
+        _ => keys.sort_by_cached_key(|(_, v)| sort_key(&l.songs[v[0]].album)),
+    }
     keys.iter().map(|(k, v)| {
         let s = &l.songs[v[0]];
         let mut it = item(format!("album-{k}"), &s.album);
@@ -544,7 +662,11 @@ fn album_items(l: &Lib) -> Vec<StrataItem> {
 
 fn artist_items(l: &Lib) -> Vec<StrataItem> {
     let mut keys: Vec<(&String, &Vec<usize>)> = l.artists.iter().collect();
-    keys.sort_by_cached_key(|(k, _)| sort_key(l.artist_name.get(*k).map(String::as_str).unwrap_or("")));
+    if sort_of(l, "artists", "name") == "songs" {
+        keys.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    } else {
+        keys.sort_by_cached_key(|(k, _)| sort_key(l.artist_name.get(*k).map(String::as_str).unwrap_or("")));
+    }
     keys.iter().map(|(k, v)| {
         let name = l.artist_name.get(*k).cloned().unwrap_or_default();
         let albums: HashSet<&str> = v.iter().map(|&i| l.songs[i].album.as_str()).filter(|a| !a.is_empty()).collect();
@@ -615,7 +737,10 @@ fn library(l: &Lib, tab: &str) -> StrataScreen {
     match tab {
         "songs" | "recent" => {
             let route = StrataRoute::Library { tab: tab.into() };
-            let (sec, idx) = ordered_songs(l, &route, "list", None, tab == "songs");
+            if tab == "songs" {
+                sections.push(sort_chips("songs", sort_of(l, "songs", "title")));
+            }
+            let (sec, idx) = ordered_songs(l, &route, "list", None, tab == "songs" && sort_of(l, "songs", "title") == "title");
             actions = play_actions_for(l, &route, "list", &idx);
             subtitle = Some(format!("{} · {}", plural(idx.len(), "song", "songs"), hours_label(l.songs.iter().map(|s| s.duration).sum())));
             sections.push(sec);
@@ -631,7 +756,18 @@ fn library(l: &Lib, tab: &str) -> StrataScreen {
             subtitle = Some(plural(all.len(), &title.to_lowercase()[..title.len() - 1], &title.to_lowercase()));
             let style = if tab == "albums" { StrataStyle::Grid } else if tab == "genres" { StrataStyle::Chips } else { StrataStyle::Ledger };
             let total = all.len() as u32;
-            let (index, positions) = if tab == "genres" { (vec![], vec![]) } else { letters_of(&all) };
+            if tab == "albums" || tab == "artists" {
+                sections.push(sort_chips(tab, sort_of(l, tab, if tab == "albums" { "title" } else { "name" })));
+            }
+            if tab == "playlists" {
+                let mut n = item("new-playlist", "New playlist");
+                n.glyph = Some("plus".into());
+                n.emphasis = true;
+                n.action = StrataAction::CreatePlaylist { name: None, ids: vec![] };
+                actions.push(n);
+            }
+            let by_name = matches!((tab, sort_of(l, tab, "")), ("albums", "" | "title") | ("artists", "" | "name") | ("playlists", _));
+            let (index, positions) = if by_name { letters_of(&all) } else { (vec![], vec![]) };
             let mut sec = section("list", style, None, all.into_iter().take(PAGE).collect());
             sec.total = total;
             sec.index = index;
@@ -750,7 +886,14 @@ fn playlist(l: &Lib, id: &str) -> StrataScreen {
     if missing > 0 {
         sec.caption = Some(format!("{} not on this device", plural(missing, "song", "songs")));
     }
-    let actions = play_actions_for(l, &route, "list", &idx);
+    let mut actions = play_actions_for(l, &route, "list", &idx);
+    let mut rn = item("rename", "Rename");
+    rn.glyph = Some("pencil".into());
+    rn.action = StrataAction::RenamePlaylist { id: id.into() };
+    let mut del = item("delete", "Delete");
+    del.glyph = Some("trash".into());
+    del.action = StrataAction::DeletePlaylist { id: id.into() };
+    actions.extend([rn, del]);
     StrataScreen { kicker: Some(p.folder.clone().filter(|f| !f.is_empty()).unwrap_or_else(|| "Playlist".into())), title: p.name.clone(), subtitle: Some(format!("{} · {}", plural(idx.len(), "song", "songs"), hours_label(total))), art: idx.first().map(|&i| l.songs[i].id.clone()), actions, sections: vec![sec], route }
 }
 
@@ -821,16 +964,15 @@ fn queue_screen(l: &Lib, queue: &[String], at: usize) -> StrataScreen {
 fn you(l: &Lib, now: f64) -> StrataScreen {
     let week: f64 = l.songs.iter().filter(|s| now - s.last_played < 7.0 * 86400.0).map(|s| s.duration).sum();
     let mut sections = vec![stats_section(l)];
-    let links: [(&str, &str, &str, StrataRoute); 9] = [
+    let links: [(&str, &str, &str, StrataRoute); 8] = [
         ("history", "History", "clock.arrow.circlepath", StrataRoute::History),
         ("favorites", "Favorites", "heart", StrataRoute::Favorites),
-        ("cloud", "Cloud library", "icloud", StrataRoute::Cloud),
-        ("account", "Account", "person.crop.circle", StrataRoute::Settings { page: "account".into() }),
-        ("audio", "Sound & playback", "waveform", StrataRoute::Settings { page: "audio".into() }),
+        ("cloud", "Cloud library", "icloud", StrataRoute::Cloud { query: String::new() }),
+        ("account", "Account", "person.crop.circle", StrataRoute::Account),
+        ("sound", "Sound", "waveform", StrataRoute::Settings { page: "sound".into() }),
+        ("playback", "Playback", "play.circle", StrataRoute::Settings { page: "playback".into() }),
         ("haptics", "Music Haptics", "hand.tap", StrataRoute::Settings { page: "haptics".into() }),
-        ("appearance", "Appearance", "paintpalette", StrataRoute::Settings { page: "appearance".into() }),
-        ("downloads", "Streaming & downloads", "arrow.down.circle", StrataRoute::Settings { page: "downloads".into() }),
-        ("all", "All settings", "gearshape", StrataRoute::Settings { page: "all".into() }),
+        ("all", "Settings", "gearshape", StrataRoute::Settings { page: "root".into() }),
     ];
     sections.push(section("places", StrataStyle::Ledger, Some("Your places"), links.into_iter().map(|(id, name, glyph, route)| {
         let mut it = item(format!("link-{id}"), name);
@@ -1144,9 +1286,389 @@ pub fn strata_now(title: String, artist: String, album: String, position: f64, d
     }
 }
 
+// ---- settings, account, cloud, playlists ------------------------------------------------------
+
+/// Current setting values handed over by Swift (key -> value).
+struct Values<'a>(&'a HashMap<String, StrataValue>);
+
+impl Values<'_> {
+    fn flag(&self, k: &str) -> bool {
+        matches!(self.0.get(k), Some(StrataValue::Flag { on: true }))
+    }
+    fn num(&self, k: &str, d: f64) -> f64 {
+        match self.0.get(k) {
+            Some(StrataValue::Number { value }) => *value,
+            _ => d,
+        }
+    }
+    fn text(&self, k: &str) -> String {
+        match self.0.get(k) {
+            Some(StrataValue::Text { value }) => value.clone(),
+            _ => String::new(),
+        }
+    }
+}
+
+fn toggle(key: &str, title: &str, help: &str, v: &Values) -> StrataItem {
+    let mut it = item(format!("set-{key}"), title);
+    it.subtitle = (!help.is_empty()).then(|| help.to_string());
+    it.control = Some(StrataControl::Toggle { key: key.into(), on: v.flag(key) });
+    it
+}
+
+fn slider(key: &str, title: &str, min: f64, max: f64, step: f64, unit: &str, default: f64, v: &Values) -> StrataItem {
+    let value = v.num(key, default).clamp(min, max);
+    let mut it = item(format!("set-{key}"), title);
+    it.meta = Some(fmt_value(value, step, unit));
+    it.control = Some(StrataControl::Slider { key: key.into(), value, min, max, step, unit: unit.into() });
+    it
+}
+
+fn fmt_value(v: f64, step: f64, unit: &str) -> String {
+    let n = if step < 0.1 { format!("{v:.2}") } else if step < 1.0 { format!("{v:.1}") } else { format!("{v:.0}") };
+    match unit {
+        "x" => format!("{n}×"),
+        "st" => format!("{}{n} st", if v > 0.0 { "+" } else { "" }),
+        "" => n,
+        u => format!("{n} {u}"),
+    }
+}
+
+fn choice(key: &str, title: &str, options: &[(&str, &str)], default: &str, v: &Values) -> StrataItem {
+    let sel = { let t = v.text(key); if t.is_empty() { default.to_string() } else { t } };
+    let mut it = item(format!("set-{key}"), title);
+    it.meta = options.iter().find(|o| o.0 == sel).map(|o| o.1.to_string());
+    it.control = Some(StrataControl::Choice { key: key.into(), selected: sel, options: options.iter().map(|(a, b)| StrataOption { value: (*a).into(), label: (*b).into() }).collect() });
+    it
+}
+
+fn link(id: &str, title: &str, glyph: &str, action: StrataAction) -> StrataItem {
+    let mut it = item(id, title);
+    it.glyph = Some(glyph.into());
+    it.action = action;
+    it
+}
+
+fn controls(id: &str, title: Option<&str>, items: Vec<StrataItem>) -> StrataSection {
+    section(id, StrataStyle::Controls, title, items)
+}
+
+/// Strata accent swatches.
+pub const ACCENTS: [&str; 8] = ["#FF5A3C", "#FF2E88", "#B45CFF", "#4C7DFF", "#1FB6FF", "#18C29C", "#9BD43B", "#FFB020"];
+
+fn settings(page: &str, v: &Values) -> StrataScreen {
+    let route = StrataRoute::Settings { page: page.into() };
+    let page_link = |id: &str, title: &str, glyph: &str, sub: &str| {
+        let mut it = link(&format!("page-{id}"), title, glyph, StrataAction::Open { route: StrataRoute::Settings { page: id.into() } });
+        it.subtitle = Some(sub.into());
+        it
+    };
+    let (title, sections): (&str, Vec<StrataSection>) = match page {
+        "sound" => ("Sound", vec![
+            controls("eq", Some("Equalizer"), vec![
+                toggle("audio.eq", "Equalizer", "10-band EQ in the Rust engine", v),
+                choice("audio.eqPreset", "Preset", &[("Flat", "Flat"), ("Bass Boost", "Bass Boost"), ("Treble Boost", "Treble Boost"), ("Vocal", "Vocal"), ("Pop", "Pop"), ("Electronic", "Electronic"), ("Rock", "Rock"), ("Classical", "Classical"), ("Jazz", "Jazz"), ("Hip-Hop", "Hip-Hop"), ("Acoustic", "Acoustic")], "Flat", v),
+                toggle("audio.autoEQ", "Auto EQ", "Shapes each song toward your library's tone", v),
+                toggle("audio.bassBoost", "Bass boost", "", v),
+                slider("audio.bassBoostGain", "Bass boost amount", 0.0, 15.0, 1.0, "dB", 6.0, v),
+            ]),
+            controls("space", Some("Space"), vec![
+                toggle("audio.reverb", "Reverb", "", v),
+                choice("audio.reverbPreset", "Room", &[("smallRoom", "Small Room"), ("mediumRoom", "Medium Room"), ("largeRoom", "Large Room"), ("mediumHall", "Medium Hall"), ("largeHall", "Large Hall"), ("plate", "Plate"), ("cathedral", "Cathedral")], "mediumRoom", v),
+                slider("audio.reverbMix", "Reverb mix", 0.0, 100.0, 1.0, "%", 18.0, v),
+                toggle("audio.spatial", "Spatial audio", "Head-tracked with AirPods", v),
+                toggle("audio.eightD", "8D", "Sound circles around you", v),
+            ]),
+            controls("tone", Some("Speed & pitch"), vec![
+                slider("audio.speed", "Speed", 0.5, 2.0, 0.05, "x", 1.0, v),
+                slider("audio.pitch", "Pitch", -12.0, 12.0, 0.5, "st", 0.0, v),
+            ]),
+            controls("level", Some("Level"), vec![
+                toggle("audio.replayGain", "Even out loudness", "Plays every song at a similar volume", v),
+                toggle("audio.night", "Night mode", "Quiet parts louder, loud parts softer", v),
+                toggle("audio.mono", "Mono", "", v),
+            ]),
+        ]),
+        "playback" => ("Playback", vec![
+            controls("transitions", Some("Between songs"), vec![
+                toggle("audio.gapless", "Gapless", "No silence between tracks", v),
+                toggle("audio.smartCrossfade", "Smart Crossfade", "Bar-aligned, beat-matched blends with bass swaps", v),
+                toggle("audio.crossfade", "Fixed crossfade", "A plain fade of a set length", v),
+                slider("audio.crossfadeDuration", "Fade length", 1.0, 12.0, 0.5, "s", 4.0, v),
+                choice("audio.crossfadeCurve", "Fade curve", &[("equalPower", "Equal power"), ("linear", "Linear")], "equalPower", v),
+                toggle("intro.skip", "Skip silent intros", "Starts songs at the music", v),
+            ]),
+            controls("order", Some("What plays next"), vec![
+                toggle("shuffle.smart", "Smart Shuffle", "Spreads artists and holds back songs you skip", v),
+                toggle("radio.auto", "Lumisound Radio", "Keeps going with similar songs when the queue ends", v),
+                choice("radio.mode", "Radio mix", &[("balanced", "Balanced"), ("familiar", "More of what I know"), ("discover", "Discover new music")], "balanced", v),
+            ]),
+        ]),
+        "haptics" => ("Music Haptics", vec![
+            controls("haptics", None, vec![
+                toggle("audio.haptics", "Music Haptics", "Feel the beat. The Haptics Brain keeps learning even when this is off.", v),
+                choice("haptics.strength", "Feel", &[("subtle", "Subtle"), ("balanced", "Balanced"), ("intense", "Intense")], "balanced", v),
+            ]),
+        ]),
+        "library" => ("Library & downloads", vec![
+            controls("cloud", Some("Cloud"), vec![
+                toggle("library.autoBackup", "Back up to the cloud", "New songs upload to your cloud library", v),
+                toggle("downloads.wifiOnly", "Downloads on Wi-Fi only", "", v),
+            ]),
+            controls("ytdlp", Some("Downloader"), vec![
+                slider("ytdlp.fragments", "Parallel fragments", 1.0, 16.0, 1.0, "", 8.0, v),
+                toggle("ytdlp.aria2", "Use aria2", "Faster downloads for long videos", v),
+            ]),
+            controls("maint", Some("Maintenance"), vec![
+                link("rescan", "Rescan library", "arrow.clockwise", StrataAction::SetSetting { key: "library.rescan".into(), value: StrataValue::Flag { on: true } }),
+            ]),
+        ]),
+        "appearance" => {
+            let accent = { let a = v.text("strata.accent"); if a.is_empty() { ACCENTS[0].to_string() } else { a } };
+            let mut sw = item("set-strata.accent", "Accent");
+            sw.subtitle = Some("Seeds the palette; the playing artwork tints it.".into());
+            sw.control = Some(StrataControl::Swatches { key: "strata.accent".into(), selected: accent, colors: ACCENTS.iter().map(|c| c.to_string()).collect() });
+            ("Appearance", vec![
+                controls("edition", Some("Interface"), vec![
+                    choice("ui.edition", "Interface", &[("strata", "Strata"), ("lumen", "Lumen"), ("classic", "Classic")], "strata", v),
+                    sw,
+                ]),
+                controls("motion", Some("Motion"), vec![
+                    toggle("ui.reduceMotion", "Reduce motion", "", v),
+                    toggle("car.mode", "Car mode", "Big controls when connected to a car", v),
+                ]),
+            ])
+        }
+        "sleep" => {
+            let rem = v.num("sleep.remaining", 0.0);
+            let mut sec = controls("sleep", None, [0.0, 15.0, 30.0, 45.0, 60.0, 90.0].iter().map(|m| {
+                let mut it = item(format!("sleep-{m}"), if *m == 0.0 { "Off".to_string() } else { format!("{m:.0} minutes") });
+                it.glyph = Some(if *m == 0.0 { "moon.zzz" } else { "timer" }.into());
+                it.action = StrataAction::SetSetting { key: "sleep.minutes".into(), value: StrataValue::Number { value: *m } };
+                it
+            }).collect());
+            if rem > 0.0 {
+                sec.caption = Some(format!("Stops in {}", dur(rem)));
+            }
+            ("Sleep timer", vec![sec])
+        }
+        "about" => ("About", vec![controls("about", None, vec![
+            { let mut it = item("version", "Version"); it.meta = Some(v.text("app.version")); it },
+            link("updates", "Check for updates", "arrow.down.app", StrataAction::OpenClassic { page: "updates".into() }),
+            link("help", "Help", "questionmark.circle", StrataAction::OpenClassic { page: "help".into() }),
+        ])]),
+        _ => ("Settings", vec![
+            controls("pages", None, vec![
+                page_link("sound", "Sound", "waveform", "EQ, reverb, spatial, speed and pitch"),
+                page_link("playback", "Playback", "play.circle", "Smart Crossfade, gapless, shuffle, radio"),
+                page_link("haptics", "Music Haptics", "hand.tap", "Feel the beat"),
+                page_link("library", "Library & downloads", "square.and.arrow.down", "Cloud backup and the downloader"),
+                page_link("appearance", "Appearance", "paintpalette", "Interface and accent"),
+                page_link("sleep", "Sleep timer", "moon.zzz", "Stop playing after a while"),
+                link("page-account", "Account", "person.crop.circle", StrataAction::Open { route: StrataRoute::Account }),
+                page_link("about", "About", "info.circle", "Version, updates, help"),
+            ]),
+            controls("more", Some("Everything else"), vec![
+                link("classic", "More settings", "gearshape.2", StrataAction::OpenClassic { page: "all".into() }),
+            ]),
+        ]),
+    };
+    StrataScreen { route, kicker: Some("Settings".into()), title: title.into(), subtitle: None, art: None, actions: vec![], sections }
+}
+
+fn account(l: &Lib, v: &Values) -> StrataScreen {
+    let signed_in = v.flag("account.signedIn");
+    let mut sections = Vec::new();
+    if signed_in {
+        let name = { let d = v.text("account.displayName"); if d.is_empty() { v.text("account.username") } else { d } };
+        let mut me = item("me", name);
+        me.subtitle = Some(format!("@{}", v.text("account.username")));
+        me.meta = Some(v.text("account.email")).filter(|e| !e.is_empty());
+        me.glyph = Some("person.crop.circle.fill".into());
+        sections.push(section("me", StrataStyle::Hero, None, vec![me]));
+        let mut a = item("stat-cloud", format!("{:.0}", v.num("account.cloudCount", 0.0)));
+        a.subtitle = Some("in your cloud".into());
+        a.action = StrataAction::Open { route: StrataRoute::Cloud { query: String::new() } };
+        let mut b = item("stat-songs", l.songs.len().to_string());
+        b.subtitle = Some("on this device".into());
+        b.action = StrataAction::Open { route: StrataRoute::Library { tab: "songs".into() } };
+        sections.push(section("stats", StrataStyle::Stats, None, vec![a, b]));
+        sections.push(controls("privacy", Some("Sharing"), vec![
+            toggle("account.shareListening", "Share what I'm listening to", "Friends see your current song", v),
+        ]));
+        sections.push(controls("manage", Some("Manage"), vec![
+            link("profile", "Profile, password & security", "person.text.rectangle", StrataAction::OpenClassic { page: "account".into() }),
+            { let mut so = link("signout", "Sign out", "rectangle.portrait.and.arrow.right", StrataAction::SignOut); so.emphasis = true; so },
+        ]));
+    } else {
+        let mut n = item("signin", "Sign in to Lumisound");
+        n.subtitle = Some("Your cloud library, sync across devices, Radio and Aria lyrics.".into());
+        n.glyph = Some("person.crop.circle.badge.plus".into());
+        sections.push(section("note", StrataStyle::Note, None, vec![n]));
+        sections.push(controls("go", None, vec![link("go", "Sign in or create an account", "arrow.right.circle", StrataAction::SignIn)]));
+    }
+    StrataScreen { route: StrataRoute::Account, kicker: Some("You".into()), title: "Account".into(), subtitle: None, art: None, actions: vec![], sections }
+}
+
+fn remote_row(r: &StrataRemote) -> StrataItem {
+    let mut it = item(format!("r-{}-{}", r.source, r.id), &r.title);
+    it.subtitle = Some(if r.artist.is_empty() { r.source.clone() } else { r.artist.clone() });
+    it.meta = (r.duration > 0.0).then(|| dur(r.duration));
+    it.glyph = Some(if r.source == "cloud" { "icloud" } else { "globe" }.into());
+    it.art = Some(format!("remote:{}", r.thumbnail));
+    if r.source == "cloud" {
+        it.action = StrataAction::CloudPlay { id: r.id.clone() };
+    } else {
+        it.action = StrataAction::StreamPlay { id: r.id.clone() };
+        it.secondary = (!r.downloaded).then(|| StrataAction::StreamDownload { id: r.id.clone() });
+        it.emphasis = r.downloaded;
+    }
+    it
+}
+
+fn cloud(l: &Lib, r: &Remote, query: &str) -> StrataScreen {
+    let q = words(query);
+    let route = StrataRoute::Cloud { query: query.into() };
+    let mut sections = Vec::new();
+    if q.is_empty() {
+        if r.cloud.is_empty() {
+            let mut n = item("empty", "Your cloud is empty");
+            n.subtitle = Some("Turn on cloud backup in Settings, or search above to stream and download.".into());
+            n.glyph = Some("icloud".into());
+            sections.push(section("empty", StrataStyle::Note, None, vec![n]));
+        } else {
+            let mut s = section("cloud", StrataStyle::Ledger, Some("In your cloud"), r.cloud.iter().take(400).map(remote_row).collect());
+            s.caption = Some(plural(r.cloud.len(), "song", "songs"));
+            sections.push(s);
+        }
+        return StrataScreen { route, kicker: Some("Cloud".into()), title: "Cloud".into(), subtitle: Some("Stream, download and your uploads".into()), art: None, actions: vec![], sections };
+    }
+    // Your cloud uploads that match.
+    let mine: Vec<StrataItem> = r.cloud.iter().filter(|t| {
+        let mut w = words(&t.title);
+        w.extend(words(&t.artist));
+        match_score(&q, &w, w.len()) > 0.0
+    }).take(20).map(remote_row).collect();
+    if r.query == query && !r.results.is_empty() {
+        let rows: Vec<StrataItem> = r.results.iter().map(remote_row).collect();
+        let mut s = section("results", StrataStyle::Ledger, Some("Online"), rows);
+        s.caption = Some("Tap to stream · hold to download".into());
+        sections.push(s);
+    } else if r.searching || r.query != query {
+        let mut n = item("searching", "Searching…");
+        n.glyph = Some("globe".into());
+        sections.push(section("searching", StrataStyle::Note, None, vec![n]));
+    } else {
+        let mut n = item("none", format!("Nothing online for “{}”", query.trim()));
+        n.glyph = Some("globe".into());
+        sections.push(section("none", StrataStyle::Note, None, vec![n]));
+    }
+    if !mine.is_empty() {
+        sections.push(section("mine", StrataStyle::Ledger, Some("In your cloud"), mine));
+    }
+    let local = l.tokens.iter().enumerate().filter(|(i, t)| match_score(&q, t, words(&l.songs[*i].title).len()) > 0.0).count();
+    if local > 0 {
+        let mut it = link("local", &format!("{} in your library", plural(local, "song", "songs")), "square.stack.3d.up", StrataAction::Open { route: StrataRoute::Search { query: query.into() } });
+        it.subtitle = Some("Open in Search".into());
+        sections.push(controls("local", None, vec![it]));
+    }
+    StrataScreen { route, kicker: Some("Cloud".into()), title: query.trim().into(), subtitle: None, art: None, actions: vec![], sections }
+}
+
+fn add_to_playlist(l: &Lib, ids: &[String]) -> StrataScreen {
+    let route = StrataRoute::AddToPlaylist { ids: ids.to_vec() };
+    let mut new = link("new", "New playlist", "plus.square.on.square", StrataAction::CreatePlaylist { name: None, ids: ids.to_vec() });
+    new.emphasis = true;
+    let mut rows: Vec<StrataItem> = playlist_items(l).into_iter().map(|mut p| {
+        let pid = p.id.trim_start_matches("playlist-").to_string();
+        p.action = StrataAction::AddToPlaylist { playlist: pid, ids: ids.to_vec() };
+        p
+    }).collect();
+    rows.insert(0, new);
+    let what = if ids.len() == 1 { l.by_id.get(&ids[0]).map(|&i| l.songs[i].title.clone()).unwrap_or_else(|| "1 song".into()) } else { plural(ids.len(), "song", "songs") };
+    StrataScreen { route, kicker: Some("Add to playlist".into()), title: what, subtitle: None, art: ids.first().cloned(), actions: vec![], sections: vec![section("playlists", StrataStyle::Ledger, None, rows)] }
+}
+
+pub const SONG_SORTS: [(&str, &str); 6] = [("title", "Title"), ("artist", "Artist"), ("album", "Album"), ("added", "Recently added"), ("plays", "Most played"), ("duration", "Length")];
+
+/// Library sort chips for a tab.
+fn sort_chips(tab: &str, current: &str) -> StrataSection {
+    let opts: &[(&str, &str)] = match tab {
+        "songs" => &SONG_SORTS,
+        "albums" => &[("title", "Title"), ("artist", "Artist"), ("year", "Year")],
+        "artists" => &[("name", "Name"), ("songs", "Most songs")],
+        _ => &[],
+    };
+    section("sort", StrataStyle::Chips, None, opts.iter().map(|(k, label)| {
+        let mut c = item(format!("sort-{k}"), *label);
+        c.emphasis = *k == current;
+        c.glyph = Some("arrow.up.arrow.down".into());
+        c.action = StrataAction::SetSort { tab: tab.into(), sort: (*k).into() };
+        c
+    }).collect())
+}
+
+// ---- lyrics -----------------------------------------------------------------------------------
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct StrataLyric {
+    pub time: f64,
+    pub text: String,
+}
+
+/// LRC (or plain text: all times 0) into sorted lines. Handles several
+/// timestamps on one line, `[offset:ms]`, metadata tags and blank lines.
+#[uniffi::export]
+pub fn strata_lyrics_parse(text: String) -> Vec<StrataLyric> {
+    let mut out = Vec::new();
+    let mut offset = 0.0;
+    let mut timed = false;
+    for raw in text.lines() {
+        let mut line = raw.trim();
+        let mut times = Vec::new();
+        while let Some(rest) = line.strip_prefix('[') {
+            let Some(end) = rest.find(']') else { break };
+            let tag = &rest[..end];
+            if let Some(o) = tag.strip_prefix("offset:") {
+                offset = o.trim().parse::<f64>().unwrap_or(0.0) / 1000.0;
+            } else if let Some((m, sec)) = tag.split_once(':') {
+                if let (Ok(m), Ok(sec)) = (m.trim().parse::<f64>(), sec.trim().parse::<f64>()) {
+                    times.push(m * 60.0 + sec);
+                }
+            }
+            line = rest[end + 1..].trim();
+        }
+        if times.is_empty() {
+            if !line.is_empty() && !raw.trim_start().starts_with('[') {
+                out.push(StrataLyric { time: 0.0, text: line.to_string() });
+            }
+            continue;
+        }
+        timed = true;
+        for t in times {
+            out.push(StrataLyric { time: (t - offset).max(0.0), text: line.to_string() });
+        }
+    }
+    if timed {
+        out.retain(|l| l.time > 0.0 || !l.text.is_empty());
+        out.sort_by(|a, b| a.time.total_cmp(&b.time));
+    }
+    out
+}
+
+/// Index of the line being sung at `position` (-1 before the first, or untimed).
+#[uniffi::export]
+pub fn strata_lyric_index(times: Vec<f64>, position: f64) -> i32 {
+    if times.iter().all(|t| *t == 0.0) {
+        return -1;
+    }
+    times.partition_point(|t| *t <= position + 0.15) as i32 - 1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn lib() -> Arc<StrataCore> {
         let now = 1_800_000_000.0;
@@ -1176,7 +1698,7 @@ mod tests {
     #[test]
     fn home_has_editorial_sections() {
         let c = lib();
-        let s = c.screen(StrataRoute::Home, 1_800_000_000.0, 23, Some("s5".into()), vec![], 0);
+        let s = c.screen(StrataRoute::Home, 1_800_000_000.0, 23, Some("s5".into()), vec![], 0, HashMap::new());
         assert_eq!(s.title, "Still up");
         let ids: Vec<&str> = s.sections.iter().map(|x| x.id.as_str()).collect();
         assert_eq!(ids[0], "resume");
@@ -1191,7 +1713,7 @@ mod tests {
     #[test]
     fn library_pages_and_index() {
         let c = lib();
-        let s = c.screen(StrataRoute::Library { tab: "songs".into() }, 0.0, 12, None, vec![], 0);
+        let s = c.screen(StrataRoute::Library { tab: "songs".into() }, 0.0, 12, None, vec![], 0, HashMap::new());
         let list = s.sections.iter().find(|x| x.id == "list").unwrap();
         assert_eq!(list.total, 300);
         assert_eq!(list.items.len(), PAGE);
@@ -1215,30 +1737,30 @@ mod tests {
     #[test]
     fn search_ranks_and_tolerates_typos() {
         let c = lib();
-        let s = c.screen(StrataRoute::Search { query: "bjork".into() }, 0.0, 12, None, vec![], 0);
+        let s = c.screen(StrataRoute::Search { query: "bjork".into() }, 0.0, 12, None, vec![], 0, HashMap::new());
         assert!(s.sections.iter().any(|x| x.id == "artists" && x.items[0].title == "Björk"), "accent-folded artist match");
-        let s = c.screen(StrataRoute::Search { query: "echelon song 2".into() }, 0.0, 12, None, vec![], 0);
+        let s = c.screen(StrataRoute::Search { query: "echelon song 2".into() }, 0.0, 12, None, vec![], 0, HashMap::new());
         assert_eq!(s.sections[0].id, "top");
         assert!(s.sections[0].items[0].title.starts_with("Échelon Song 2"), "{:?}", s.sections[0].items[0].title);
-        let s = c.screen(StrataRoute::Search { query: "bravvo".into() }, 0.0, 12, None, vec![], 0);
+        let s = c.screen(StrataRoute::Search { query: "bravvo".into() }, 0.0, 12, None, vec![], 0, HashMap::new());
         assert!(s.sections[0].items[0].title.starts_with("Bravo"), "one-letter typo still finds it");
-        let s = c.screen(StrataRoute::Search { query: "zzzz".into() }, 0.0, 12, None, vec![], 0);
+        let s = c.screen(StrataRoute::Search { query: "zzzz".into() }, 0.0, 12, None, vec![], 0, HashMap::new());
         assert_eq!(s.sections[0].style, StrataStyle::Note);
     }
 
     #[test]
     fn detail_screens() {
         let c = lib();
-        let a = c.screen(StrataRoute::Artist { name: "lana del rey".into() }, 1_800_000_000.0, 12, None, vec![], 0);
+        let a = c.screen(StrataRoute::Artist { name: "lana del rey".into() }, 1_800_000_000.0, 12, None, vec![], 0, HashMap::new());
         assert_eq!(a.title, "Lana Del Rey");
         assert_eq!(a.actions[0].title, "Play");
         let key = album_key("Daft Punk", "Album 1");
-        let al = c.screen(StrataRoute::Album { key }, 0.0, 12, None, vec![], 0);
+        let al = c.screen(StrataRoute::Album { key }, 0.0, 12, None, vec![], 0, HashMap::new());
         assert!(al.subtitle.unwrap().starts_with("Daft Punk"));
-        let p = c.screen(StrataRoute::Playlist { id: "p1".into() }, 0.0, 12, None, vec![], 0);
+        let p = c.screen(StrataRoute::Playlist { id: "p1".into() }, 0.0, 12, None, vec![], 0, HashMap::new());
         assert_eq!(p.sections[0].items.len(), 2);
         assert_eq!(p.sections[0].caption.as_deref(), Some("1 song not on this device"));
-        let q = c.screen(StrataRoute::Queue, 0.0, 12, None, vec!["s1".into(), "s2".into(), "yt123".into()], 1);
+        let q = c.screen(StrataRoute::Queue, 0.0, 12, None, vec!["s1".into(), "s2".into(), "yt123".into()], 1, HashMap::new());
         assert_eq!(q.sections[0].items[0].action, StrataAction::QueueJump { index: 1 });
         assert_eq!(q.sections[1].items[0].title, "Streaming track");
     }
@@ -1303,7 +1825,7 @@ mod tests {
         ];
         for r in routes {
             let t = std::time::Instant::now();
-            let sc = core.screen(r.clone(), 10_000.0, 12, None, vec![], 0);
+            let sc = core.screen(r.clone(), 10_000.0, 12, None, vec![], 0, HashMap::new());
             let ms = t.elapsed().as_secs_f64() * 1000.0;
             let w = weight(&sc);
             assert!(w < 2_000, "{r:?}: {w} ids in one screen");
@@ -1327,12 +1849,84 @@ mod tests {
         }
         // Artist "All songs": first page and later pages share one order.
         let ar = StrataRoute::Artist { name: "Artist 3".into() };
-        let sc = core.screen(ar.clone(), 0.0, 12, None, vec![], 0);
+        let sc = core.screen(ar.clone(), 0.0, 12, None, vec![], 0, HashMap::new());
         let first = &sc.sections.iter().find(|s| s.id == "songs").unwrap().items;
         let all = core.section_ids(ar, "songs".into());
         for (k, row) in first.iter().enumerate() {
             assert_eq!(all[k], row.id);
         }
+    }
+
+    #[test]
+    fn settings_pages_reflect_values() {
+        let c = lib();
+        let mut v = HashMap::new();
+        v.insert("audio.eq".to_string(), StrataValue::Flag { on: true });
+        v.insert("audio.speed".to_string(), StrataValue::Number { value: 1.25 });
+        v.insert("audio.eqPreset".to_string(), StrataValue::Text { value: "Rock".into() });
+        let s = c.screen(StrataRoute::Settings { page: "sound".into() }, 0.0, 12, None, vec![], 0, v);
+        let all: Vec<&StrataItem> = s.sections.iter().flat_map(|x| &x.items).collect();
+        let eq = all.iter().find(|i| i.id == "set-audio.eq").unwrap();
+        assert_eq!(eq.control, Some(StrataControl::Toggle { key: "audio.eq".into(), on: true }));
+        let sp = all.iter().find(|i| i.id == "set-audio.speed").unwrap();
+        assert_eq!(sp.meta.as_deref(), Some("1.25×"));
+        let pr = all.iter().find(|i| i.id == "set-audio.eqPreset").unwrap();
+        assert_eq!(pr.meta.as_deref(), Some("Rock"));
+        // Every page builds and has controls.
+        for page in ["root", "sound", "playback", "haptics", "library", "appearance", "sleep", "about"] {
+            let s = c.screen(StrataRoute::Settings { page: page.into() }, 0.0, 12, None, vec![], 0, HashMap::new());
+            assert!(!s.sections.is_empty(), "{page}");
+        }
+    }
+
+    #[test]
+    fn account_signed_in_and_out() {
+        let c = lib();
+        let s = c.screen(StrataRoute::Account, 0.0, 12, None, vec![], 0, HashMap::new());
+        assert!(s.sections.iter().flat_map(|x| &x.items).any(|i| i.action == StrataAction::SignIn));
+        let mut v = HashMap::new();
+        v.insert("account.signedIn".to_string(), StrataValue::Flag { on: true });
+        v.insert("account.username".to_string(), StrataValue::Text { value: "hx".into() });
+        let s = c.screen(StrataRoute::Account, 0.0, 12, None, vec![], 0, v);
+        assert_eq!(s.sections[0].items[0].subtitle.as_deref(), Some("@hx"));
+        assert!(s.sections.iter().flat_map(|x| &x.items).any(|i| i.action == StrataAction::SignOut));
+    }
+
+    #[test]
+    fn cloud_results_and_library_sort() {
+        let c = lib();
+        c.set_cloud(vec![StrataRemote { id: "c1".into(), title: "Bravo Live".into(), artist: "Daft Punk".into(), source: "cloud".into(), ..Default::default() }]);
+        let s = c.screen(StrataRoute::Cloud { query: "bravo".into() }, 0.0, 12, None, vec![], 0, HashMap::new());
+        assert_eq!(s.sections[0].id, "searching");
+        c.set_results("bravo".into(), vec![StrataRemote { id: "yt1".into(), title: "Bravo".into(), source: "youtube".into(), ..Default::default() }], false);
+        let s = c.screen(StrataRoute::Cloud { query: "bravo".into() }, 0.0, 12, None, vec![], 0, HashMap::new());
+        assert_eq!(s.sections[0].items[0].action, StrataAction::StreamPlay { id: "yt1".into() });
+        assert_eq!(s.sections[0].items[0].secondary, Some(StrataAction::StreamDownload { id: "yt1".into() }));
+        assert!(s.sections.iter().any(|x| x.id == "mine"));
+        // Sorting songs by length: longest first, and paging/section_ids follow it.
+        c.set_sort("songs".into(), "duration".into());
+        let ids = c.section_ids(StrataRoute::Library { tab: "songs".into() }, "list".into());
+        assert_eq!(ids[0], "s299");
+        let lib_s = c.screen(StrataRoute::Library { tab: "songs".into() }, 0.0, 12, None, vec![], 0, HashMap::new());
+        assert!(lib_s.sections.iter().any(|x| x.id == "sort" && x.items.iter().any(|i| i.emphasis && i.id == "sort-duration")));
+        assert!(lib_s.sections.iter().find(|x| x.id == "list").unwrap().index.is_empty(), "no A-Z rail when not sorted by name");
+        // Add to playlist offers "New playlist" then the playlists.
+        let a = c.screen(StrataRoute::AddToPlaylist { ids: vec!["s1".into()] }, 0.0, 12, None, vec![], 0, HashMap::new());
+        assert_eq!(a.sections[0].items[0].action, StrataAction::CreatePlaylist { name: None, ids: vec!["s1".into()] });
+        assert_eq!(a.sections[0].items[1].action, StrataAction::AddToPlaylist { playlist: "p1".into(), ids: vec!["s1".into()] });
+    }
+
+    #[test]
+    fn lyrics_parse_and_follow() {
+        let l = strata_lyrics_parse("[ar:Someone]\n[offset:500]\n[00:10.00][00:40.00]Chorus line\n[00:20.50]Verse two\n\n".into());
+        assert_eq!(l.iter().map(|x| (x.time, x.text.as_str())).collect::<Vec<_>>(), vec![(9.5, "Chorus line"), (20.0, "Verse two"), (39.5, "Chorus line")]);
+        let times: Vec<f64> = l.iter().map(|x| x.time).collect();
+        assert_eq!(strata_lyric_index(times.clone(), 5.0), -1);
+        assert_eq!(strata_lyric_index(times.clone(), 21.0), 1);
+        assert_eq!(strata_lyric_index(times, 100.0), 2);
+        let plain = strata_lyrics_parse("first\nsecond".into());
+        assert_eq!(plain.len(), 2);
+        assert_eq!(strata_lyric_index(plain.iter().map(|x| x.time).collect(), 50.0), -1);
     }
 
     #[test]
