@@ -9,42 +9,160 @@ import SwiftUI
 struct StrataScreenHost: View {
     let route: StrataRoute
     @EnvironmentObject private var store: StrataStore
-    @State private var screen: StrataScreen?
+    @StateObject private var model = StrataScreenModel()
 
     var body: some View {
-        ScrollView {
-            if let screen {
-                StrataScreenView(screen: screen)
-                    .transition(.opacity)
-            } else {
-                StrataLoading()
+        ScrollViewReader { proxy in
+            ScrollView {
+                if let screen = model.screen {
+                    StrataScreenView(screen: screen, model: model)
+                } else {
+                    StrataLoading()
+                }
+            }
+            .scrollIndicators(.hidden)
+            .overlay(alignment: .trailing) {
+                if let s = model.screen?.sections.first(where: { $0.index.count > 3 }) {
+                    StrataIndexRail(letters: s.index) { i in
+                        Task {
+                            let target = Int(s.indexPositions[i])
+                            await model.ensureLoaded(section: s, through: target, route: route, store: store)
+                            if let row = model.items(of: s)[safe: target] {
+                                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(row.id, anchor: .top) }
+                            }
+                        }
+                    }
+                    .padding(.trailing, 2)
+                }
             }
         }
-        .scrollIndicators(.hidden)
         .background(StrataPalette.ground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        .task(id: TaskKey(route: route, revision: store.revision)) {
+        .task(id: key) {
             let s = await store.screen(for: route)
-            withAnimation(.easeOut(duration: 0.18)) { screen = s }
+            model.set(s)
+            await model.restorePaging(route: route, store: store)
         }
+    }
+
+    /// Only Home and Queue change with the playing song; the rest reload
+    /// only when the library does (Library used to reload on every track).
+    private var key: TaskKey {
+        let followsPlayback: Bool
+        switch route {
+        case .home, .queue: followsPlayback = true
+        default: followsPlayback = false
+        }
+        return TaskKey(route: route, data: store.dataRevision, now: followsPlayback ? store.nowRevision : 0)
     }
 
     private struct TaskKey: Equatable {
         let route: StrataRoute
-        let revision: Int
+        let data: Int
+        let now: Int
     }
+}
+
+/// One screen's description plus the rows paged in after it.
+@MainActor
+final class StrataScreenModel: ObservableObject {
+    @Published private(set) var screen: StrataScreen?
+    @Published private(set) var extra: [String: [StrataItem]] = [:]
+    private var loading: Set<String> = []
+
+    /// Rows that were loaded per section before a reload.
+    private var reloadCounts: [String: Int] = [:]
+
+    func set(_ s: StrataScreen) {
+        guard screen != s else { return }
+        if let old = screen, old.route == s.route {
+            reloadCounts = Dictionary(uniqueKeysWithValues: old.sections.map { ($0.id, items(of: $0).count) })
+        } else {
+            reloadCounts = [:]
+        }
+        screen = s
+        extra = [:]
+    }
+
+    /// After a reload (library changed), page back in as many rows as were
+    /// loaded, so a long list keeps its scroll depth.
+    func restorePaging(route: StrataRoute, store: StrataStore) async {
+        guard let screen else { return }
+        for section in screen.sections {
+            if let n = reloadCounts[section.id], n > section.items.count {
+                await ensureLoaded(section: section, through: n - 1, route: route, store: store)
+            }
+        }
+        reloadCounts = [:]
+    }
+
+    func items(of section: StrataSection) -> [StrataItem] {
+        section.items + (extra[section.id] ?? [])
+    }
+
+    /// Next page when the last row appears.
+    func loadMore(_ section: StrataSection, route: StrataRoute, store: StrataStore) {
+        let have = items(of: section).count
+        guard have < Int(section.total), !loading.contains(section.id) else { return }
+        loading.insert(section.id)
+        Task {
+            let more = await store.page(route: route, section: section.id, offset: have)
+            extra[section.id, default: []].append(contentsOf: more)
+            loading.remove(section.id)
+        }
+    }
+
+    /// Rows up to `index` loaded (the A–Z rail jumping past what's on screen).
+    func ensureLoaded(section: StrataSection, through index: Int, route: StrataRoute, store: StrataStore) async {
+        let have = items(of: section).count
+        guard index >= have, have < Int(section.total) else { return }
+        let more = await store.page(route: route, section: section.id, offset: have, limit: index - have + 60)
+        extra[section.id, default: []].append(contentsOf: more)
+    }
+}
+
+extension Array {
+    subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }
 
 struct StrataScreenView: View {
     let screen: StrataScreen
+    @ObservedObject var model: StrataScreenModel
     @EnvironmentObject private var store: StrataStore
 
     var body: some View {
         let t = store.theme
-        LazyVStack(alignment: .leading, spacing: 34, pinnedViews: []) {
-            StrataHead(screen: screen)
+        // Rows of long sections go straight into this lazy stack (no nested
+        // container), so only rows on screen exist.
+        LazyVStack(alignment: .leading, spacing: 0) {
+            StrataHead(screen: screen).padding(.bottom, 30)
             ForEach(screen.sections, id: \.id) { section in
-                StrataSectionView(section: section, route: screen.route)
+                StrataSectionHeader(section: section).padding(.bottom, 14)
+                switch section.style {
+                case .ledger:
+                    let rows = model.items(of: section)
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { i, item in
+                        StrataLedgerRow(item: item)
+                            .padding(.trailing, section.index.count > 3 ? 18 : 0)
+                            .onAppear { if i == rows.count - 1 { model.loadMore(section, route: screen.route, store: store) } }
+                    }
+                    Color.clear.frame(height: 34)
+                case .grid:
+                    let rows = model.items(of: section)
+                    let pairs = stride(from: 0, to: rows.count, by: 2).map { Array(rows[$0..<min($0 + 2, rows.count)]) }
+                    ForEach(Array(pairs.enumerated()), id: \.element.first!.id) { i, pair in
+                        HStack(alignment: .top, spacing: 14) {
+                            ForEach(pair, id: \.id) { StrataGridCell(item: $0) }
+                            if pair.count == 1 { Color.clear.frame(maxWidth: .infinity) }
+                        }
+                        .padding(.trailing, section.index.count > 3 ? 18 : 0)
+                        .padding(.bottom, 20)
+                        .onAppear { if i == pairs.count - 1 { model.loadMore(section, route: screen.route, store: store) } }
+                    }
+                    Color.clear.frame(height: 14)
+                default:
+                    StrataSectionBody(section: section, route: screen.route).padding(.bottom, 34)
+                }
             }
             Color.clear.frame(height: 150)
         }
@@ -134,46 +252,50 @@ struct StrataButton: View {
 
 // MARK: - Sections
 
-struct StrataSectionView: View {
+struct StrataSectionHeader: View {
     let section: StrataSection
-    let route: StrataRoute
     @EnvironmentObject private var store: StrataStore
 
     var body: some View {
         let t = store.theme
-        VStack(alignment: .leading, spacing: 14) {
-            if section.title != nil || section.caption != nil {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        if let title = section.title {
-                            Text(title)
-                                .font(.system(size: t.typeScale[2], weight: .heavy))
-                                .tracking(-0.4)
-                                .foregroundStyle(StrataPalette.ink)
-                        }
-                        if let c = section.caption {
-                            Text(c).font(.system(size: t.typeScale[4])).foregroundStyle(StrataPalette.inkFaint)
-                        }
+        if section.title != nil || section.caption != nil {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    if let title = section.title {
+                        Text(title)
+                            .font(.system(size: t.typeScale[2], weight: .heavy))
+                            .tracking(-0.4)
+                            .foregroundStyle(StrataPalette.ink)
                     }
-                    Spacer()
-                    if let more = section.more {
-                        Button { store.perform(more) } label: {
-                            Text("All").font(.system(size: t.typeScale[4], weight: .bold)).foregroundStyle(StrataPalette.accent)
-                        }
-                        .buttonStyle(.plain)
+                    if let c = section.caption {
+                        Text(c).font(.system(size: t.typeScale[4])).foregroundStyle(StrataPalette.inkFaint)
                     }
                 }
+                Spacer()
+                if let more = section.more {
+                    Button { store.perform(more) } label: {
+                        Text("All").font(.system(size: t.typeScale[4], weight: .bold)).foregroundStyle(StrataPalette.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            switch section.style {
-            case .hero: StrataHeroSection(items: section.items)
-            case .stack: StrataStackSection(items: section.items)
-            case .ribbon: StrataRibbonSection(items: section.items)
-            case .ledger: StrataLedgerSection(section: section, route: route)
-            case .grid: StrataGridSection(section: section, route: route)
-            case .chips: StrataChipsSection(items: section.items)
-            case .stats: StrataStatsSection(items: section.items)
-            case .note: StrataNoteSection(items: section.items)
-            }
+        }
+    }
+}
+
+struct StrataSectionBody: View {
+    let section: StrataSection
+    let route: StrataRoute
+
+    var body: some View {
+        switch section.style {
+        case .hero: StrataHeroSection(items: section.items)
+        case .stack: StrataStackSection(items: section.items)
+        case .ribbon: StrataRibbonSection(items: section.items)
+        case .chips: StrataChipsSection(items: section.items)
+        case .stats: StrataStatsSection(items: section.items)
+        case .note: StrataNoteSection(items: section.items)
+        case .ledger, .grid: EmptyView()
         }
     }
 }
@@ -324,68 +446,13 @@ struct StrataRibbonSection: View {
     }
 }
 
-/// Numbered / dense rows, paged from Rust as they scroll in, with an
-/// alphabet rail for name-sorted lists.
-struct StrataLedgerSection: View {
-    let section: StrataSection
-    let route: StrataRoute
-    @EnvironmentObject private var store: StrataStore
-    @State private var extra: [StrataItem] = []
-    @State private var loading = false
-
-    var body: some View {
-        let rows = section.items + extra
-        ScrollViewReader { proxy in
-            HStack(alignment: .top, spacing: 6) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { i, item in
-                        StrataLedgerRow(item: item)
-                            .id(item.id)
-                            .onAppear {
-                                if i == rows.count - 1 { loadMore(have: rows.count) }
-                            }
-                    }
-                }
-                if section.index.count > 3 {
-                    StrataIndexRail(letters: section.index) { letter in
-                        if let target = rows.first(where: { strataLetter($0.title) == letter }) {
-                            proxy.scrollTo(target.id, anchor: .top)
-                        } else {
-                            loadMore(have: rows.count)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func loadMore(have: Int) {
-        guard !loading, have < Int(section.total) else { return }
-        loading = true
-        Task {
-            let more = await store.page(route: route, section: section.id, offset: have)
-            extra.append(contentsOf: more)
-            loading = false
-        }
-    }
-}
-
-func strataLetter(_ s: String) -> String {
-    var t = s.lowercased()
-    if t.hasPrefix("the ") { t.removeFirst(4) }
-    guard let c = t.folding(options: .diacriticInsensitive, locale: nil).first(where: { $0.isLetter || $0.isNumber }) else { return "#" }
-    if c.isASCII, c.isLetter { return String(c).uppercased() }
-    return c.isLetter ? "★" : "#"
-}
-
 struct StrataLedgerRow: View {
     let item: StrataItem
     @EnvironmentObject private var store: StrataStore
-    @EnvironmentObject private var player: AudioPlayerManager
 
     var body: some View {
         let t = store.theme
-        let playing = player.currentSong?.id == item.id
+        let playing = store.currentID == item.id
         Button { store.perform(item.action) } label: {
             HStack(spacing: 12) {
                 if let n = item.number {
@@ -423,62 +490,49 @@ struct StrataLedgerRow: View {
     }
 }
 
+/// A–Z rail: letters jump to where Rust says each one starts.
 struct StrataIndexRail: View {
     let letters: [String]
-    let jump: (String) -> Void
-    @EnvironmentObject private var store: StrataStore
+    let jump: (Int) -> Void
 
     var body: some View {
-        VStack(spacing: 2) {
-            ForEach(letters, id: \.self) { l in
-                Button { jump(l) } label: {
+        VStack(spacing: 1) {
+            ForEach(Array(letters.enumerated()), id: \.offset) { i, l in
+                Button { jump(i); UISelectionFeedbackGenerator().selectionChanged() } label: {
                     Text(l).font(.system(size: 10, weight: .bold, design: .monospaced)).foregroundStyle(StrataPalette.accent)
-                        .frame(width: 16, height: 14)
+                        .frame(width: 18, height: 13)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.top, 8)
+        .padding(.vertical, 6)
+        .background(StrataPalette.layer.opacity(0.85), in: Capsule())
     }
 }
 
-struct StrataGridSection: View {
-    let section: StrataSection
-    let route: StrataRoute
+struct StrataGridCell: View {
+    let item: StrataItem
     @EnvironmentObject private var store: StrataStore
-    @State private var extra: [StrataItem] = []
-    @State private var loading = false
 
     var body: some View {
         let t = store.theme
-        let rows = section.items + extra
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], alignment: .leading, spacing: 20) {
-            ForEach(Array(rows.enumerated()), id: \.element.id) { i, item in
-                Button { store.perform(item.action) } label: {
-                    VStack(alignment: .leading, spacing: 6) {
+        Button { store.perform(item.action) } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                Color.clear
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
                         GeometryReader { g in
                             StrataArt(song: item.art.flatMap { store.song($0) }, size: g.size.width, radius: t.radius, glyph: item.glyph)
                         }
-                        .aspectRatio(1, contentMode: .fit)
-                        Text(item.title).font(.system(size: t.typeScale[4], weight: .bold)).foregroundStyle(StrataPalette.ink).lineLimit(2)
-                        if let s = item.subtitle {
-                            Text(s).font(.system(size: t.typeScale[5])).foregroundStyle(StrataPalette.inkFaint).lineLimit(1)
-                        }
                     }
+                Text(item.title).font(.system(size: t.typeScale[4], weight: .bold)).foregroundStyle(StrataPalette.ink).lineLimit(2)
+                if let s = item.subtitle {
+                    Text(s).font(.system(size: t.typeScale[5])).foregroundStyle(StrataPalette.inkFaint).lineLimit(1)
                 }
-                .buttonStyle(StrataPress())
-                .onAppear { if i == rows.count - 1 { loadMore(have: rows.count) } }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private func loadMore(have: Int) {
-        guard !loading, have < Int(section.total) else { return }
-        loading = true
-        Task {
-            extra.append(contentsOf: await store.page(route: route, section: section.id, offset: have))
-            loading = false
-        }
+        .buttonStyle(StrataPress())
     }
 }
 

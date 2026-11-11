@@ -17,8 +17,12 @@ final class StrataStore: ObservableObject {
 
     let core = StrataCore()
 
-    /// Bumped whenever the library or play stats changed: screens reload.
-    @Published private(set) var revision = 0
+    /// Bumped when the library changed (every screen reloads)…
+    @Published private(set) var dataRevision = 0
+    /// …and when the playing song changed (only Home and Queue reload).
+    @Published private(set) var nowRevision = 0
+    /// The playing song's id (rows highlight it without observing the player).
+    @Published private(set) var currentID: String?
     @Published private(set) var theme: StrataTheme = StrataPalette.theme {
         didSet { StrataPalette.theme = theme }
     }
@@ -68,7 +72,7 @@ final class StrataStore: ObservableObject {
         syncTask?.cancel()
         syncTask = Task.detached(priority: .userInitiated) { [weak self] in
             core.setLibrary(songs: input, playlists: lists)
-            await MainActor.run { self?.revision &+= 1 }
+            await MainActor.run { self?.dataRevision &+= 1 }
         }
     }
 
@@ -80,7 +84,8 @@ final class StrataStore: ObservableObject {
                                  lastPlayed: h.lastPlayedAt(for: s.id)?.timeIntervalSince1970 ?? Date().timeIntervalSince1970,
                                  favorite: library?.favoriteSongIDs.contains(s.id) ?? false)
         }
-        revision &+= 1
+        currentID = song?.id
+        nowRevision &+= 1
         retheme(for: song)
     }
 
@@ -126,10 +131,10 @@ final class StrataStore: ObservableObject {
         }.value
     }
 
-    func page(route: StrataRoute, section: String, offset: Int) async -> [StrataItem] {
+    func page(route: StrataRoute, section: String, offset: Int, limit: Int = 120) async -> [StrataItem] {
         let core = core
         return await Task.detached(priority: .userInitiated) {
-            core.page(route: route, sectionId: section, offset: UInt32(offset), limit: 200)
+            core.page(route: route, sectionId: section, offset: UInt32(offset), limit: UInt32(min(max(limit, 1), 500)))
         }.value
     }
 
@@ -152,6 +157,13 @@ final class StrataStore: ObservableObject {
                 player.play(song: songs[start], in: songs, uiSource: "strata")
             }
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        case let .playFrom(route, section, index, shuffle):
+            // Long lists play by reference: their ids are fetched once, now.
+            let core = core
+            Task {
+                let ids = await Task.detached(priority: .userInitiated) { core.sectionIds(route: route, sectionId: section) }.value
+                self.perform(.play(ids: ids, index: index, shuffle: shuffle))
+            }
         case let .playNext(ids):
             for s in ids.compactMap({ song($0) }).reversed() { player.insertNext(song: s) }
             ToastCenter.shared.show(ids.count == 1 ? "Plays next" : "\(ids.count) songs play next")

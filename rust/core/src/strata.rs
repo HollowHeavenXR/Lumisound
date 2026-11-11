@@ -74,6 +74,11 @@ pub enum StrataRoute {
 pub enum StrataAction {
     /// Play `ids` starting at `index` (shuffled when `shuffle`).
     Play { ids: Vec<String>, index: u32, shuffle: bool },
+    /// Play a long list by reference: Swift asks `section_ids(route,
+    /// section)` once on tap. (Every row of a 6 000-song list carrying all
+    /// 6 000 ids was millions of strings across the FFI: the phone ran out
+    /// of memory opening Library.)
+    PlayFrom { route: StrataRoute, section: String, index: u32, shuffle: bool },
     PlayNext { ids: Vec<String> },
     AddToQueue { ids: Vec<String> },
     Open { route: StrataRoute },
@@ -122,8 +127,10 @@ pub struct StrataSection {
     /// Items available in total (`page` fetches beyond `items`).
     pub total: u32,
     pub more: Option<StrataAction>,
-    /// Alphabet index letters for Ledger sections sorted by name.
+    /// Alphabet index letters for Ledger sections sorted by name…
     pub index: Vec<String>,
+    /// …and the row each letter starts at (the rail can jump past what's loaded).
+    pub index_positions: Vec<u32>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -189,7 +196,7 @@ fn item(id: impl Into<String>, title: impl Into<String>) -> StrataItem {
 
 fn section(id: &str, style: StrataStyle, title: Option<&str>, items: Vec<StrataItem>) -> StrataSection {
     let total = items.len() as u32;
-    StrataSection { id: id.into(), style, title: title.map(str::to_string), caption: None, items, total, more: None, index: vec![] }
+    StrataSection { id: id.into(), style, title: title.map(str::to_string), caption: None, items, total, more: None, index: vec![], index_positions: vec![] }
 }
 
 // ---- core -------------------------------------------------------------------------------------
@@ -285,12 +292,27 @@ impl StrataCore {
     /// More items of a paged section (`offset` onward).
     pub fn page(&self, route: StrataRoute, section_id: String, offset: u32, limit: u32) -> Vec<StrataItem> {
         let l = self.lib.read().unwrap();
-        let full = full_section(&l, &route, &section_id);
-        full.into_iter().skip(offset as usize).take(limit.clamp(1, 500) as usize).collect()
+        section_page(&l, &route, &section_id, offset as usize, limit.clamp(1, 500) as usize)
+    }
+
+    /// Song ids of a long section, in play order (for `PlayFrom`).
+    pub fn section_ids(&self, route: StrataRoute, section_id: String) -> Vec<String> {
+        let l = self.lib.read().unwrap();
+        section_order(&l, &route, &section_id).map(|(idx, _)| idx.iter().map(|&i| l.songs[i].id.clone()).collect()).unwrap_or_default()
     }
 }
 
-fn song_row(l: &Lib, i: usize, context: &[String], pos: usize, number: Option<u32>) -> StrataItem {
+/// Lists up to this long carry their ids in the action; longer ones play by reference.
+const INLINE_IDS: usize = 200;
+
+/// Where a song row's list lives: small lists inline, long ones by reference.
+#[derive(Clone, Copy)]
+enum Ctx<'a> {
+    Inline,
+    Section(&'a StrataRoute, &'a str),
+}
+
+fn song_row(l: &Lib, i: usize, action: StrataAction, number: Option<u32>) -> StrataItem {
     let s = &l.songs[i];
     let mut it = item(&s.id, if s.title.is_empty() { "Untitled" } else { &s.title });
     let artist = if s.artist.is_empty() { "Unknown Artist" } else { &s.artist };
@@ -299,33 +321,68 @@ fn song_row(l: &Lib, i: usize, context: &[String], pos: usize, number: Option<u3
     it.art = Some(s.id.clone());
     it.number = number;
     it.emphasis = s.favorite;
-    it.action = StrataAction::Play { ids: context.to_vec(), index: pos as u32, shuffle: false };
+    it.action = action;
     it.secondary = Some(StrataAction::PlayNext { ids: vec![s.id.clone()] });
     it
 }
 
-fn song_rows(l: &Lib, idx: &[usize], numbered: bool) -> Vec<StrataItem> {
-    let ids: Vec<String> = idx.iter().map(|&i| l.songs[i].id.clone()).collect();
-    idx.iter().enumerate().map(|(p, &i)| song_row(l, i, &ids, p, numbered.then_some(p as u32 + 1))).collect()
+/// Rows for `idx[range]` of a list, each playing the whole list from itself.
+fn song_rows_range(l: &Lib, idx: &[usize], range: std::ops::Range<usize>, numbered: bool, ctx: Ctx) -> Vec<StrataItem> {
+    // Rows of a named section always play by reference: inline ids would be
+    // rows × list length (an artist's 150 songs put 18 000 ids on one screen).
+    let inline: Option<Vec<String>> = match ctx {
+        Ctx::Inline => Some(idx.iter().take(INLINE_IDS).map(|&i| l.songs[i].id.clone()).collect()),
+        Ctx::Section(..) => None,
+    };
+    let end = range.end.min(idx.len());
+    (range.start.min(end)..end)
+        .map(|p| {
+            let action = match (&inline, ctx) {
+                (Some(ids), _) if p < ids.len() => StrataAction::Play { ids: ids.clone(), index: p as u32, shuffle: false },
+                (_, Ctx::Section(route, sec)) => StrataAction::PlayFrom { route: route.clone(), section: sec.to_string(), index: p as u32, shuffle: false },
+                _ => StrataAction::Play { ids: vec![l.songs[idx[p]].id.clone()], index: 0, shuffle: false },
+            };
+            song_row(l, idx[p], action, numbered.then_some(p as u32 + 1))
+        })
+        .collect()
 }
 
-/// Ledger section of songs, first page only (rest via `page`).
-fn paged_songs(l: &Lib, id: &str, title: Option<&str>, idx: &[usize], numbered: bool, with_index: bool) -> StrataSection {
-    let all = song_rows(l, idx, numbered);
-    let total = all.len() as u32;
-    let mut sec = section(id, StrataStyle::Ledger, title, all.into_iter().take(PAGE).collect());
-    sec.total = total;
+fn song_rows(l: &Lib, idx: &[usize], numbered: bool) -> Vec<StrataItem> {
+    song_rows_range(l, idx, 0..idx.len(), numbered, Ctx::Inline)
+}
+
+/// Ledger section of songs: only the first page of rows is built (the
+/// rest come from `page`), each playing the list by reference.
+fn paged_songs(l: &Lib, route: &StrataRoute, id: &str, title: Option<&str>, idx: &[usize], numbered: bool, with_index: bool) -> StrataSection {
+    let rows = song_rows_range(l, idx, 0..PAGE, numbered, Ctx::Section(route, id));
+    let mut sec = section(id, StrataStyle::Ledger, title, rows);
+    sec.total = idx.len() as u32;
     if with_index {
-        let mut seen = Vec::<String>::new();
-        for &i in idx {
+        for (p, &i) in idx.iter().enumerate() {
             let c = letter(&l.songs[i].title);
-            if seen.last() != Some(&c) {
-                seen.push(c);
+            if sec.index.last() != Some(&c) {
+                sec.index.push(c);
+                sec.index_positions.push(p as u32);
             }
         }
-        sec.index = seen;
     }
     sec
+}
+
+/// Play / Shuffle / Play next for a list that lives in `route`'s `section`.
+fn play_actions_for(l: &Lib, route: &StrataRoute, section: &str, idx: &[usize]) -> Vec<StrataItem> {
+    if idx.len() <= INLINE_IDS {
+        let ids: Vec<String> = idx.iter().map(|&i| l.songs[i].id.clone()).collect();
+        return play_actions(&ids);
+    }
+    let mut p = item("play", "Play");
+    p.glyph = Some("play.fill".into());
+    p.emphasis = true;
+    p.action = StrataAction::PlayFrom { route: route.clone(), section: section.into(), index: 0, shuffle: false };
+    let mut sh = item("shuffle", "Shuffle");
+    sh.glyph = Some("shuffle".into());
+    sh.action = StrataAction::PlayFrom { route: route.clone(), section: section.into(), index: 0, shuffle: true };
+    vec![p, sh]
 }
 
 fn play_actions(ids: &[String]) -> Vec<StrataItem> {
@@ -370,7 +427,7 @@ fn home(l: &Lib, now: f64, hour: u32, current: Option<&str>) -> StrataScreen {
     let resume = current.and_then(|c| l.by_id.get(c).copied()).or_else(|| (0..l.songs.len()).filter(|&i| l.songs[i].last_played > 0.0).max_by(|&a, &b| l.songs[a].last_played.total_cmp(&l.songs[b].last_played)));
     if let Some(i) = resume {
         let s = &l.songs[i];
-        let mut it = song_row(l, i, std::slice::from_ref(&s.id), 0, None);
+        let mut it = song_row(l, i, StrataAction::Play { ids: vec![s.id.clone()], index: 0, shuffle: false }, None);
         it.meta = Some(if current.is_some() { "Now playing".into() } else { "Pick up where you left off".into() });
         let mut sec = section("resume", StrataStyle::Hero, None, vec![it]);
         sec.caption = Some(s.artist.clone());
@@ -527,15 +584,16 @@ fn genre_items(l: &Lib) -> Vec<StrataItem> {
     }).collect()
 }
 
-fn letters_of(items: &[StrataItem]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for it in items {
+fn letters_of(items: &[StrataItem]) -> (Vec<String>, Vec<u32>) {
+    let (mut out, mut pos): (Vec<String>, Vec<u32>) = (Vec::new(), Vec::new());
+    for (p, it) in items.iter().enumerate() {
         let c = letter(&it.title);
         if out.last() != Some(&c) {
             out.push(c);
+            pos.push(p as u32);
         }
     }
-    out
+    (out, pos)
 }
 
 fn tab_chips(active: &str) -> StrataSection {
@@ -555,19 +613,12 @@ fn library(l: &Lib, tab: &str) -> StrataScreen {
     let title = LIBRARY_TABS.iter().find(|(t, _)| *t == tab).map(|x| x.1).unwrap_or("Library");
     let mut subtitle = None;
     match tab {
-        "songs" => {
-            let idx = sorted_songs(l);
-            let ids: Vec<String> = idx.iter().map(|&i| l.songs[i].id.clone()).collect();
-            actions = play_actions(&ids);
+        "songs" | "recent" => {
+            let route = StrataRoute::Library { tab: tab.into() };
+            let (sec, idx) = ordered_songs(l, &route, "list", None, tab == "songs");
+            actions = play_actions_for(l, &route, "list", &idx);
             subtitle = Some(format!("{} · {}", plural(idx.len(), "song", "songs"), hours_label(l.songs.iter().map(|s| s.duration).sum())));
-            sections.push(paged_songs(l, "list", None, &idx, false, true));
-        }
-        "recent" => {
-            let mut idx: Vec<usize> = (0..l.songs.len()).collect();
-            idx.sort_by(|&a, &b| l.songs[b].added.total_cmp(&l.songs[a].added));
-            let ids: Vec<String> = idx.iter().map(|&i| l.songs[i].id.clone()).collect();
-            actions = play_actions(&ids);
-            sections.push(paged_songs(l, "list", None, &idx, false, false));
+            sections.push(sec);
         }
         "favorites" => return favorites(l),
         "albums" | "artists" | "playlists" | "genres" => {
@@ -580,10 +631,11 @@ fn library(l: &Lib, tab: &str) -> StrataScreen {
             subtitle = Some(plural(all.len(), &title.to_lowercase()[..title.len() - 1], &title.to_lowercase()));
             let style = if tab == "albums" { StrataStyle::Grid } else if tab == "genres" { StrataStyle::Chips } else { StrataStyle::Ledger };
             let total = all.len() as u32;
-            let index = if tab == "genres" { vec![] } else { letters_of(&all) };
+            let (index, positions) = if tab == "genres" { (vec![], vec![]) } else { letters_of(&all) };
             let mut sec = section("list", style, None, all.into_iter().take(PAGE).collect());
             sec.total = total;
             sec.index = index;
+            sec.index_positions = positions;
             sections.push(sec);
         }
         _ => {}
@@ -591,42 +643,59 @@ fn library(l: &Lib, tab: &str) -> StrataScreen {
     StrataScreen { route: StrataRoute::Library { tab: tab.into() }, kicker: Some("Library".into()), title: title.into(), subtitle, art: None, actions, sections }
 }
 
-/// The complete item list behind a paged section.
-fn full_section(l: &Lib, route: &StrataRoute, id: &str) -> Vec<StrataItem> {
-    match (route, id) {
+/// Song order of a long song section (and whether it is numbered): the
+/// one ordering used for the first page, later pages and `section_ids`.
+fn section_order(l: &Lib, route: &StrataRoute, id: &str) -> Option<(Vec<usize>, bool)> {
+    Some(match (route, id) {
+        (StrataRoute::Library { tab }, "list") if tab == "songs" => (sorted_songs(l), false),
+        (StrataRoute::Library { tab }, "list") if tab == "recent" => {
+            let mut idx: Vec<usize> = (0..l.songs.len()).collect();
+            idx.sort_by(|&a, &b| l.songs[b].added.total_cmp(&l.songs[a].added));
+            (idx, false)
+        }
+        (StrataRoute::Library { tab }, "list") if tab == "favorites" => ((0..l.songs.len()).filter(|&i| l.songs[i].favorite).collect(), false),
+        (StrataRoute::Favorites, "list") => ((0..l.songs.len()).filter(|&i| l.songs[i].favorite).collect(), false),
+        (StrataRoute::Genre { name }, "list") => (l.genres.get(name).cloned().unwrap_or_default(), false),
+        (StrataRoute::Playlist { id }, "list") => (
+            l.playlists.iter().find(|p| &p.id == id).map(|p| p.song_ids.iter().filter_map(|s| l.by_id.get(s).copied()).collect()).unwrap_or_default(),
+            true,
+        ),
+        (StrataRoute::Artist { name }, "songs") => {
+            let mut idx = l.artists.get(&fold(name)).cloned().unwrap_or_default();
+            idx.sort_by_cached_key(|&i| sort_key(&l.songs[i].title));
+            (idx, false)
+        }
+        (StrataRoute::History, "list") => {
+            let mut idx: Vec<usize> = (0..l.songs.len()).filter(|&i| l.songs[i].last_played > 0.0).collect();
+            idx.sort_by(|&a, &b| l.songs[b].last_played.total_cmp(&l.songs[a].last_played));
+            (idx, false)
+        }
+        _ => return None,
+    })
+}
+
+/// Items `offset..offset+limit` of a paged section (only those are built).
+fn section_page(l: &Lib, route: &StrataRoute, id: &str, offset: usize, limit: usize) -> Vec<StrataItem> {
+    if let Some((idx, numbered)) = section_order(l, route, id) {
+        return song_rows_range(l, &idx, offset..offset + limit, numbered, Ctx::Section(route, id));
+    }
+    let all = match (route, id) {
         (StrataRoute::Library { tab }, "list") => match tab.as_str() {
-            "songs" => song_rows(l, &sorted_songs(l), false),
-            "recent" => {
-                let mut idx: Vec<usize> = (0..l.songs.len()).collect();
-                idx.sort_by(|&a, &b| l.songs[b].added.total_cmp(&l.songs[a].added));
-                song_rows(l, &idx, false)
-            }
             "albums" => album_items(l),
             "artists" => artist_items(l),
             "playlists" => playlist_items(l),
             "genres" => genre_items(l),
             _ => vec![],
         },
-        (StrataRoute::Favorites, "list") => {
-            let idx: Vec<usize> = (0..l.songs.len()).filter(|&i| l.songs[i].favorite).collect();
-            song_rows(l, &idx, false)
-        }
-        (StrataRoute::Genre { name }, "list") => l.genres.get(name).map(|v| song_rows(l, v, false)).unwrap_or_default(),
-        (StrataRoute::Playlist { id }, "list") => {
-            let idx: Vec<usize> = l.playlists.iter().find(|p| &p.id == id).map(|p| p.song_ids.iter().filter_map(|s| l.by_id.get(s).copied()).collect()).unwrap_or_default();
-            song_rows(l, &idx, true)
-        }
-        (StrataRoute::Artist { name }, "songs") => {
-            let idx = l.artists.get(&fold(name)).cloned().unwrap_or_default();
-            song_rows(l, &idx, false)
-        }
-        (StrataRoute::History, "list") => {
-            let mut idx: Vec<usize> = (0..l.songs.len()).filter(|&i| l.songs[i].last_played > 0.0).collect();
-            idx.sort_by(|&a, &b| l.songs[b].last_played.total_cmp(&l.songs[a].last_played));
-            song_rows(l, &idx, false)
-        }
         _ => vec![],
-    }
+    };
+    all.into_iter().skip(offset).take(limit).collect()
+}
+
+/// Ledger of a long song section via `section_order`.
+fn ordered_songs(l: &Lib, route: &StrataRoute, id: &str, title: Option<&str>, with_index: bool) -> (StrataSection, Vec<usize>) {
+    let (idx, numbered) = section_order(l, route, id).unwrap_or_default();
+    (paged_songs(l, route, id, title, &idx, numbered, with_index), idx)
 }
 
 fn album(l: &Lib, key: &str) -> StrataScreen {
@@ -649,8 +718,8 @@ fn album(l: &Lib, key: &str) -> StrataScreen {
 }
 
 fn artist(l: &Lib, name: &str, now: f64) -> StrataScreen {
+    let route = StrataRoute::Artist { name: name.into() };
     let idx = l.artists.get(&fold(name)).cloned().unwrap_or_default();
-    let ids: Vec<String> = idx.iter().map(|&i| l.songs[i].id.clone()).collect();
     let mut top = idx.clone();
     top.sort_by(|&a, &b| (l.songs[b].plays as f64 + heat(&l.songs[b], now)).total_cmp(&(l.songs[a].plays as f64 + heat(&l.songs[a], now))));
     top.truncate(5);
@@ -663,39 +732,38 @@ fn artist(l: &Lib, name: &str, now: f64) -> StrataScreen {
     if !albums.is_empty() {
         sections.push(section("albums", StrataStyle::Ribbon, Some("Albums"), albums));
     }
-    let mut all = idx.clone();
-    all.sort_by_cached_key(|&i| sort_key(&l.songs[i].title));
-    let mut songs = paged_songs(l, "songs", Some("All songs"), &all, false, false);
-    songs.total = all.len() as u32;
+    let (songs, all) = ordered_songs(l, &route, "songs", Some("All songs"), false);
     sections.push(songs);
     let display = l.artist_name.get(&ak).cloned().unwrap_or_else(|| name.to_string());
-    StrataScreen { route: StrataRoute::Artist { name: name.into() }, kicker: Some("Artist".into()), title: display, subtitle: Some(plural(idx.len(), "song", "songs")), art: idx.first().map(|&i| l.songs[i].id.clone()), actions: play_actions(&ids), sections }
+    let actions = play_actions_for(l, &route, "songs", &all);
+    StrataScreen { route, kicker: Some("Artist".into()), title: display, subtitle: Some(plural(idx.len(), "song", "songs")), art: idx.first().map(|&i| l.songs[i].id.clone()), actions, sections }
 }
 
 fn playlist(l: &Lib, id: &str) -> StrataScreen {
+    let route = StrataRoute::Playlist { id: id.into() };
     let Some(p) = l.playlists.iter().find(|p| p.id == id) else {
-        return StrataScreen { route: StrataRoute::Playlist { id: id.into() }, kicker: Some("Playlist".into()), title: "Playlist not found".into(), subtitle: None, art: None, actions: vec![], sections: vec![] };
+        return StrataScreen { route, kicker: Some("Playlist".into()), title: "Playlist not found".into(), subtitle: None, art: None, actions: vec![], sections: vec![] };
     };
-    let idx: Vec<usize> = p.song_ids.iter().filter_map(|s| l.by_id.get(s).copied()).collect();
-    let ids: Vec<String> = idx.iter().map(|&i| l.songs[i].id.clone()).collect();
+    let (mut sec, idx) = ordered_songs(l, &route, "list", None, false);
     let total: f64 = idx.iter().map(|&i| l.songs[i].duration).sum();
     let missing = p.song_ids.len() - idx.len();
-    let mut sec = paged_songs(l, "list", None, &idx, true, false);
     if missing > 0 {
         sec.caption = Some(format!("{} not on this device", plural(missing, "song", "songs")));
     }
-    StrataScreen { route: StrataRoute::Playlist { id: id.into() }, kicker: Some(p.folder.clone().filter(|f| !f.is_empty()).unwrap_or_else(|| "Playlist".into())), title: p.name.clone(), subtitle: Some(format!("{} · {}", plural(idx.len(), "song", "songs"), hours_label(total))), art: ids.first().cloned(), actions: play_actions(&ids), sections: vec![sec] }
+    let actions = play_actions_for(l, &route, "list", &idx);
+    StrataScreen { kicker: Some(p.folder.clone().filter(|f| !f.is_empty()).unwrap_or_else(|| "Playlist".into())), title: p.name.clone(), subtitle: Some(format!("{} · {}", plural(idx.len(), "song", "songs"), hours_label(total))), art: idx.first().map(|&i| l.songs[i].id.clone()), actions, sections: vec![sec], route }
 }
 
 fn genre(l: &Lib, name: &str) -> StrataScreen {
-    let idx = l.genres.get(name).cloned().unwrap_or_default();
-    let ids: Vec<String> = idx.iter().map(|&i| l.songs[i].id.clone()).collect();
-    StrataScreen { route: StrataRoute::Genre { name: name.into() }, kicker: Some("Genre".into()), title: name.into(), subtitle: Some(plural(idx.len(), "song", "songs")), art: ids.first().cloned(), actions: play_actions(&ids), sections: vec![paged_songs(l, "list", None, &idx, false, false)] }
+    let route = StrataRoute::Genre { name: name.into() };
+    let (sec, idx) = ordered_songs(l, &route, "list", None, false);
+    let actions = play_actions_for(l, &route, "list", &idx);
+    StrataScreen { kicker: Some("Genre".into()), title: name.into(), subtitle: Some(plural(idx.len(), "song", "songs")), art: idx.first().map(|&i| l.songs[i].id.clone()), actions, sections: vec![sec], route }
 }
 
 fn favorites(l: &Lib) -> StrataScreen {
-    let idx: Vec<usize> = (0..l.songs.len()).filter(|&i| l.songs[i].favorite).collect();
-    let ids: Vec<String> = idx.iter().map(|&i| l.songs[i].id.clone()).collect();
+    let route = StrataRoute::Favorites;
+    let (sec, idx) = ordered_songs(l, &route, "list", None, false);
     let mut sections = vec![tab_chips("favorites")];
     if idx.is_empty() {
         let mut n = item("empty", "Nothing here yet");
@@ -703,16 +771,17 @@ fn favorites(l: &Lib) -> StrataScreen {
         n.glyph = Some("heart".into());
         sections.push(section("empty", StrataStyle::Note, None, vec![n]));
     } else {
-        sections.push(paged_songs(l, "list", None, &idx, false, false));
+        sections.push(sec);
     }
-    StrataScreen { route: StrataRoute::Favorites, kicker: Some("Library".into()), title: "Favorites".into(), subtitle: Some(plural(idx.len(), "song", "songs")), art: ids.first().cloned(), actions: play_actions(&ids), sections }
+    let actions = play_actions_for(l, &route, "list", &idx);
+    StrataScreen { kicker: Some("Library".into()), title: "Favorites".into(), subtitle: Some(plural(idx.len(), "song", "songs")), art: idx.first().map(|&i| l.songs[i].id.clone()), actions, sections, route }
 }
 
 fn history(l: &Lib) -> StrataScreen {
-    let mut idx: Vec<usize> = (0..l.songs.len()).filter(|&i| l.songs[i].last_played > 0.0).collect();
-    idx.sort_by(|&a, &b| l.songs[b].last_played.total_cmp(&l.songs[a].last_played));
-    let ids: Vec<String> = idx.iter().map(|&i| l.songs[i].id.clone()).collect();
-    StrataScreen { route: StrataRoute::History, kicker: Some("You".into()), title: "History".into(), subtitle: Some(plural(idx.len(), "song", "songs")), art: ids.first().cloned(), actions: play_actions(&ids), sections: vec![paged_songs(l, "list", None, &idx, false, false)] }
+    let route = StrataRoute::History;
+    let (sec, idx) = ordered_songs(l, &route, "list", None, false);
+    let actions = play_actions_for(l, &route, "list", &idx);
+    StrataScreen { kicker: Some("You".into()), title: "History".into(), subtitle: Some(plural(idx.len(), "song", "songs")), art: idx.first().map(|&i| l.songs[i].id.clone()), actions, sections: vec![sec], route }
 }
 
 fn queue_screen(l: &Lib, queue: &[String], at: usize) -> StrataScreen {
@@ -720,7 +789,7 @@ fn queue_screen(l: &Lib, queue: &[String], at: usize) -> StrataScreen {
         range.filter_map(|p| {
             let id = queue.get(p)?;
             let mut it = match l.by_id.get(id) {
-                Some(&i) => song_row(l, i, &[], 0, None),
+                Some(&i) => song_row(l, i, StrataAction::None, None),
                 None => {
                     let mut x = item(id, "Streaming track");
                     x.art = Some(id.clone());
@@ -883,13 +952,13 @@ fn search(l: &Lib, query: &str) -> StrataScreen {
     }).take(6).collect();
     if let Some(&(i, _)) = hits.first() {
         let ids: Vec<String> = hits.iter().take(50).map(|(i, _)| l.songs[*i].id.clone()).collect();
-        let mut top = song_row(l, i, &ids, 0, None);
+        let mut top = song_row(l, i, StrataAction::Play { ids: ids.clone(), index: 0, shuffle: false }, None);
         top.meta = Some("Top result".into());
         sections.push(section("top", StrataStyle::Hero, None, vec![top]));
         let rest: Vec<usize> = hits.iter().skip(1).take(40).map(|x| x.0).collect();
         if !rest.is_empty() {
             let ids2: Vec<String> = rest.iter().map(|&i| l.songs[i].id.clone()).collect();
-            let rows = rest.iter().enumerate().map(|(p, &i)| song_row(l, i, &ids2, p, None)).collect();
+            let rows = rest.iter().enumerate().map(|(p, &i)| song_row(l, i, StrataAction::Play { ids: ids2.clone(), index: p as u32, shuffle: false }, None)).collect();
             let mut s = section("songs", StrataStyle::Ledger, Some("Songs"), rows);
             s.total = (hits.len() - 1) as u32;
             sections.push(s);
@@ -1132,9 +1201,12 @@ mod tests {
         assert_eq!(more.len(), 300 - PAGE);
         // Tapping row k plays the whole sorted list from k.
         match &list.items[3].action {
-            StrataAction::Play { ids, index, .. } => {
-                assert_eq!(ids.len(), 300);
+            StrataAction::PlayFrom { section, index, .. } => {
+                assert_eq!(section, "list");
                 assert_eq!(*index, 3);
+                let ids = c.section_ids(StrataRoute::Library { tab: "songs".into() }, "list".into());
+                assert_eq!(ids.len(), 300);
+                assert_eq!(ids[3], list.items[3].id);
             }
             a => panic!("{a:?}"),
         }
@@ -1186,6 +1258,81 @@ mod tests {
         let green = strata_theme("#FF0000".into(), Some(vec![0.1, 0.8, 0.3]));
         let (r, gch, _) = parse_hex(&green.accent).unwrap();
         assert!(gch > r, "accent follows the artwork: {}", green.accent);
+    }
+
+    /// The crash: Library on a big library put every song id into every
+    /// row. Screens must stay small whatever the library size, and paging
+    /// and `section_ids` must agree with the rows.
+    #[test]
+    fn big_library_screens_stay_small() {
+        let n = 6000;
+        let songs: Vec<StrataSong> = (0..n).map(|i| StrataSong {
+            id: format!("local:Imported Music/Song {i:05}.opus.lms"),
+            title: format!("Track {} {i}", ["Alpha", "Bravo", "Charlie", "Delta"][i % 4]),
+            artist: format!("Artist {}", i % 40),
+            album: format!("Album {}", i % 300),
+            genre: "Pop".into(),
+            duration: 200.0,
+            added: i as f64,
+            plays: (i % 7) as u32,
+            last_played: if i % 2 == 0 { i as f64 } else { 0.0 },
+            favorite: i % 3 == 0,
+            ..Default::default()
+        }).collect();
+        let core = StrataCore::new();
+        core.set_library(songs, vec![StrataPlaylist { id: "big".into(), name: "Everything".into(), song_ids: (0..n).map(|i| format!("local:Imported Music/Song {i:05}.opus.lms")).collect(), created: 0.0, folder: None }]);
+        let weight = |sc: &StrataScreen| -> usize {
+            let w = |a: &StrataAction| match a {
+                StrataAction::Play { ids, .. } | StrataAction::PlayNext { ids } | StrataAction::AddToQueue { ids } => ids.len(),
+                _ => 1,
+            };
+            sc.actions.iter().map(|i| w(&i.action)).sum::<usize>() + sc.sections.iter().flat_map(|s| &s.items).map(|i| w(&i.action) + i.secondary.as_ref().map_or(0, w)).sum::<usize>()
+        };
+        let routes = [
+            StrataRoute::Library { tab: "songs".into() },
+            StrataRoute::Library { tab: "recent".into() },
+            StrataRoute::Library { tab: "albums".into() },
+            StrataRoute::Library { tab: "artists".into() },
+            StrataRoute::Favorites,
+            StrataRoute::History,
+            StrataRoute::Genre { name: "Pop".into() },
+            StrataRoute::Playlist { id: "big".into() },
+            StrataRoute::Artist { name: "Artist 3".into() },
+            StrataRoute::Home,
+            StrataRoute::Search { query: "bravo".into() },
+        ];
+        for r in routes {
+            let t = std::time::Instant::now();
+            let sc = core.screen(r.clone(), 10_000.0, 12, None, vec![], 0);
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            let w = weight(&sc);
+            assert!(w < 2_000, "{r:?}: {w} ids in one screen");
+            assert!(ms < 400.0, "{r:?}: {ms:.0} ms");
+        }
+        // Row k of page 2 plays section_ids from k, and they line up.
+        let route = StrataRoute::Library { tab: "songs".into() };
+        let ids = core.section_ids(route.clone(), "list".into());
+        assert_eq!(ids.len(), n);
+        let page = core.page(route.clone(), "list".into(), PAGE as u32, 50);
+        assert_eq!(page.len(), 50);
+        for (k, row) in page.iter().enumerate() {
+            match &row.action {
+                StrataAction::PlayFrom { section, index, .. } => {
+                    assert_eq!(section, "list");
+                    assert_eq!(*index as usize, PAGE + k);
+                    assert_eq!(ids[*index as usize], row.id, "row and play order disagree");
+                }
+                a => panic!("{a:?}"),
+            }
+        }
+        // Artist "All songs": first page and later pages share one order.
+        let ar = StrataRoute::Artist { name: "Artist 3".into() };
+        let sc = core.screen(ar.clone(), 0.0, 12, None, vec![], 0);
+        let first = &sc.sections.iter().find(|s| s.id == "songs").unwrap().items;
+        let all = core.section_ids(ar, "songs".into());
+        for (k, row) in first.iter().enumerate() {
+            assert_eq!(all[k], row.id);
+        }
     }
 
     #[test]
