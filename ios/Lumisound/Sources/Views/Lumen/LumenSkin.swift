@@ -45,8 +45,8 @@ enum LumenUIKitSkin {
         let collection = UICollectionView.appearance()
 
         switch edition {
-        case .lumen:
-            let accent = UIColor(LumenPalette.accent)
+        case .lumen, .strata:
+            let accent = UIColor(edition == .strata ? StrataPalette.accent : LumenPalette.accent)
             segmented.selectedSegmentTintColor = accent
             segmented.backgroundColor = UIColor.white.withAlphaComponent(0.06)
             segmented.setTitleTextAttributes([

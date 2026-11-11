@@ -68,6 +68,7 @@ private struct EditionPreview: View {
 
     var body: some View {
         switch edition {
+        case .strata:  strata
         case .lumen:   lumen
         case .classic: classic
         }
@@ -93,6 +94,41 @@ private struct EditionPreview: View {
                 Spacer(minLength: 0)
                 Capsule().fill(Color.white.opacity(0.1)).frame(height: 16)
                     .overlay(Capsule().fill(LinearGradient(colors: [LumenPalette.iris, LumenPalette.azure], startPoint: .leading, endPoint: .trailing)).frame(width: 22), alignment: .leading)
+            }
+            .padding(10)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// Strata: graphite ground, the Now band on top, layered offset cards,
+    /// a numbered ledger and the command capsule — no tab bar.
+    private var strata: some View {
+        let accent = Color(red: 1.0, green: 0.42, blue: 0.3)
+        return ZStack {
+            Color(red: 0.07, green: 0.065, blue: 0.065)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 2).fill(accent).frame(width: 14, height: 14)
+                    RoundedRectangle(cornerRadius: 1).fill(Color.white.opacity(0.85)).frame(width: 40, height: 5)
+                    Spacer(minLength: 0)
+                }
+                .padding(4)
+                .overlay(Rectangle().fill(Color.white.opacity(0.15)).frame(height: 1), alignment: .bottom)
+                RoundedRectangle(cornerRadius: 1).fill(Color.white.opacity(0.9)).frame(width: 64, height: 9)
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.08)).frame(width: 70, height: 28).offset(x: 16, y: 8)
+                    RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.14)).frame(width: 70, height: 28).offset(x: 8, y: 4)
+                    RoundedRectangle(cornerRadius: 4).fill(accent.opacity(0.8)).frame(width: 70, height: 28)
+                }
+                .frame(height: 38, alignment: .topLeading)
+                ForEach(1..<3, id: \.self) { i in
+                    HStack(spacing: 5) {
+                        Text("0\(i)").font(.system(size: 7, weight: .bold, design: .monospaced)).foregroundStyle(accent)
+                        RoundedRectangle(cornerRadius: 1).fill(Color.white.opacity(0.6)).frame(width: 50, height: 4)
+                    }
+                }
+                Spacer(minLength: 0)
+                RoundedRectangle(cornerRadius: 4).strokeBorder(Color.white.opacity(0.25), lineWidth: 1).frame(height: 14)
             }
             .padding(10)
         }

@@ -34,6 +34,7 @@ pub mod radio;
 pub mod error;
 pub mod retry;
 pub mod shuffle;
+pub mod strata;
 pub mod smart;
 pub mod store;
 pub mod sync;

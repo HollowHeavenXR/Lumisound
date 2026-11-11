@@ -92,6 +92,7 @@ struct ContentView: View {
         let _ = LumenUIKitSkin.apply(edition)
         Group {
             switch edition {
+            case .strata:  StrataRootView()
             case .lumen:   LumenRootView()
             case .classic: ClassicContentView()
             }

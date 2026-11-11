@@ -23,5 +23,8 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - `Views/Components/PanningArtwork.swift`: thumbnail slide no longer freezes.
 - Aria lyrics poll deadline 15 min (server-side engine).
 
+## Done (2026-11-11)
+- Strata interface: `Views/Strata/` (StrataStore, StrataRenderer, StrataRootView, StrataNowView) on core `strata.rs`.
+
 ## Open
-- Strata interface (Rust-composed screens + generic SwiftUI renderer).
+- Strata: verify on device (layer switching, paging, theme tint); tvOS has no Strata.
