@@ -330,3 +330,13 @@ Open:
 - [ ] Strata (third interface, composed in Rust: core/src/strata.rs drafted, not wired yet).
 - [ ] Aria Lyrics: test aligned mode on more songs; speed (Demucs dominates).
 - [ ] tvOS Smart Crossfade on Blend (needs bridge-side profiles for streamed tracks).
+
+## 2026-11-11 titles cut at a dash
+- [x] core import.rs `tag_apply_fallbacks`: a title tag equal to the filename (every download) was
+      split at its first " - " and only the right part kept, even with a known artist
+      ("... (Dragon Ball - 2026)" -> "2026)"). Now: split only when no artist is known, never inside
+      brackets; a leading repeat of the known artist is dropped.
+- [x] core library.rs scan cache v2: every file's tags re-read once after the update.
+- [x] bridge `split_artist_title` (search/stream results): spaced separator outside brackets only.
+- [ ] Cloud metadata repair: `docker exec ios_bridge lumisound-bridge repair-titles apply`
+      (dry run found 2,563 cut titles; restores each file's own title tag). Needs to be run by the owner.

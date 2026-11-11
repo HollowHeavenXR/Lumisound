@@ -194,6 +194,29 @@ pub fn tag_fallback_title(path: String) -> String {
     stem
 }
 
+/// First " - " that is not inside (), [] or {}: (left, right), both non-empty.
+fn split_dash_outside_brackets(t: &str) -> Option<(String, String)> {
+    let mut depth = 0i32;
+    for (i, c) in t.char_indices() {
+        match c {
+            '(' | '[' | '{' | '【' | '「' => depth += 1,
+            ')' | ']' | '}' | '】' | '」' => depth = (depth - 1).max(0),
+            '-' | '–' | '—' if depth == 0 && t[..i].ends_with(' ') && t[i + c.len_utf8()..].starts_with(' ') => {
+                let (a, b) = (t[..i].trim(), t[i + c.len_utf8()..].trim());
+                if !a.is_empty() && !b.is_empty() {
+                    return Some((a.to_string(), b.to_string()));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn fold_name(s: &str) -> String {
+    s.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
 /// The app's fallbacks over read tags: title still the filename and shaped
 /// "Artist - Title" -> split; no album -> the parent folder (not the import
 /// roots), flagged as inferred so the Albums tab can leave it out.
@@ -204,15 +227,21 @@ pub fn tag_apply_fallbacks(path: String, title: String, artist: String, album: S
     if title.is_empty() {
         title = fallback.clone();
     }
-    if title == fallback && title.contains(" - ") {
-        let mut parts = title.split(" - ");
-        let first = parts.next().unwrap_or("").trim().to_string();
-        let rest: Vec<&str> = parts.collect();
-        if !rest.is_empty() {
-            if artist.is_empty() {
-                artist = first;
+    // Downloads are named after their title, so a real title tag often
+    // equals the filename: only split "Artist - Title" when no artist is
+    // known (the title is the bare filename), and never at a dash inside
+    // brackets. This used to cut "What if AI made a Gogeta Song? (Dragon
+    // Ball - 2026)" down to "2026)" and "Zinogre battle theme - Monster
+    // Hunter 4 Ultimate OST" to its game name.
+    if title == fallback {
+        if let Some((left, right)) = split_dash_outside_brackets(&title) {
+            if artist.trim().is_empty() {
+                artist = left;
+                title = right;
+            } else if fold_name(&left) == fold_name(&artist) {
+                // "Artist - Title" repeating the known artist: drop the repeat.
+                title = right;
             }
-            title = rest.join(" - ").trim().to_string();
         }
     }
     let mut inferred = false;
@@ -377,6 +406,17 @@ mod tests {
         let f = tag_apply_fallbacks("/x/Imported Music/Band - Song.m4a.lms".into(), "".into(), "".into(), "".into());
         assert_eq!((f.title.as_str(), f.artist.as_str(), f.album.as_str(), f.album_inferred_from_folder), ("Song", "Band", "", false));
         let g = tag_apply_fallbacks("/x/Albums/Kid A/t.mp3".into(), "T".into(), "R".into(), "".into());
+        // A real title tag that equals the filename keeps every word when the artist is known.
+        let h = tag_apply_fallbacks("/x/Imported Music/What if AI made a Gogeta Song? (Dragon Ball - 2026).opus.lms".into(), "What if AI made a Gogeta Song? (Dragon Ball - 2026)".into(), "Retro Bird AI".into(), "".into());
+        assert_eq!(h.title, "What if AI made a Gogeta Song? (Dragon Ball - 2026)");
+        let z = tag_apply_fallbacks("/x/Imported Music/Zinogre battle theme - Monster Hunter 4 Ultimate OST.opus".into(), "Zinogre battle theme - Monster Hunter 4 Ultimate OST".into(), "Skadi".into(), "".into());
+        assert_eq!(z.title, "Zinogre battle theme - Monster Hunter 4 Ultimate OST");
+        // Known artist repeated in front: dropped.
+        let r = tag_apply_fallbacks("/x/Imported Music/Anamanaguchi - Miku.opus".into(), "".into(), "Anamanaguchi".into(), "".into());
+        assert_eq!((r.title.as_str(), r.artist.as_str()), ("Miku", "Anamanaguchi"));
+        // No artist, dash only inside brackets: nothing to split.
+        let b = tag_apply_fallbacks("/x/Imported Music/Song (Live - 2020).mp3".into(), "".into(), "".into(), "".into());
+        assert_eq!((b.title.as_str(), b.artist.as_str()), ("Song (Live - 2020)", ""));
         assert!(g.album == "Kid A" && g.album_inferred_from_folder);
     }
 

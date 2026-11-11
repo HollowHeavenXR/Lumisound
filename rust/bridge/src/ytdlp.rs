@@ -685,23 +685,40 @@ fn pick_youtube_thumbnail(e: &Map<String, Value>, track_id: &str) -> String {
     String::new()
 }
 
-/// Split "Artist - Title" (also en/em dash) the way the Python regex
-/// `^\s*(.+?)\s*[-–—]\s*(.+?)\s*$` did: shortest artist before the first dash.
+/// Split "Artist - Title" (also en/em dash): the first dash with spaces on
+/// both sides that is not inside brackets. A bare hyphen ("Chase-Master") or
+/// a dash in "(Dragon Ball - 2026)" is part of the title, not a separator.
 fn split_artist_title(title: &str) -> Option<(String, String)> {
     let t = title.trim();
+    let mut depth = 0i32;
     for (i, ch) in t.char_indices() {
-        if i == 0 {
-            continue;
-        }
-        if matches!(ch, '-' | '–' | '—') {
-            let a = t[..i].trim();
-            let b = t[i + ch.len_utf8()..].trim();
-            if !a.is_empty() && !b.is_empty() {
-                return Some((a.to_string(), b.to_string()));
+        match ch {
+            '(' | '[' | '{' | '【' | '「' => depth += 1,
+            ')' | ']' | '}' | '】' | '」' => depth = (depth - 1).max(0),
+            '-' | '–' | '—' if depth == 0 && i > 0 && t[..i].ends_with(' ') && t[i + ch.len_utf8()..].starts_with(' ') => {
+                let a = t[..i].trim();
+                let b = t[i + ch.len_utf8()..].trim();
+                if !a.is_empty() && !b.is_empty() {
+                    return Some((a.to_string(), b.to_string()));
+                }
             }
+            _ => {}
         }
     }
     None
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::split_artist_title;
+
+    #[test]
+    fn splits_only_real_separators() {
+        assert_eq!(split_artist_title("Anamanaguchi - Miku"), Some(("Anamanaguchi".into(), "Miku".into())));
+        assert_eq!(split_artist_title("Zero the Chase-Master (Eggman Robot Zero)"), None);
+        assert_eq!(split_artist_title("What if AI made a Gogeta Song? (Dragon Ball - 2026)"), None);
+        assert_eq!(split_artist_title("CUCO – Lover Is a Day"), Some(("CUCO".into(), "Lover Is a Day".into())));
+    }
 }
 
 /// `_parse_track`: a yt-dlp (or Data API shaped) entry -> client track JSON.

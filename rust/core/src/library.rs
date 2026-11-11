@@ -189,7 +189,13 @@ struct ScanEntry {
     #[serde(rename = "fileSize")]
     file_size: i64,
     song: Value,
+    /// Tag-reading rules the entry was made with: older entries are re-read
+    /// once (v2: titles that equal the filename are no longer cut at a dash).
+    #[serde(default)]
+    v: u32,
 }
+
+const SCAN_VERSION: u32 = 2;
 
 #[derive(Default)]
 struct ScanCache {
@@ -243,7 +249,7 @@ pub fn scan_cache_partition(paths: Vec<String>, documents_dir: String) -> ScanPa
     let mut cached = Vec::new();
     let mut uncached = Vec::new();
     for p in paths {
-        let hit = stamp(&p).and_then(|(t, sz)| c.entries.get(&scan_key(&p, &docs)).filter(|e| e.file_size == sz && (e.mtime - t).abs() < 0.001));
+        let hit = stamp(&p).and_then(|(t, sz)| c.entries.get(&scan_key(&p, &docs)).filter(|e| e.v >= SCAN_VERSION && e.file_size == sz && (e.mtime - t).abs() < 0.001));
         match hit {
             Some(e) if p.starts_with('/') => {
                 let mut s = e.song.clone();
@@ -263,7 +269,7 @@ pub fn scan_cache_store(path: String, documents_dir: String, song_json: Vec<u8>)
     let Ok(song) = serde_json::from_slice::<Value>(&song_json) else { return };
     let mut c = SCAN.lock().unwrap();
     let k = scan_key(&path, documents_dir.trim_end_matches('/'));
-    c.entries.insert(k, ScanEntry { mtime: t, file_size: sz, song });
+    c.entries.insert(k, ScanEntry { mtime: t, file_size: sz, song, v: SCAN_VERSION });
     c.dirty = true;
 }
 
