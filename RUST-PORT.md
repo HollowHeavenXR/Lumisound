@@ -327,7 +327,9 @@ Done:
       ios_user_realness; GET /admin/api/realness; `lumisound-bridge realness-report`.
 
 Open:
-- [ ] Strata (third interface, composed in Rust: core/src/strata.rs drafted, not wired yet).
+- [x] Strata (third interface): core/src/strata.rs composes every screen (Home rails, Library tabs
+      paged + alphabet index, typo-tolerant search, album/artist/playlist/genre/queue/You) and the
+      theme (OKLab palette tinted by artwork, WCAG-checked accent); Swift Views/Strata/ only renders.
 - [ ] Aria Lyrics: test aligned mode on more songs; speed (Demucs dominates).
 - [ ] tvOS Smart Crossfade on Blend (needs bridge-side profiles for streamed tracks).
 

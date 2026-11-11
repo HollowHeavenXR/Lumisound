@@ -16,13 +16,13 @@ enum AppTheme {
     /// one switch is what carries the redesign's palette into every screen
     /// that reads `AppTheme`, including the ones Lumen has no bespoke
     /// replacement for.
-    static var accent: Color        { InterfaceEdition.isLumen ? LumenPalette.iris : classicAccent }
-    static var accentSoft: Color    { InterfaceEdition.isLumen ? LumenPalette.azure : classicAccentSoft }
-    static var textPrimary: Color   { InterfaceEdition.isLumen ? LumenPalette.textPrimary : (Appearance.classicColor(\.textPrimary) ?? classicTextPrimary) }
-    static var textSecondary: Color { InterfaceEdition.isLumen ? LumenPalette.textSecondary : (Appearance.classicColor(\.textSecondary) ?? classicTextSecondary) }
+    static var accent: Color        { InterfaceEdition.isStrata ? StrataPalette.accent : InterfaceEdition.isLumen ? LumenPalette.iris : classicAccent }
+    static var accentSoft: Color    { InterfaceEdition.isStrata ? StrataPalette.glow : InterfaceEdition.isLumen ? LumenPalette.azure : classicAccentSoft }
+    static var textPrimary: Color   { InterfaceEdition.isStrata ? StrataPalette.ink : InterfaceEdition.isLumen ? LumenPalette.textPrimary : (Appearance.classicColor(\.textPrimary) ?? classicTextPrimary) }
+    static var textSecondary: Color { InterfaceEdition.isStrata ? StrataPalette.inkDim : InterfaceEdition.isLumen ? LumenPalette.textSecondary : (Appearance.classicColor(\.textSecondary) ?? classicTextSecondary) }
     static var warning: Color       { InterfaceEdition.isLumen ? LumenPalette.warning : classicWarning }
     static var success: Color       { InterfaceEdition.isLumen ? LumenPalette.success : classicSuccess }
-    static var error: Color         { InterfaceEdition.isLumen ? LumenPalette.error : classicError }
+    static var error: Color         { InterfaceEdition.isStrata ? StrataPalette.danger : InterfaceEdition.isLumen ? LumenPalette.error : classicError }
 
     static let classicAccent        = Color(red: 0.925, green: 0.251, blue: 0.478)
     static let classicAccentSoft    = Color(red: 0.957, green: 0.561, blue: 0.694)
@@ -59,15 +59,15 @@ enum AppTheme {
     // preset override, which is a deliberate per-user choice.
     static var background: Color {
         customBackgroundOverride?.background
-            ?? (InterfaceEdition.isLumen ? LumenPalette.ink : (Appearance.classicColor(\.background) ?? backgroundTheme.background))
+            ?? (InterfaceEdition.isStrata ? StrataPalette.ground : InterfaceEdition.isLumen ? LumenPalette.ink : (Appearance.classicColor(\.background) ?? backgroundTheme.background))
     }
     static var surface: Color {
         customBackgroundOverride?.surface
-            ?? (InterfaceEdition.isLumen ? LumenPalette.surface : (Appearance.classicColor(\.surface) ?? backgroundTheme.surface))
+            ?? (InterfaceEdition.isStrata ? StrataPalette.layer : InterfaceEdition.isLumen ? LumenPalette.surface : (Appearance.classicColor(\.surface) ?? backgroundTheme.surface))
     }
     static var elevatedSurface: Color {
         customBackgroundOverride?.elevatedSurface
-            ?? (InterfaceEdition.isLumen ? LumenPalette.elevated : (Appearance.classicColor(\.elevated) ?? backgroundTheme.elevatedSurface))
+            ?? (InterfaceEdition.isStrata ? StrataPalette.raised : InterfaceEdition.isLumen ? LumenPalette.elevated : (Appearance.classicColor(\.elevated) ?? backgroundTheme.elevatedSurface))
     }
 
     // MARK: Lua-Driven Custom Background Override
@@ -214,11 +214,11 @@ enum AppTheme {
     }
 
     private static var accentKey: String {
-        InterfaceEdition.isLumen ? "lumen_accent_color_data" : "accent_color_data"
+        InterfaceEdition.isStrata ? "strata_accent_color_data" : InterfaceEdition.isLumen ? "lumen_accent_color_data" : "accent_color_data"
     }
 
     private static var accentSecondaryKey: String {
-        InterfaceEdition.isLumen ? "lumen_accent_secondary_color_data" : "accent_secondary_color_data"
+        InterfaceEdition.isStrata ? "strata_accent_secondary_color_data" : InterfaceEdition.isLumen ? "lumen_accent_secondary_color_data" : "accent_secondary_color_data"
     }
 
     /// Convenience gradient combining `dynamicAccent` → `dynamicAccentSecondary`.

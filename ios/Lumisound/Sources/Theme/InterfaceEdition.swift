@@ -14,6 +14,7 @@ import SwiftUI
 /// Users switch between them from Settings (either edition) or from the
 /// one-time welcome card Lumen shows on first launch.
 enum InterfaceEdition: String, CaseIterable, Identifiable {
+    case strata
     case lumen
     case classic
 
@@ -23,6 +24,7 @@ enum InterfaceEdition: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
+        case .strata:  return "Strata"
         case .lumen:   return "Lumen"
         case .classic: return "Classic"
         }
@@ -30,6 +32,7 @@ enum InterfaceEdition: String, CaseIterable, Identifiable {
 
     var tagline: String {
         switch self {
+        case .strata:  return "Layers, not tabs — every screen composed by the Rust core, tinted by what's playing."
         case .lumen:   return "The redesigned Lumisound — lit by whatever you're playing."
         case .classic: return "The original Lumisound interface, exactly as it was."
         }
@@ -37,6 +40,7 @@ enum InterfaceEdition: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .strata:  return "square.3.layers.3d"
         case .lumen:   return "sparkles"
         case .classic: return "clock.arrow.circlepath"
         }
@@ -56,6 +60,7 @@ enum InterfaceEdition: String, CaseIterable, Identifiable {
     }
 
     static var isLumen: Bool { current == .lumen }
+    static var isStrata: Bool { current == .strata }
 
     static func select(_ edition: InterfaceEdition) {
         UserDefaults.standard.set(edition.rawValue, forKey: storageKey)
