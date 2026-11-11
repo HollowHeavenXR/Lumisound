@@ -357,7 +357,11 @@ impl Ytdlp {
     /// Cookie arguments for a request on behalf of `user_id`: the user's own
     /// uploaded jar, else the shared one (accounts 15+ days old that allow it).
     pub async fn cookie_args(&self, user_id: Option<&str>, force_global: bool) -> Vec<String> {
-        let mut args = vec!["--extractor-args".to_string(), "youtubetab:skip=webpage".to_string()];
+        // skip=authcheck too: with cookies + skip=webpage, yt-dlp 2026.10+
+        // refuses every playlist ("Playlists that require authentication may
+        // not extract correctly without a successful webpage download"), so
+        // playlist imports and library downloads stopped on 2026-11-09.
+        let mut args = vec!["--extractor-args".to_string(), "youtubetab:skip=webpage,authcheck".to_string()];
         let eligible = self.global_available() && self.may_use_global_cookies(user_id).await;
         let path = if force_global && eligible {
             self.writable_global_cookies_path()

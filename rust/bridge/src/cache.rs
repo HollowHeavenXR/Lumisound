@@ -42,6 +42,10 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
         self.map.remove(k);
     }
 
+    pub fn clear(&self) {
+        self.map.clear();
+    }
+
     /// Drop expired entries, then the oldest quarter if still full.
     fn evict(&self) {
         let now = Instant::now();

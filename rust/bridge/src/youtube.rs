@@ -29,6 +29,9 @@ pub struct YouTube {
     /// api key -> (pacific date, units used today)
     units: DashMap<String, (String, u64)>,
     key_cache: TtlCache<String, String>,
+    /// Keys Google rejected (invalid / not enabled for the Data API) -> when.
+    /// A user's own key in here is skipped for the server key for a day.
+    bad_keys: DashMap<String, Instant>,
     spotify_token: Mutex<Option<(String, Instant)>>,
 }
 
@@ -184,6 +187,7 @@ impl YouTube {
             quota_until: DashMap::new(),
             units: DashMap::new(),
             key_cache: TtlCache::new(Duration::from_secs(300), 10_000),
+            bad_keys: DashMap::new(),
             spotify_token: Mutex::new(None),
         }
     }
@@ -233,11 +237,19 @@ impl YouTube {
         if (200..300).contains(&status) {
             return Ok(body);
         }
-        if status == 403 {
-            let quota = body["error"]["errors"].as_array().is_some_and(|a| a.iter().any(|e| e["reason"] == "quotaExceeded"));
-            if quota {
-                self.mark_quota_exceeded(key);
-            }
+        let reasons: Vec<&str> = body["error"]["errors"].as_array().map(|a| a.iter().filter_map(|e| e["reason"].as_str()).collect()).unwrap_or_default();
+        if status == 403 && reasons.contains(&"quotaExceeded") {
+            self.mark_quota_exceeded(key);
+        }
+        // A key Google refuses outright (wrong key, API not enabled): remember
+        // it, so a user's broken personal key stops failing every call.
+        let msg = body["error"]["message"].as_str().unwrap_or("");
+        if (status == 400 && (reasons.contains(&"badRequest") || reasons.contains(&"keyInvalid")) && msg.to_lowercase().contains("api key"))
+            || (status == 403 && (reasons.contains(&"forbidden") || reasons.contains(&"accessNotConfigured") || reasons.contains(&"ipRefererBlocked")))
+        {
+            tracing::warn!("YouTube Data API rejected a key ({status} {reasons:?}): using the server key instead for 24 h");
+            self.bad_keys.insert(key.to_string(), Instant::now());
+            self.key_cache.clear();
         }
         Err(ApiError { status, body }.into())
     }
@@ -255,7 +267,8 @@ impl YouTube {
             .ok()
             .flatten()
             .flatten();
-        let key = own.filter(|s| !s.is_empty()).unwrap_or_else(|| server_key.unwrap_or("").to_string());
+        let bad = |k: &str| self.bad_keys.get(k).is_some_and(|t| t.elapsed() < Duration::from_secs(24 * 3600));
+        let key = own.filter(|s| !s.is_empty() && !bad(s)).unwrap_or_else(|| server_key.unwrap_or("").to_string());
         self.key_cache.set(k, key.clone());
         key
     }
