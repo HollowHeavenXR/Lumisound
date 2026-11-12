@@ -36,3 +36,11 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
   checkpoint from rust/models/demucs/hub/checkpoints/955717e8-8726e21a.th (git-ignored, 84 MB, sha256 starts
   8726e21a as its name says). On a fresh machine, extract it from a previous bridge image:
   `docker cp $(docker create <old image>):/app/cache/demucs/hub/checkpoints/955717e8-8726e21a.th rust/models/demucs/hub/checkpoints/`
+
+## 2026-11-12: username changes
+- Limit is now 3 per rolling 30 days (`MAX_USERNAME_CHANGES_PER_30_DAYS`, routes/account.rs).
+- schema.sql: trigger `ios_users_username_changed` writes ios_username_change_log on every rename and
+  rewrites each column registered in `username_sync_targets` (empty today: no table copies usernames).
+  `resolve_username(name)` = current name, else a former name nobody holds now; used by friend requests
+  and playlist collaborator adds. Login deliberately still needs the current name or email.
+- Operator account renamed HeavenlyXenusVR -> Voxelise (Nyxframe user 8 HollowHeavenXR -> Voxelise too).

@@ -18,6 +18,9 @@ use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+/// Username changes allowed in any rolling 30 days.
+const MAX_USERNAME_CHANGES_PER_30_DAYS: usize = 3;
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/auth/register", post(register))
@@ -530,11 +533,14 @@ async fn update_me(State(st): State<AppState>, u: User, J(b): J<UpdateMeBody>) -
             .bind(window_start)
             .fetch_all(&st.db)
             .await?;
-            if recent.len() >= 2 {
-                let next = recent[0] + CDuration::days(30);
+            if recent.len() >= MAX_USERNAME_CHANGES_PER_30_DAYS {
+                let next = recent[recent.len() - MAX_USERNAME_CHANGES_PER_30_DAYS] + CDuration::days(30);
                 return Err(AppError::new(
                     429,
-                    format!("You've already changed your username 2 times in the last 30 days. You can change it again on {}.", next.format("%Y-%m-%d")),
+                    format!(
+                        "You've already changed your username {MAX_USERNAME_CHANGES_PER_30_DAYS} times in the last 30 days. You can change it again on {}.",
+                        next.format("%Y-%m-%d")
+                    ),
                 ));
             }
             let clash: Option<String> =
@@ -542,13 +548,9 @@ async fn update_me(State(st): State<AppState>, u: User, J(b): J<UpdateMeBody>) -
             if clash.is_some() {
                 return Err(AppError::new(409, "Username already taken"));
             }
+            // The ios_users_username_changed trigger logs the change and updates
+            // every registered copy of the username (schema.sql).
             sqlx::query("UPDATE ios_users SET username = $1 WHERE id = $2 AND is_active = TRUE").bind(&new).bind(&u.id).execute(&st.db).await?;
-            sqlx::query("INSERT INTO ios_username_change_log (user_id, old_username, new_username) VALUES ($1, $2, $3)")
-                .bind(&u.id)
-                .bind(&cur)
-                .bind(&new)
-                .execute(&st.db)
-                .await?;
             log(&st, "account", "username_changed", Some(&u.id), "info", &format!("username changed from {} to {}", py_repr(&cur), py_repr(&new))).await;
         }
     }

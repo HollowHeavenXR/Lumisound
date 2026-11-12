@@ -906,7 +906,8 @@ async fn send_request(State(st): State<AppState>, u: User, J(b): J<RequestBody>)
     let mut to = b.to_user_id.filter(|s| !s.is_empty());
     if to.is_none() {
         if let Some(name) = b.to_username.filter(|s| !s.is_empty()) {
-            to = sqlx::query_scalar("SELECT id FROM ios_users WHERE username = $1 AND is_active = TRUE").bind(&name).fetch_optional(&st.db).await?;
+            // Current name, or a previous one nobody holds now (see resolve_username in schema.sql).
+            to = sqlx::query_scalar("SELECT resolve_username($1)").bind(&name).fetch_one(&st.db).await?;
         }
     }
     let to = to.ok_or_else(|| AppError::not_found("User not found"))?;
@@ -2029,7 +2030,8 @@ async fn add_collaborator(State(st): State<AppState>, u: User, Path(pid): Path<S
     if owner != u.id {
         return Err(AppError::forbidden("Only the owner can add collaborators"));
     }
-    let target: Option<(String, String)> = sqlx::query_as("SELECT id, username FROM ios_users WHERE username = $1").bind(&b.username).fetch_optional(&st.db).await?;
+    let target: Option<(String, String)> =
+        sqlx::query_as("SELECT id, username FROM ios_users WHERE id = resolve_username($1)").bind(&b.username).fetch_optional(&st.db).await?;
     let (tid, tname) = target.ok_or_else(|| AppError::not_found("User not found"))?;
     if tid == u.id {
         return Err(AppError::bad_request("You already own this playlist"));

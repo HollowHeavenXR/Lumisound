@@ -1880,3 +1880,44 @@ CREATE TABLE IF NOT EXISTS ios_user_realness (
     last_seen VARCHAR(20) NULL,
     checked_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- Username changes (2026-11-12). The database itself records every rename and
+-- keeps any copied usernames in step, so no code path can forget to:
+--   * ios_username_change_log gets a row on every username change (the trigger
+--     is the only writer; it also backs the 3-per-30-days limit);
+--   * username_sync_targets lists tables that store a copy of a username next
+--     to a user id; each listed column is rewritten on rename. Register a new
+--     copy with: INSERT INTO username_sync_targets VALUES ('table', 'user_id_col', 'username_col');
+--   * resolve_username(name) finds a user by current name, or by a name they
+--     used before as long as nobody holds it now (old links / friend adds).
+CREATE INDEX IF NOT EXISTS ios_username_change_log_idx_old ON ios_username_change_log (old_username, changed_at);
+CREATE TABLE IF NOT EXISTS username_sync_targets (
+    table_name TEXT NOT NULL,
+    user_id_column TEXT NOT NULL,
+    username_column TEXT NOT NULL,
+    PRIMARY KEY (table_name, username_column)
+);
+CREATE OR REPLACE FUNCTION ios_users_username_changed() RETURNS trigger AS $$
+DECLARE t record;
+BEGIN
+    IF NEW.username IS DISTINCT FROM OLD.username THEN
+        INSERT INTO ios_username_change_log (user_id, old_username, new_username) VALUES (NEW.id, OLD.username, NEW.username);
+        FOR t IN SELECT * FROM username_sync_targets LOOP
+            EXECUTE format('UPDATE %I SET %I = $1 WHERE %I = $2', t.table_name, t.username_column, t.user_id_column)
+                USING NEW.username, NEW.id;
+        END LOOP;
+    END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS ios_users_username_changed ON ios_users;
+CREATE TRIGGER ios_users_username_changed AFTER UPDATE OF username ON ios_users
+    FOR EACH ROW EXECUTE FUNCTION ios_users_username_changed();
+CREATE OR REPLACE FUNCTION resolve_username(name TEXT) RETURNS VARCHAR AS $$
+    SELECT id FROM (
+        SELECT id, 0 AS rank, NULL::timestamp AS at FROM ios_users WHERE username = name AND is_active = TRUE
+        UNION ALL
+        SELECT l.user_id, 1, l.changed_at FROM ios_username_change_log l
+          JOIN ios_users u ON u.id = l.user_id AND u.is_active = TRUE
+         WHERE l.old_username = name AND NOT EXISTS (SELECT 1 FROM ios_users WHERE username = name)
+    ) c ORDER BY rank, at DESC NULLS LAST LIMIT 1
+$$ LANGUAGE sql STABLE;
