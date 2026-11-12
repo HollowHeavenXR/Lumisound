@@ -9,5 +9,5 @@ Discord Rich Presence daemon (`lumisound-discord-rpc`). History: [`RUST-PORT.md`
 - Re-sends immediately on any text/art change or a seek (> 1.5 s jump); refresh every ~13.5 s otherwise.
 
 ## Open
-- Cut an `rpc/v*` release so other installs (macOS/Windows) get the new daemon.
+- Done 2026-11-11: `rpc/v2.1.0` released (Linux, macOS, Windows binaries).
 - Optional: Discord `status_display_type` / `details_url` once older clients stop rejecting unknown fields.
