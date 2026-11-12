@@ -101,9 +101,9 @@ struct LibraryHealthView: View {
                     NavigationLink(destination: DuplicateFilesView()) {
                         healthRow(
                             icon: "doc.on.doc",
-                            title: "Likely Duplicates",
+                            title: "Duplicates",
                             subtitle: scanSubtitle(duplicateFinder.lastScanDate, isScanning: duplicateFinder.isScanning),
-                            count: duplicateFinder.duplicateGroups.count
+                            count: duplicateFinder.groups.count
                         )
                     }
                     NavigationLink(destination: CorruptFilesView()) {

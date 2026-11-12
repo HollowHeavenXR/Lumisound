@@ -116,6 +116,7 @@ final class DuplicateFinderService: ObservableObject {
             for id in Set(p.songIDs) { playlistCounts[id, default: 0] += 1 }
         }
         let queued = Set(player?.queue.map(\.id) ?? [])
+        let history = PlayHistoryStore.shared.entries
         let current = player?.currentSong?.id
         return songs.map { song in
             let path = song.url.flatMap { $0.isFileURL ? $0.path : nil }
@@ -129,7 +130,7 @@ final class DuplicateFinderService: ObservableObject {
                 bitrateKbps: UInt32(max(0, song.bitrate)),
                 sampleRate: UInt32(max(0, song.sampleRate)),
                 isFavorite: library?.isFavorite(songID: song.id) ?? false,
-                playCount: UInt32(max(0, library?.playCount(for: song.id) ?? 0)),
+                playCount: UInt32(max(0, history[song.id]?.playCount ?? 0)),
                 playlistCount: playlistCounts[song.id] ?? 0,
                 hasArtwork: song.artworkCacheKey != nil,
                 hasLyrics: false,

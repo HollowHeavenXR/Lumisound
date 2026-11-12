@@ -39,11 +39,12 @@ extension LibraryManager {
         }
         guard !trashed.isEmpty else { return nil }
 
-        let stats = { (s: Song) in
-            DupeCopyStats(songId: s.id, isFavorite: self.isFavorite(songID: s.id), playCount: UInt32(max(0, self.playCount(for: s.id))))
+        let history = PlayHistoryStore.shared.entries
+        func stats(_ s: Song) -> DupeCopyStats {
+            DupeCopyStats(songId: s.id, isFavorite: isFavorite(songID: s.id), playCount: UInt32(max(0, history[s.id]?.playCount ?? 0)))
         }
         let keeperWasFavorite = isFavorite(songID: keeper.id)
-        let plan = dupeMergePlan(keeper: stats(keeper), losers: trashed.map(stats), playlists: dupePlaylists())
+        let plan = dupeMergePlan(keeper: stats(keeper), losers: trashed.map { stats($0) }, playlists: dupePlaylists())
 
         let gone = Set(trashed.map(\.id))
         importedSongs.removeAll { gone.contains($0.id) }
