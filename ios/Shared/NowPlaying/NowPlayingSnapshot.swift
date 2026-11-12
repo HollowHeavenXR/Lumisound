@@ -119,9 +119,25 @@ struct NowPlayingSnapshot: Codable, Hashable, Sendable {
         return try? JSONDecoder().decode(NowPlayingSnapshot.self, from: data)
     }
 
-    func save(to defaults: UserDefaults? = UserDefaults(suiteName: AppGroup.id)) {
-        guard let data = try? JSONEncoder().encode(self) else { return }
-        defaults?.set(data, forKey: Self.defaultsKey)
+    /// JSON can't hold NaN or infinity, and the player reports those while a
+    /// track loads; one of them would make the whole save fail.
+    var sanitized: NowPlayingSnapshot {
+        func finite(_ v: Double, _ fallback: Double) -> Double { v.isFinite ? v : fallback }
+        var s = self
+        s.position = max(0, finite(position, 0))
+        s.duration = max(0, finite(duration, 0))
+        s.rate = finite(rate, 1)
+        s.artworkAspect = artworkAspect.isFinite && artworkAspect > 0 ? artworkAspect : 1
+        s.bpm = bpm.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        if !anchor.timeIntervalSinceReferenceDate.isFinite { s.anchor = Date() }
+        return s
+    }
+
+    @discardableResult
+    func save(to defaults: UserDefaults? = UserDefaults(suiteName: AppGroup.id)) -> Bool {
+        guard let defaults, let data = try? JSONEncoder().encode(sanitized) else { return false }
+        defaults.set(data, forKey: Self.defaultsKey)
+        return true
     }
 
     static func artworkURL(_ file: String?) -> URL? {
@@ -131,13 +147,32 @@ struct NowPlayingSnapshot: Codable, Hashable, Sendable {
         return container.appendingPathComponent(artworkDirectory, isDirectory: true).appendingPathComponent(file)
     }
 
+    /// Where artwork goes when the App Group folder isn't reachable but the
+    /// shared defaults are (some sideloaded installs): small JPEGs stored
+    /// under this prefix + file name.
+    static let defaultsArtPrefix = "now_playing_art."
+
+    static func artworkExists(_ file: String?, in defaults: UserDefaults? = UserDefaults(suiteName: AppGroup.id)) -> Bool {
+        guard let file, !file.isEmpty else { return false }
+        if let url = artworkURL(file) { return FileManager.default.fileExists(atPath: url.path) }
+        return defaults?.data(forKey: defaultsArtPrefix + file) != nil
+    }
+
     /// Decodes an artwork file straight to at most `maxPixel` on its long
     /// side (ImageIO thumbnailing, no full-size decode) — widget extensions
     /// run under a tight memory cap.
     static func loadImage(_ file: String?, maxPixel: Int) -> UIImage? {
-        guard let url = artworkURL(file),
-              let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
-        else { return nil }
+        let srcOpts = [kCGImageSourceShouldCache: false] as CFDictionary
+        let src: CGImageSource?
+        if let url = artworkURL(file) {
+            src = CGImageSourceCreateWithURL(url as CFURL, srcOpts)
+        } else if let file, !file.isEmpty,
+                  let data = UserDefaults(suiteName: AppGroup.id)?.data(forKey: defaultsArtPrefix + file) {
+            src = CGImageSourceCreateWithData(data as CFData, srcOpts)
+        } else {
+            src = nil
+        }
+        guard let src else { return nil }
         let opts: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,

@@ -78,7 +78,7 @@ final class WidgetDataService {
         s.anchor = Date()
         // Artwork already written for this track (replay, or skipping back).
         if let meta = Self.artworkMeta[song.id], let file = Self.artworkFileName(for: song.id),
-           let url = NowPlayingSnapshot.artworkURL(file), FileManager.default.fileExists(atPath: url.path) {
+           NowPlayingSnapshot.artworkExists(file, in: defaults) {
             s.artworkFile = file
             s.thumbFile = Self.thumbFileName(for: song.id)
             s.artworkAspect = meta.aspect
@@ -183,14 +183,18 @@ final class WidgetDataService {
     // MARK: - Publishing
 
     private func publish(_ snapshot: NowPlayingSnapshot, widgets: Bool) {
+        let snapshot = snapshot.sanitized
         current = snapshot
-        guard let ud = defaults, isAppGroupAvailable else {
-            logMissingAppGroupOnce()
-            LiveActivityManager.publish(snapshot)
-            return
+        // The shared defaults can work even when the App Group *folder* isn't
+        // reachable (seen on sideloaded installs), so always write them: the
+        // widget then shows the track, just without artwork files.
+        if !isAppGroupAvailable { logMissingAppGroupOnce() }
+        if let ud = defaults {
+            if !snapshot.save(to: ud) {
+                appError("WidgetDataService: could not encode snapshot for \"\(snapshot.title)\"", category: "widget")
+            }
+            if widgets { reloadTimelines() }
         }
-        snapshot.save(to: ud)
-        if widgets { reloadTimelines() }
         LiveActivityManager.publish(snapshot)
     }
 
@@ -270,12 +274,13 @@ final class WidgetDataService {
     /// Writes the widget-size (640 px) and Live Activity (180 px) copies for a
     /// track and prunes old tracks' files.
     private func writeArtwork(_ image: UIImage, trackID: String) -> ArtworkMeta? {
-        guard let artName = Self.artworkFileName(for: trackID), let thumbName = Self.thumbFileName(for: trackID),
-              let artURL = NowPlayingSnapshot.artworkURL(artName), let thumbURL = NowPlayingSnapshot.artworkURL(thumbName)
-        else { return nil }
+        guard let artName = Self.artworkFileName(for: trackID), let thumbName = Self.thumbFileName(for: trackID) else { return nil }
         let pw = image.size.width * image.scale, ph = image.size.height * image.scale
-        guard pw > 0, ph > 0,
-              let big = ImageDownsampler.jpegData(image, maxPixelSize: 640, compressionQuality: 0.85),
+        guard pw > 0, ph > 0 else { return nil }
+        guard let artURL = NowPlayingSnapshot.artworkURL(artName), let thumbURL = NowPlayingSnapshot.artworkURL(thumbName) else {
+            return writeArtworkToDefaults(image, trackID: trackID, artName: artName, thumbName: thumbName, aspect: Double(pw / ph))
+        }
+        guard let big = ImageDownsampler.jpegData(image, maxPixelSize: 640, compressionQuality: 0.85),
               let small = ImageDownsampler.jpegData(image, maxPixelSize: 180, compressionQuality: 0.8)
         else { return nil }
         let dir = artURL.deletingLastPathComponent()
@@ -290,6 +295,26 @@ final class WidgetDataService {
         let meta = ArtworkMeta(aspect: Double(pw / ph), tint: Self.averageTint(image))
         Self.artworkMeta[trackID] = meta
         pruneArtwork(in: dir, keeping: trackID)
+        return meta
+    }
+
+    /// No App Group folder: keep small copies of the current and previous
+    /// track's artwork in the shared defaults instead.
+    private func writeArtworkToDefaults(_ image: UIImage, trackID: String, artName: String, thumbName: String, aspect: Double) -> ArtworkMeta? {
+        guard let ud = defaults,
+              let big = ImageDownsampler.jpegData(image, maxPixelSize: 400, compressionQuality: 0.75),
+              let small = ImageDownsampler.jpegData(image, maxPixelSize: 180, compressionQuality: 0.75)
+        else { return nil }
+        let prefix = NowPlayingSnapshot.defaultsArtPrefix
+        let listKey = prefix + "files"
+        var files = (ud.stringArray(forKey: listKey) ?? []).filter { $0 != artName && $0 != thumbName }
+        // Previous track's pair stays (skipping back); anything older goes.
+        while files.count > 2 { ud.removeObject(forKey: prefix + files.removeFirst()) }
+        ud.set(big, forKey: prefix + artName)
+        ud.set(small, forKey: prefix + thumbName)
+        ud.set(files + [artName, thumbName], forKey: listKey)
+        let meta = ArtworkMeta(aspect: aspect, tint: Self.averageTint(image))
+        Self.artworkMeta[trackID] = meta
         return meta
     }
 
@@ -336,6 +361,6 @@ final class WidgetDataService {
     private func logMissingAppGroupOnce() {
         guard !loggedMissingAppGroup else { return }
         loggedMissingAppGroup = true
-        appError("WidgetDataService: App Group '\(appGroupID)' is unavailable — widgets will be stuck on their placeholder", category: "widget")
+        appError("WidgetDataService: App Group folder '\(appGroupID)' is unavailable — widgets get track info but no artwork", category: "widget")
     }
 }

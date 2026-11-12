@@ -49,5 +49,14 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
   line, speed-aware time labels, Watch Smart Stack / CarPlay (`.small`) layout.
 - `engineSummary` ("Rust engine · LMS OPUS · 48 kHz") sent with playback state for Discord Rich Presence.
 
+## Done (2026-11-11, widget fix in 2.0.0.25)
+- Widgets were stuck on "Nothing Playing" after 2.0.0.24: `WidgetDataService.publish` only saved when the App
+  Group *folder* was reachable, but on the sideloaded install only the shared *defaults* work (the old code
+  saved to defaults unconditionally). Now always saves to defaults; artwork falls back to small JPEGs in the
+  defaults (`now_playing_art.<file>`, current + previous track) when there is no folder.
+- Snapshot numbers are sanitized before saving (NaN/inf made JSON encoding fail silently).
+
 ## Open (widgets)
+- Find out why `containerURL(forSecurityApplicationGroupIdentifier:)` is nil on the SideStore install while the
+  shared defaults work (check Settings > About warning, and the suffixed group ID SideStore registered).
 - Verify on device: widget sizes, Dynamic Island layout, Smart Stack, tinted/clear Home Screen modes.
