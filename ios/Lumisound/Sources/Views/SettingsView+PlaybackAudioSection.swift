@@ -414,6 +414,8 @@ extension SettingsView {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
+            LockScreenPlayerRow(player: player)
+
             Toggle(isOn: $bluetoothBattery.isEnabled) {
                 Label("Low Battery Alerts", systemImage: "battery.25")
                     .foregroundStyle(AppTheme.textPrimary)
@@ -489,6 +491,33 @@ private struct FadeCurvePickerRow: View {
             .tint(.teal)
         }
         .padding(.leading, 16)
+    }
+}
+
+/// Lock Screen player: Live Activity, system player, or both. iOS ignores
+/// Live Activity updates from an app playing audio in the background, so the
+/// Live Activity catches automatic track changes at each track's end (and
+/// immediately for its own buttons); the system player always follows.
+struct LockScreenPlayerRow: View {
+    @ObservedObject var player: AudioPlayerManager
+    @State private var choice = AudioPlayerManager.lockScreenPlayer
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Lock Screen Player", systemImage: "lock.rectangle.on.rectangle")
+                .foregroundStyle(AppTheme.textPrimary)
+            Picker("Lock Screen Player", selection: $choice) {
+                ForEach(AudioPlayerManager.LockScreenPlayer.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: choice) { player.applyLockScreenPlayer($0) }
+            Text(choice == .system
+                 ? "The system media player: always current, and headphone buttons, CarPlay and Siri control Lumisound."
+                 : "iOS only lets the Live Activity change while Lumisound is open, at the end of each song, or when you use its buttons. Pick System Player or Both if it should follow every change instantly.")
+                .font(.caption)
+                .foregroundStyle(AppTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

@@ -4,6 +4,11 @@ import WidgetKit
 
 // MARK: - Transport buttons for widgets and the Live Activity
 //
+// Each is also a `LiveActivityIntent`: iOS lets an app update its Live
+// Activity from the background while such an intent runs, but drops updates
+// from an app that is merely playing audio in the background. So a skip from
+// the Lock Screen updates the card at once (see `LiveActivityManager.flush`).
+//
 // Compiled into BOTH the app and the widget extension. That is what lets iOS
 // run these in the app's own process: an `AudioPlaybackIntent` attached to a
 // widget or Live Activity button is executed in the app (launching it in the
@@ -83,7 +88,7 @@ enum LumisoundPlaybackCommandRouter {
 
 // MARK: - Toggle Playback
 
-struct TogglePlaybackIntent: AudioPlaybackIntent {
+struct TogglePlaybackIntent: AudioPlaybackIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Toggle Playback"
     static let description = IntentDescription("Play or pause Lumisound.")
     static let openAppWhenRun: Bool = false
@@ -97,7 +102,7 @@ struct TogglePlaybackIntent: AudioPlaybackIntent {
 
 // MARK: - Skip Previous
 
-struct SkipPreviousIntent: AudioPlaybackIntent {
+struct SkipPreviousIntent: AudioPlaybackIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Skip to Previous"
     static let description = IntentDescription("Skip to the previous track in Lumisound.")
     static let openAppWhenRun: Bool = false
@@ -111,7 +116,7 @@ struct SkipPreviousIntent: AudioPlaybackIntent {
 
 // MARK: - Skip Next
 
-struct SkipNextIntent: AudioPlaybackIntent {
+struct SkipNextIntent: AudioPlaybackIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Skip to Next"
     static let description = IntentDescription("Skip to the next track in Lumisound.")
     static let openAppWhenRun: Bool = false

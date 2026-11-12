@@ -8,12 +8,54 @@ extension AudioPlayerManager {
 
     // MARK: - Now Playing / Remote Commands
 
-    /// Off: Lumisound doesn't appear in the system media player (Lock Screen,
-    /// Control Center). The Live Activity is the Lock Screen card instead, so
-    /// the two aren't shown side by side. This also means headphone/AirPods
-    /// buttons, car Bluetooth, CarPlay, Siri media commands and the Watch's
-    /// Now Playing don't control Lumisound (user's choice, 2026-11-11).
-    static let showsSystemNowPlaying = false
+    /// Which Lock Screen player Lumisound shows (Settings > Playback).
+    ///
+    /// - `liveActivity` (default, the user's choice of 2026-11-11): only the
+    ///   Live Activity. No system media player, so headphone buttons, car
+    ///   Bluetooth, CarPlay, Siri and the Watch don't control Lumisound.
+    /// - `system`: the system media player only.
+    /// - `both`.
+    ///
+    /// iOS drops Live Activity updates sent by an app that plays audio in the
+    /// background (`.playback` session; Apple forum threads 716458, 724483), so
+    /// the Live Activity can only follow automatic track changes through its
+    /// end-of-track refresh and button intents. The system player always
+    /// follows, which is why it is offered here.
+    enum LockScreenPlayer: String, CaseIterable, Identifiable {
+        case liveActivity, system, both
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .liveActivity: return "Live Activity"
+            case .system: return "System Player"
+            case .both: return "Both"
+            }
+        }
+    }
+
+    static let lockScreenPlayerKey = "lock_screen_player"
+
+    static var lockScreenPlayer: LockScreenPlayer {
+        get { UserDefaults.standard.string(forKey: lockScreenPlayerKey).flatMap(LockScreenPlayer.init(rawValue:)) ?? .liveActivity }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: lockScreenPlayerKey) }
+    }
+
+    static var showsSystemNowPlaying: Bool { lockScreenPlayer != .liveActivity }
+    static var showsLiveActivity: Bool { lockScreenPlayer != .system }
+
+    /// Switch Lock Screen players now.
+    func applyLockScreenPlayer(_ choice: LockScreenPlayer) {
+        Self.lockScreenPlayer = choice
+        configureRemoteCommands()
+        invalidateNowPlaying()
+        updateNowPlaying()
+        Task { await updateNowPlayingArtwork(for: currentSong) }
+        if Self.showsLiveActivity {
+            WidgetDataService.shared.republish()
+        } else {
+            LiveActivityManager.end()
+        }
+    }
 
     /// Publishes the current track to the system Now Playing surfaces (lock
     /// screen, Control Center, Dynamic Island, CarPlay, Siri).
@@ -153,6 +195,13 @@ extension AudioPlayerManager {
     /// handler returns with is the state the system sees.
     func configureRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
+        // Called again when the Lock Screen player setting changes: never
+        // stack a second set of targets.
+        for command in [center.playCommand, center.pauseCommand, center.togglePlayPauseCommand, center.stopCommand,
+                        center.nextTrackCommand, center.previousTrackCommand, center.changePlaybackPositionCommand,
+                        center.changeShuffleModeCommand, center.changeRepeatModeCommand] as [MPRemoteCommand] {
+            command.removeTarget(nil)
+        }
         guard Self.showsSystemNowPlaying else {
             // No targets and nothing enabled: iOS has no controls to show.
             for command in [center.playCommand, center.pauseCommand, center.togglePlayPauseCommand, center.stopCommand,

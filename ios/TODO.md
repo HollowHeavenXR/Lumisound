@@ -123,3 +123,16 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - Tune LumiBoost / LumiSpace by ear on AirPods and the phone speaker (levels were set by measurement).
 - Duplicate clean-up does not merge play counts (history lives server-side); the plan reports them only.
 - tvOS: no LumiEQ/LumiBoost/LumiSpace UI (tvOS uses its own audio path).
+
+## Live Activity in the background (2026-11-12, after 2.0.0.32)
+- Root cause (from device telemetry): every automatic track change while backgrounded logged "activity showed
+  <old>, resending <new>" — iOS silently drops local `Activity.update` calls from an app playing audio with the
+  `.playback` session in the background (Apple forums 716458 / 724483; open since iOS 16). APNs push updates
+  are the only supported background path and this sideloaded build has no aps-environment ("APNs registration
+  failed"). So:
+  - Transport intents are also `LiveActivityIntent` (updates from inside an intent are allowed).
+  - staleDate = end of track + 0.75 s: the system redraws then and the view reads the newer App Group snapshot,
+    so the first automatic advance/crossfade after the last update shows without opening the app.
+  - Background resend loop removed (it could never succeed).
+  - Settings > Playback > Lock Screen Player: Live Activity / System Player / Both (system player always follows).
+- Open: a second automatic advance in a row while backgrounded still waits for the app/a button (no redraw trigger).

@@ -41,7 +41,7 @@ enum LiveActivityManager {
     }
 
     static func publish(_ snapshot: NowPlayingSnapshot) {
-        guard snapshot.hasTrack else {
+        guard snapshot.hasTrack, AudioPlayerManager.showsLiveActivity else {
             end()
             return
         }
@@ -90,6 +90,11 @@ enum LiveActivityManager {
     /// actually holds is a different track, play state or timeline than the
     /// last published snapshot, send the latest one again.
     static func verify() {
+        // In the background iOS ignores these updates anyway (outside an
+        // intent, where `flush` sets `inIntent`); resending would only burn
+        // battery. The foreground republish and the end-of-track refresh
+        // cover that time.
+        guard inIntent || UIApplication.shared.applicationState == .active else { return }
         guard let latest = lastPublished, pending == nil, !sending else { return }
         guard let stale = liveActivities.first(where: { !$0.content.state.now.isDelivery(of: latest) }) else { return }
         if let last = lastVerifyResend, Date().timeIntervalSince(last) < 1.5 { return }
@@ -102,7 +107,11 @@ enum LiveActivityManager {
     /// activity holds the latest snapshot. Called before a widget/Live
     /// Activity intent returns, since iOS redraws the activity at that moment
     /// and may suspend the (paused) app right after.
+    private static var inIntent = false
+
     static func flush() async {
+        inIntent = true
+        defer { inIntent = false }
         // A command can change the track a turn of the run loop later
         // (engine callbacks hop onto the main actor): let those land first.
         for _ in 0..<3 { await Task.yield() }
@@ -206,10 +215,12 @@ enum LiveActivityManager {
     private static func content(for snapshot: NowPlayingSnapshot) -> ActivityContent<LumisoundActivityAttributes.ContentState> {
         ActivityContent(
             state: LumisoundActivityAttributes.ContentState(now: snapshot),
-            // Past the end of the track with no update, the system marks the
-            // activity stale and the view shows it as stopped instead of a
-            // bar pinned at 100 %.
-            staleDate: snapshot.endDate.map { $0.addingTimeInterval(20) },
+            // The moment the track ends the system marks the activity stale
+            // and redraws it. iOS ignores updates from this app while it plays
+            // in the background, so that redraw is how an automatic advance or
+            // crossfade reaches the Lock Screen: the view then reads the newer
+            // snapshot the app has already saved in the App Group.
+            staleDate: snapshot.endDate.map { $0.addingTimeInterval(0.75) },
             relevanceScore: snapshot.isPlaying ? 100 : 50
         )
     }
