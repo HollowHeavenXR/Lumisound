@@ -75,6 +75,14 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
   `LiveActivityManager.flush()` (via `LumisoundPlaybackCommandRouter.settle`); play/pause and favourite reload
   widgets immediately instead of through the 1 s reload spacing.
 
+- Stale username on Account/home/profile screens: `refreshMe()` (GET /auth/me) was never called, so the
+  user saved at sign-in was shown forever. Now `refreshMeIfStale()` runs on launch and on returning to the
+  app (max once a minute) and refetches the social profile when the name changed.
+- New Shortcut/Siri action "Download Saved Playlists" (`DownloadSavedPlaylistsIntent`, 10th and last
+  AppShortcut slot): runs the tracked-playlist auto-downloader now, ignoring the 5-minute spacing.
+- Background refresh was reported "denied" in the 2026-11-12 diagnostics: BGTaskScheduler never runs then,
+  so saved playlists only download while the app is open (Settings > General > Background App Refresh).
+
 ## Open (widgets)
 - If iOS still shows a bare system player while audio plays, the remaining lever is the audio session's
   `.mixWithOthers` option (then Lumisound no longer pauses other apps' audio).

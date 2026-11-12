@@ -156,6 +156,21 @@ extension AccountService {
         clearSession()
     }
 
+    /// The signed-in account as the server has it now. The copy saved at sign
+    /// in was otherwise never refreshed, so a username (or anything else)
+    /// changed on the server or another device kept showing the old value.
+    /// Runs on launch and on returning to the app, at most once a minute.
+    func refreshMeIfStale(minInterval: TimeInterval = 60) async {
+        if let last = lastMeRefresh, Date().timeIntervalSince(last) < minInterval { return }
+        lastMeRefresh = Date()
+        let before = currentUser
+        await refreshMe()
+        if let before, let now = currentUser, before.username != now.username || before.displayName != now.displayName {
+            // Screens built from the social profile pick up the new name too.
+            await SocialService.shared?.fetchMyProfile()
+        }
+    }
+
     func refreshMe() async {
         guard isLoggedIn else { return }
         do {

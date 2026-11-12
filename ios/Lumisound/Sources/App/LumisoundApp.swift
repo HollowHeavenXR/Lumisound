@@ -151,6 +151,7 @@ struct LumisoundApp: App {
                     isSnapshotBlurred = true
                 } else if phase == .active {
                     isSnapshotBlurred = false
+                    Task { await account.refreshMeIfStale() }
                 }
                 if phase == .background {
                     appLock.lock()
@@ -238,6 +239,8 @@ struct LumisoundApp: App {
                 }
             }
             .task {
+                    // Account details as the server has them (username changes etc.).
+                    Task { await account.refreshMeIfStale() }
                     // Configure background logger (idempotent — safe if .task fires multiple times)
                     AppLogger.shared.configure(bridgeURL: streaming.bridgeURL)
 

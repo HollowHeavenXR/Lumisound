@@ -16,6 +16,9 @@ final class AccountService: ObservableObject {
 
     @Published var isLoggedIn: Bool = false
     @Published var currentUser: AppUser? = nil
+    /// Last `refreshMeIfStale` fetch, so returning to the app often doesn't
+    /// refetch the profile every time.
+    var lastMeRefresh: Date?
     @Published var isSyncing: Bool = false
     @Published var errorMessage: String? = nil
     @Published var lastSyncDate: Date? = nil {

@@ -598,6 +598,37 @@ struct WhatsPlayingIntent: AppIntent {
     }
 }
 
+// MARK: - Saved playlists
+
+/// Runs the saved-playlist auto-downloader now (every playlist with
+/// auto-download on, ignoring the usual 5-minute spacing). The same pass runs
+/// on launch, on returning to the app and in background refresh; this is the
+/// manual trigger, usable from Siri, Shortcuts and Shortcuts automations.
+/// Opens the app because the download pass needs the library and the bridge
+/// connection, which a background intent launch doesn't reliably have.
+struct DownloadSavedPlaylistsIntent: AppIntent {
+    static var title: LocalizedStringResource = "Download Saved Playlists"
+    static var description = IntentDescription("Checks your saved playlists with auto-download on and downloads any new tracks.")
+    static var openAppWhenRun: Bool = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let library = try await IntentReadiness.library()
+        let store = TrackedPlaylistStore.shared
+        let count = store.playlists.filter(\.isAutoDownload).count
+        guard count > 0 else {
+            return .result(dialog: "None of your saved playlists has auto-download turned on.")
+        }
+        guard let streaming = StreamingService.shared else { throw LumisoundIntentError.appNotReady }
+        // Unstructured so the pass keeps going after the intent returns.
+        Task { @MainActor in
+            await streaming.reconcilePendingDownloads()
+            await store.runAutoDownloads(streaming: streaming, library: library, minInterval: 0)
+        }
+        return .result(dialog: "Checking \(count) saved playlist\(count == 1 ? "" : "s") for new tracks.")
+    }
+}
+
 struct LumisoundShortcuts: AppShortcutsProvider {
     // Apple caps AppShortcutsProvider at 10 entries per app — exceeding it
     // fails the archive outright ("Found 11 App Shortcuts, but each app may
@@ -652,6 +683,16 @@ struct LumisoundShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Shuffle Library",
             systemImageName: "shuffle"
+        )
+        AppShortcut(
+            intent: DownloadSavedPlaylistsIntent(),
+            phrases: [
+                "Download my saved playlists in \(.applicationName)",
+                "Check my saved playlists in \(.applicationName)",
+                "Update my playlists in \(.applicationName)",
+            ],
+            shortTitle: "Download Saved Playlists",
+            systemImageName: "arrow.down.circle"
         )
         AppShortcut(
             intent: PlayPlaylistIntent(),
