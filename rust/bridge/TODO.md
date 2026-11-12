@@ -2,6 +2,11 @@
 
 Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
 
+## Done (2026-11-12)
+- `USER_MUSIC_EXTRA_DIRS`: user libraries can live on more drives (web-stack mounts the terabyte store at
+  `/usermusic-terabyte`). A user's folder stays on the drive it's on; new users go to the emptiest drive.
+- To do: moving an existing user's library between drives is manual (stop bridge, move folder, start).
+
 ## Done (2026-11-07)
 - `POST /user/skip-history` + table `ios_user_skip_history` (schema.sql): cross-device skip sync.
 - `/user/music`: per-file filesystem work moved off the async workers.
