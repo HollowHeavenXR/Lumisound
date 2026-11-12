@@ -27,6 +27,12 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
   (bgutil 2.0.2) and yt-dlp 2026.10.26 were all fine.
 - Fixed in config: `YTDLP_FALLBACK_CLIENT=tv` (web-stack docker-compose.yml). The `tv` client still serves
   these with the same cookies; output is .m4a. Verified on 4 previously failing videos.
-- Open: detect "age-restricted ... age-verification" on attempt 1 and jump straight to the `tv` client
-  (saves two failed attempts). "Music Premium members" only videos can't download without Premium cookies:
-  fail fast with that message instead of retrying.
+- Done: a failed attempt whose output says age-restricted / age-verification switches the remaining attempts
+  to `YTDLP_FALLBACK_CLIENT` (`ytdlp::needs_age_fallback`); "only available to Music Premium" is a permanent
+  failure with its own message (no retries). Tested: Premium video stops after attempt 1. The age gate is
+  intermittent: at 05:59 UTC every previously failing video downloaded on attempt 1, so the switch hasn't
+  been seen live yet — look for "Age-restricted (...): retrying with the tv client" in the logs.
+- Image build: the demucs model host's TLS cert expired (2026-11-12). The Dockerfile now copies the
+  checkpoint from rust/models/demucs/hub/checkpoints/955717e8-8726e21a.th (git-ignored, 84 MB, sha256 starts
+  8726e21a as its name says). On a fresh machine, extract it from a previous bridge image:
+  `docker cp $(docker create <old image>):/app/cache/demucs/hub/checkpoints/955717e8-8726e21a.th rust/models/demucs/hub/checkpoints/`

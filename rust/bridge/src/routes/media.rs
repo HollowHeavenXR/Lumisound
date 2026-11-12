@@ -681,6 +681,9 @@ async fn do_download_job(
     let expected_duration = p.duration.filter(|d| *d > 0).map(|d| d as f64);
     let mut cookies = yt.cookie_args(user, false).await;
     let mut forced_global = false;
+    // Set when YouTube asked for age verification: the remaining attempts use
+    // the fallback client, which still serves these, instead of failing twice more.
+    let mut age_fallback = false;
     let job_start = Instant::now();
     let mut found: Option<(PathBuf, PathBuf, String, Vec<u8>, &'static str)> = None;
 
@@ -690,7 +693,7 @@ async fn do_download_job(
         let template = tmp_dir.join(format!("{safe}.%(ext)s")).to_string_lossy().into_owned();
         let aria2 = use_aria2 && attempt < max_attempts;
         let mut cmd: Vec<String> = yt.network_args().to_vec();
-        if attempt == max_attempts {
+        if attempt == max_attempts || age_fallback {
             cmd.extend(["--extractor-args".into(), format!("youtube:player_client={}", st.cfg.ytdlp_fallback_client)]);
         }
         cmd.extend(["--no-playlist", "--embed-metadata", "--embed-thumbnail"].map(String::from));
@@ -745,7 +748,12 @@ async fn do_download_job(
                     cookies = forced;
                 }
             }
-            // A removed/private video fails the same way every time.
+            if !age_fallback && attempt < max_attempts && ytdlp::needs_age_fallback(&out.stderr) {
+                age_fallback = true;
+                tracing::info!("Age-restricted ({safe}): retrying with the {} client", st.cfg.ytdlp_fallback_client);
+                continue;
+            }
+            // A removed/private/Premium-only video fails the same way every time.
             if attempt == max_attempts || is_permanent_failure(&out.stderr) {
                 let detail = yt.auth_failure_reason(&out.stderr).unwrap_or_else(|| generic_failure_summary(&out.stderr));
                 return Err((404, detail, is_permanent_failure(&out.stderr)));

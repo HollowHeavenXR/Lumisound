@@ -62,3 +62,4 @@ ios-bridge/result
 rust/target/
 rust/.cargo-cache/
 ios/RustCore/
+rust/models/

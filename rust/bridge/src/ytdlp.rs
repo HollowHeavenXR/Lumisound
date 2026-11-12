@@ -38,6 +38,8 @@ const PERMANENT_FAILURE_MARKERS: &[&str] = &[
     "this video is no longer available",
     "does not exist",
     "unavailable in your country",
+    // Same answer on every client without Premium cookies.
+    "only available to music premium",
 ];
 pub const ARIA2_ARGS: &[&str] = &[
     "--downloader",
@@ -502,10 +504,12 @@ impl Ytdlp {
     pub fn auth_failure_reason(&self, stderr: &[u8]) -> Option<String> {
         self.flag_cookies_stale_if_needed(stderr);
         let t = String::from_utf8_lossy(stderr).to_lowercase();
-        let r = if t.contains("sign in to confirm") || t.contains("not a bot") {
+        let r = if t.contains("music premium") {
+            "This video is only available to YouTube Music Premium members. Upload cookies from a Premium account in Settings to download it."
+        } else if t.contains("sign in to confirm") || t.contains("not a bot") {
             "YouTube is requiring sign-in to verify this isn't a bot. Upload your YouTube cookies in Settings to fix this."
         } else if t.contains("age-restricted") || (t.contains("age") && t.contains("restrict")) {
-            "This video is age-restricted. Upload YouTube cookies from a logged-in, age-verified account in Settings to play it."
+            "This video is age-restricted and YouTube refused it on every client. Upload YouTube cookies from a logged-in, age-verified account in Settings to play it."
         } else if t.contains("private video") {
             "This video is private."
         } else if t.contains("sign in") && t.contains("login") {
@@ -577,6 +581,15 @@ pub fn is_permanent_failure(stderr: &[u8]) -> bool {
         return false;
     }
     PERMANENT_FAILURE_MARKERS.iter().any(|m| t.contains(m))
+}
+
+/// YouTube refused an age-restricted video because the cookie account isn't
+/// age-verified. The `web*`/`mweb` clients then hand out streams that 403,
+/// but the configured fallback client (`tv`) still serves them, so the next
+/// attempt should go straight to it.
+pub fn needs_age_fallback(stderr: &[u8]) -> bool {
+    let t = String::from_utf8_lossy(stderr).to_lowercase();
+    t.contains("age-restricted") || t.contains("age-verification") || t.contains("confirm your age")
 }
 
 pub fn generic_failure_summary(stderr: &[u8]) -> String {
@@ -783,6 +796,17 @@ pub fn parse_track(entry: &Value, source: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn age_and_premium_detection() {
+        let age = b"WARNING: [youtube] abc: This video is age-restricted and YouTube is requiring account age-verification; some formats may be missing\nERROR: unable to download video data: HTTP Error 403: Forbidden";
+        assert!(super::needs_age_fallback(age));
+        assert!(!super::is_permanent_failure(age));
+        let premium = b"ERROR: [youtube] 83PR0rOtEB0: This video is only available to Music Premium members";
+        assert!(super::is_permanent_failure(premium));
+        assert!(!super::needs_age_fallback(premium));
+        assert!(!super::needs_age_fallback(b"ERROR: unable to download video data: HTTP Error 403: Forbidden"));
+    }
+
     use super::*;
 
     #[test]

@@ -27,6 +27,10 @@ RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh && test
 RUN pip install --no-cache-dir torch==2.3.1 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir numpy==2.3.3 soundfile demucs==4.0.1
 ENV TORCH_HOME=/app/cache/demucs
+# The model host's TLS certificate lapsed (2026-11-12), so the checkpoint comes
+# from rust/models/ (git-ignored; extract it from a previous bridge image, see
+# bridge/TODO.md). get_model then finds it locally and only verifies it.
+COPY models/demucs /app/cache/demucs
 RUN python -c "from demucs.pretrained import get_model; get_model('htdemucs'); print('htdemucs cached')"
 # yt-dlp[default] brings mutagen (thumbnail/metadata embedding into
 # Opus/M4A), pycryptodomex, brotli, websockets and certifi.
