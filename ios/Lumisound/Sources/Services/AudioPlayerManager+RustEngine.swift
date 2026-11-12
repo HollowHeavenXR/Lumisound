@@ -192,7 +192,7 @@ extension AudioPlayerManager {
 
     func applyRustSettings() {
         let s = audioSettings
-        Self.rust.setVolume(volume: s.volume)
+        applyRustVolume()
         // Pitch-preserving speed + pitch shift (WSOLA) — re-opens the deck at
         // the current position when they change.
         if let newID = try? Self.rust.setSpeedPitch(speed: Double(s.speed), pitchSemitones: Double(s.pitchSemitones)) {
@@ -201,9 +201,10 @@ extension AudioPlayerManager {
             rustNextPath = nil
             queueRustGaplessNext()
         }
-        Self.rust.setEq(gainsDb: effectiveEqGains(bands: s.eqBands, eqEnabled: s.equalizerEnabled,
-                                                   bassBoostEnabled: s.bassBoostEnabled, bassBoostGain: s.bassBoostGain),
-                        enabled: s.equalizerEnabled || s.bassBoostEnabled)
+        Self.rust.setEqWith(gainsDb: effectiveEqGains(bands: s.eqBands, eqEnabled: s.equalizerEnabled,
+                                                       bassBoostEnabled: s.bassBoostEnabled, bassBoostGain: s.bassBoostGain),
+                            enabled: s.equalizerEnabled || s.bassBoostEnabled,
+                            loudnessMatch: s.eqLoudnessMatch ?? true)
         let wet = s.reverbEnabled ? min(max(s.reverbWetDryMix, 0), 100) / 100 : 0
         Self.rust.setEffects(reverbWet: wet, reverbPreset: s.reverbPreset.rawValue,
                              mono: s.monoAudioEnabled == true, nightMode: s.nightModeEnabled == true)
@@ -211,22 +212,68 @@ extension AudioPlayerManager {
         applyRustSpatial()
     }
 
-    /// Binaural spatial audio in the engine, steered by headphone head tracking.
+    /// Volume and LumiBoost. `volume` above 1.0 (100 %) is boost: the engine
+    /// keeps the master at unity and LumiBoost adds the rest as loudness
+    /// (multiband, route-aware) instead of plain gain into the limiter.
+    func applyRustVolume() {
+        let v = audioSettings.volume
+        Self.rust.setVolume(volume: min(max(v, 0), 1))
+        let boostDB: Float = v > 1 ? min(20 * log10(v), AudioSettings.maxBoostDB) : 0
+        Self.rust.setBoost(db: boostDB, route: Self.boostRoute())
+        if boostDB > 0 { HearingHealthService.markBoostActiveToday() }
+    }
+
+    /// LumiBoost profile for the current output.
+    static func boostRoute() -> BoostRoute {
+        guard let port = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType else { return .headphones }
+        switch port {
+        case .builtInSpeaker, .builtInReceiver: return .speaker
+        case .headphones, .headsetMic: return .headphones
+        case .bluetoothA2DP, .bluetoothLE, .bluetoothHFP, .airPlay: return .wireless
+        default: return .external
+        }
+    }
+
+    /// Short name of the current LumiBoost profile, for the volume UI.
+    static var boostRouteName: String {
+        switch boostRoute() {
+        case .speaker: return "Speaker profile"
+        case .headphones: return "Headphone profile"
+        case .wireless: return "Wireless profile"
+        case .external: return "External profile"
+        }
+    }
+
+    /// LumiSpace in the engine: the chosen room, steered by headphone head
+    /// tracking (Crossfeed isn't tracked).
     func applyRustSpatial() {
         guard isUsingRustEngine else { return }
         let on = audioSettings.spatialAudioEnabled == true
-        Self.rust.setSpatial(enabled: on, yawDegrees: 0)
+        let room = audioSettings.lumiSpaceMode
+        let mode: SpatialMode
+        if !on {
+            mode = .off
+        } else {
+            switch room {
+            case .studio: mode = .studio
+            case .wide: mode = .wide
+            case .concert: mode = .concert
+            case .crossfeed: mode = .crossfeed
+            }
+        }
+        Self.rust.setSpatialMode(mode: mode, yawDegrees: 0)
         let tracker = SpatialAudioService.shared
-        if on, tracker.isHeadTrackingAvailable {
+        let track = on && room.isHeadTracked
+        if track, tracker.isHeadTrackingAvailable {
             tracker.onOrientationUpdate = { orientation in
-                Self.rust.setSpatial(enabled: true, yawDegrees: orientation.yaw)
+                Self.rust.setSpatialMode(mode: mode, yawDegrees: orientation.yaw)
             }
             tracker.startTracking()
-        } else if !on, rustSpatialTracking {
+        } else if !track, rustSpatialTracking {
             tracker.stopTracking()
             tracker.onOrientationUpdate = nil
         }
-        rustSpatialTracking = on
+        rustSpatialTracking = track
     }
 
     /// ReplayGain (tags or measured) applied inside the engine; volume is separate.

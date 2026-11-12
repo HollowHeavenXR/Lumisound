@@ -24,6 +24,14 @@ final class EQSystemTests: XCTestCase {
         }
     }
 
+    // MARK: Test 2b — Presets saved before LumiEQ resolve to their successors
+
+    func testLegacyPresetNamesResolve() throws {
+        let data = Data(#"["Hip-Hop","Bass Boost","Custom","gone"]"#.utf8)
+        let decoded = try JSONDecoder().decode([EQPreset].self, from: data)
+        XCTAssertEqual(decoded.map(\.rawValue), ["808_engine", "deep_current", "custom", "flat"])
+    }
+
     // MARK: Test 3 — Flat preset is all zeros
 
     func testFlatPresetIsAllZeros() {
@@ -143,20 +151,20 @@ final class EQSystemTests: XCTestCase {
     // MARK: Test 13 — Genre-aware Auto EQ prefers genre over tempo
 
     func testAutoEQPrefersGenreOverTempo() {
-        // 90 BPM would map to .acoustic by tempo alone, but a hip-hop genre tag
+        // 90 BPM would map to Woodgrain by tempo alone, but a hip-hop genre tag
         // must win.
-        XCTAssertEqual(EQPreset.auto(forBPM: 90, genre: "Hip-Hop"), .hiphop)
-        XCTAssertEqual(EQPreset.auto(forBPM: 90, genre: "Trap"), .hiphop)
-        XCTAssertEqual(EQPreset.auto(forBPM: 140, genre: "Classical"), .classical)
-        XCTAssertEqual(EQPreset.preset(forGenre: "Deep House"), .electronic)
+        XCTAssertEqual(EQPreset.auto(forBPM: 90, genre: "Hip-Hop"), EQPreset(rawValue: "808_engine"))
+        XCTAssertEqual(EQPreset.auto(forBPM: 90, genre: "Trap"), EQPreset(rawValue: "808_engine"))
+        XCTAssertEqual(EQPreset.auto(forBPM: 140, genre: "Classical"), EQPreset(rawValue: "concert_hall"))
+        XCTAssertEqual(EQPreset.preset(forGenre: "Deep House"), EQPreset(rawValue: "pulse_club"))
     }
 
     // MARK: Test 14 — Auto EQ falls back to tempo when genre is unknown
 
     func testAutoEQFallsBackToTempo() {
-        XCTAssertEqual(EQPreset.auto(forBPM: 60, genre: nil), .classical)
-        XCTAssertEqual(EQPreset.auto(forBPM: 120, genre: ""), .pop)
-        XCTAssertEqual(EQPreset.auto(forBPM: 150, genre: "Unrecognizable Genre XYZ"), .electronic)
+        XCTAssertEqual(EQPreset.auto(forBPM: 60, genre: nil), EQPreset(rawValue: "concert_hall"))
+        XCTAssertEqual(EQPreset.auto(forBPM: 120, genre: ""), EQPreset(rawValue: "neon_pop"))
+        XCTAssertEqual(EQPreset.auto(forBPM: 150, genre: "Unrecognizable Genre XYZ"), EQPreset(rawValue: "pulse_club"))
         XCTAssertNil(EQPreset.auto(forBPM: nil, genre: nil))
     }
 

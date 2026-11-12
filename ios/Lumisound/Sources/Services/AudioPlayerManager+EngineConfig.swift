@@ -162,6 +162,8 @@ extension AudioPlayerManager {
         // pause-on-loss path too, so a later resume plays on the new route.
         if [.newDeviceAvailable, .oldDeviceUnavailable, .override, .routeConfigurationChange].contains(reason) {
             restartRustOutput(reason: "route_\(reason.rawValue)", force: true)
+            // LumiBoost's profile follows the output (speaker vs headphones).
+            if isUsingRustEngine { applyRustVolume() }
         }
 
         switch reason {

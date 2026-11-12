@@ -31,19 +31,68 @@ extension NowPlayingView {
                 )
                 .frame(width: 30, height: 30)
             }
-            // Above 100% the volume slider is boosting gain beyond the
-            // device's normal output (via the EQ's global gain stage, in dB —
-            // see AudioPlayerManager.applyOutputGain) — a limiter prevents
-            // clipping, but it's worth flagging since it's an unusual range
-            // for a slider.
+            // Above 100 % the slider drives LumiBoost (the engine's multiband,
+            // route-aware loudness booster) instead of a plain gain stage.
             if player.audioSettings.volume > 1.0 {
-                let boostDB = 20 * log10(player.audioSettings.volume)
-                Text("Boost: +\(String(format: "%.1f", boostDB)) dB")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(AppTheme.dynamicAccent)
+                LumiBoostReadout(volume: player.audioSettings.volume, usesEngine: player.isUsingRustEngine)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+// MARK: - LumiBoostReadout
+
+/// "LumiBoost +6.0 dB · Headphone profile" plus a live hold-back meter: how
+/// far the booster is keeping loud passages under the ceiling right now
+/// (quiet passages get the full boost; that's the point).
+private struct LumiBoostReadout: View {
+    let volume: Float
+    let usesEngine: Bool
+
+    var body: some View {
+        let boost = min(20 * log10(volume), AudioSettings.maxBoostDB)
+        VStack(spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.fill").font(.system(size: 9, weight: .bold))
+                Text("LumiBoost +\(String(format: "%.1f", boost)) dB")
+                    .font(.caption2.weight(.semibold))
+                if usesEngine {
+                    Text("· \(AudioPlayerManager.boostRouteName)")
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.textSecondary)
+                }
+            }
+            .foregroundStyle(AppTheme.dynamicAccent)
+            if usesEngine {
+                TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+                    let hold = max(0, min(12, -AudioPlayerManager.rust.boostReduction()))
+                    HStack(spacing: 6) {
+                        Text("Hold-back")
+                            .font(.system(size: 9))
+                            .foregroundStyle(AppTheme.textSecondary)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(AppTheme.textSecondary.opacity(0.15))
+                                Capsule()
+                                    .fill(hold > 6 ? Color.orange : AppTheme.dynamicAccent)
+                                    .frame(width: geo.size.width * CGFloat(hold / 12))
+                            }
+                        }
+                        .frame(height: 4)
+                        Text(String(format: "%.1f dB", hold))
+                            .font(.system(size: 9).monospacedDigit())
+                            .foregroundStyle(AppTheme.textSecondary)
+                            .frame(width: 40, alignment: .trailing)
+                    }
+                    .animation(.linear(duration: 0.18), value: hold)
+                }
+                .frame(height: 12)
+            }
+        }
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .combine)
     }
 }
 

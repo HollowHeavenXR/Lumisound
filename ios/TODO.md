@@ -94,3 +94,32 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - Find out why `containerURL(forSecurityApplicationGroupIdentifier:)` is nil on the SideStore install while the
   shared defaults work (check Settings > About warning, and the suffixed group ID SideStore registered).
 - Verify on device: widget sizes, Dynamic Island layout, Smart Stack, tinted/clear Home Screen modes.
+
+## Done (2026-11-12, six-part Lumisound pass)
+- Live Activity stuck on old tracks (crossfade, or pause → skip/rewind, worst in the background), all three
+  presentations (Lock Screen, Dynamic Island, Watch/CarPlay small): `LiveActivityManager` now updates every
+  live activity (ends duplicates left by crashes — the one updated wasn't always the one on screen), coalesces
+  bursts, sends under a background-task assertion (a paused app was suspended before iOS got the update),
+  confirms delivery by snapshot `revision` and resends, and runs its own 12 s watchdog after each change (the
+  player timer stops while paused). The Live Activity view also reads the App Group snapshot and shows it when
+  its revision is newer than the activity state, so the redraw after a button tap is right even if ActivityKit
+  dropped the update.
+- Duplicate Finder rebuilt on the Rust Duplicate Engine (`rust/core/src/dupes.rs`): exact-file / same-source /
+  same-recording (LumiPrint) / likely evidence, variant guard (Live, Remix, Sped Up… are never duplicates),
+  keeper scoring with reasons, "Not duplicates", safe one-tap clean-up, merge of favorites + playlist places,
+  Recently Deleted + undo journal (`Views/DuplicateFilesView.swift`, `FolderDuplicatesSheet.swift`,
+  `Services/LibraryManager+DuplicateResolution.swift`). Aria auto-removal and the server fpcalc check are gone
+  from this screen (the engine decides on-device).
+- Classic Account screen: `Views/ClassicAccountView.swift` (listener pass, sync strip, Profile / Listening /
+  Connections / Security decks). Lumen and Strata keep `AccountView`'s standard body.
+- LumiBoost (volume > 100 %): `applyRustVolume` keeps the master at unity and sends the boost + output route
+  profile to the engine; Now Playing shows the profile and a live hold-back meter.
+- LumiEQ: `EQPreset` is now an id into the engine catalogue (18 presets in 4 categories, legacy names migrate);
+  Now Playing panel with the engine's real response curve, preset cards, loudness match toggle.
+- LumiSpace: Spatial Audio rooms (Studio / Wide Stage / Concert Hall / Crossfeed) picker in Settings.
+
+## Open (2026-11-12 pass)
+- Verify on device: Live Activity after pause → skip in the background; crossfade with the phone locked.
+- Tune LumiBoost / LumiSpace by ear on AirPods and the phone speaker (levels were set by measurement).
+- Duplicate clean-up does not merge play counts (history lives server-side); the plan reports them only.
+- tvOS: no LumiEQ/LumiBoost/LumiSpace UI (tvOS uses its own audio path).

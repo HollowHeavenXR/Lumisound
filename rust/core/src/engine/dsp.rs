@@ -1,9 +1,9 @@
-//! Realtime-safe DSP blocks: RBJ biquads, the 10-band graphic EQ, and
-//! click-free gain ramps.
+//! Realtime-safe DSP blocks: RBJ biquads, click-free gain ramps, reverb,
+//! night-mode compressor and the master limiter. (The EQ is `eq.rs`.)
 
 use std::f32::consts::PI;
 
-pub const EQ_BANDS_HZ: [f32; 10] = [32.0, 64.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0];
+pub use super::eq::EQ_BANDS_HZ;
 
 #[derive(Clone, Copy, Default)]
 pub struct Biquad {
@@ -20,6 +20,8 @@ pub struct Biquad {
 pub enum Shape {
     /// 2nd-order low-pass (Q 0.707 = Butterworth); gain ignored.
     LowPass,
+    /// 2nd-order high-pass; gain ignored.
+    HighPass,
     LowShelf,
     Peak,
     HighShelf,
@@ -36,6 +38,7 @@ impl Biquad {
         let (b0, b1, b2, a0, a1, a2) = match shape {
             Shape::Peak => (1.0 + alpha * a, -2.0 * cw, 1.0 - alpha * a, 1.0 + alpha / a, -2.0 * cw, 1.0 - alpha / a),
             Shape::LowPass => ((1.0 - cw) / 2.0, 1.0 - cw, (1.0 - cw) / 2.0, 1.0 + alpha, -2.0 * cw, 1.0 - alpha),
+            Shape::HighPass => ((1.0 + cw) / 2.0, -(1.0 + cw), (1.0 + cw) / 2.0, 1.0 + alpha, -2.0 * cw, 1.0 - alpha),
             Shape::LowShelf => {
                 let s = 2.0 * a.sqrt() * alpha;
                 (
@@ -62,6 +65,21 @@ impl Biquad {
         Self { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0, z1: [0.0; 2], z2: [0.0; 2] }
     }
 
+    /// |H(f)| (linear) of this filter at `freq` Hz.
+    pub fn magnitude(&self, freq: f32, rate: f32) -> f32 {
+        let w = 2.0 * PI * freq / rate;
+        let (c1, s1, c2, s2) = (w.cos(), w.sin(), (2.0 * w).cos(), (2.0 * w).sin());
+        let (nr, ni) = (self.b0 + self.b1 * c1 + self.b2 * c2, -(self.b1 * s1 + self.b2 * s2));
+        let (dr, di) = (1.0 + self.a1 * c1 + self.a2 * c2, -(self.a1 * s1 + self.a2 * s2));
+        ((nr * nr + ni * ni) / (dr * dr + di * di).max(1e-20)).sqrt()
+    }
+
+    /// Clear the filter's memory.
+    pub fn reset(&mut self) {
+        self.z1 = [0.0; 2];
+        self.z2 = [0.0; 2];
+    }
+
     /// Keep state, swap coefficients (no click on EQ moves).
     pub fn retune(&mut self, other: &Biquad) {
         (self.b0, self.b1, self.b2, self.a1, self.a2) = (other.b0, other.b1, other.b2, other.a1, other.a2);
@@ -77,76 +95,6 @@ impl Biquad {
     }
 }
 
-/// Ten-band graphic EQ (low shelf, 8 peaks, high shelf), stereo.
-pub struct Eq10 {
-    bands: [Biquad; 10],
-    gains: [f32; 10],
-    pub enabled: bool,
-    rate: f32,
-    /// Auto-headroom: boosts are paid for by lowering the input first (half
-    /// the largest boost), so a hot master isn't driven into the limiter and
-    /// the tone change stays audible instead of being squashed. Smoothed.
-    pre: f32,
-    pre_target: f32,
-    pre_coef: f32,
-}
-
-impl Eq10 {
-    pub fn new(rate: f32) -> Self {
-        let pre_coef = 1.0 - (-1.0 / (0.05 * rate)).exp(); // ~50 ms glide
-        let mut e = Self { bands: [Biquad::default(); 10], gains: [0.0; 10], enabled: false, rate, pre: 1.0, pre_target: 1.0, pre_coef };
-        e.set_gains(&[0.0; 10]);
-        e
-    }
-
-    fn design(i: usize, g: f32, rate: f32) -> Biquad {
-        let shape = match i {
-            0 => Shape::LowShelf,
-            9 => Shape::HighShelf,
-            _ => Shape::Peak,
-        };
-        Biquad::new(shape, EQ_BANDS_HZ[i], g, if shape == Shape::Peak { 1.1 } else { 0.707 }, rate)
-    }
-
-    pub fn set_gains(&mut self, gains: &[f32]) {
-        for i in 0..10 {
-            let g = gains.get(i).copied().unwrap_or(0.0).clamp(-24.0, 24.0);
-            self.gains[i] = g;
-            let d = Self::design(i, g, self.rate);
-            self.bands[i].retune(&d);
-        }
-        let boost = self.gains.iter().fold(0f32, |m, g| m.max(*g));
-        self.pre_target = 10f32.powf(-0.5 * boost / 20.0);
-    }
-
-    /// Current headroom gain (1 = none).
-    pub fn pre_gain(&self) -> f32 {
-        self.pre_target
-    }
-
-    pub fn gains(&self) -> [f32; 10] {
-        self.gains
-    }
-
-    pub fn is_flat(&self) -> bool {
-        self.gains.iter().all(|g| g.abs() < 0.01)
-    }
-
-    #[inline]
-    pub fn process(&mut self, ch: usize, mut x: f32) -> f32 {
-        if !self.enabled || self.is_flat() {
-            return x;
-        }
-        if ch == 0 {
-            self.pre += (self.pre_target - self.pre) * self.pre_coef;
-        }
-        x *= self.pre;
-        for b in self.bands.iter_mut() {
-            x = b.process(ch, x);
-        }
-        x
-    }
-}
 
 /// Linear gain ramp over a number of frames (fades, volume moves, crossfade).
 #[derive(Clone, Copy)]
@@ -194,36 +142,6 @@ impl Ramp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn rms_after(eq: &mut Eq10, freq: f32, rate: f32) -> f32 {
-        let n = (rate as usize) / 2;
-        let mut acc = 0.0;
-        for i in 0..n {
-            let x = (2.0 * PI * freq * i as f32 / rate).sin() * 0.5;
-            let y = eq.process(0, x);
-            if i > n / 2 {
-                acc += y * y;
-            }
-        }
-        (acc / (n / 2) as f32).sqrt()
-    }
-    #[test]
-    fn eq_boosts_band() {
-        let rate = 48000.0;
-        let mut flat = Eq10::new(rate);
-        flat.enabled = true;
-        let base = rms_after(&mut flat, 1000.0, rate);
-        let mut eq = Eq10::new(rate);
-        eq.enabled = true;
-        let mut g = [0.0; 10];
-        g[5] = 6.0;
-        eq.set_gains(&g);
-        let boosted = rms_after(&mut eq, 1000.0, rate);
-        let db = 20.0 * (boosted / base).log10();
-        // +6 dB band, minus the 3 dB auto-headroom.
-        assert!((db - 3.0).abs() < 0.6, "got {db} dB");
-        let off = 20.0 * (rms_after(&mut eq, 8000.0, rate) / rms_after(&mut flat, 8000.0, rate)).log10();
-        assert!((db - off - 6.0).abs() < 0.8, "tone change {}", db - off);
-    }
     #[test]
     fn ramp_reaches_target() {
         let mut r = Ramp::new(0.0);

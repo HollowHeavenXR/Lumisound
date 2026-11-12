@@ -20,6 +20,7 @@ pub mod haptics;
 pub mod haptic_brain;
 pub mod intro;
 pub mod duplicates;
+pub mod dupes;
 pub mod engine;
 pub mod import;
 pub mod library;

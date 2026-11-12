@@ -387,15 +387,9 @@ extension SettingsView {
             .tint(.teal)
 
             if player.audioSettings.spatialAudioEnabled ?? false {
-                Text(
-                    SpatialAudioService.shared.isHeadTrackingAvailable
-                        ? "Externalizes the mix and anchors it in space as you turn your head. Works best with AirPods Pro/Max."
-                        : "Externalizes the mix in space. Head tracking needs compatible AirPods — without them the sound stays anchored but doesn't follow head movement."
-                )
-                .font(.caption)
-                .foregroundStyle(AppTheme.textSecondary)
-                .padding(.leading, 16)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                LumiSpaceRoomPicker(player: player)
+                    .padding(.leading, 16)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             // Mono Audio — downmixes to mono, for single-earbud listening or
@@ -495,6 +489,50 @@ private struct FadeCurvePickerRow: View {
             .tint(.teal)
         }
         .padding(.leading, 16)
+    }
+}
+
+/// LumiSpace room cards: the stereo mix on virtual speakers in a chosen
+/// room (Studio / Wide Stage / Concert Hall) or plain Crossfeed.
+struct LumiSpaceRoomPicker: View {
+    @ObservedObject var player: AudioPlayerManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                ForEach(LumiSpaceMode.allCases) { mode in
+                    let selected = player.audioSettings.lumiSpaceMode == mode
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        player.audioSettings.lumiSpaceMode = mode
+                    } label: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Image(systemName: mode.symbol)
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(selected ? Color.white : Color.teal)
+                            Text(mode.displayName)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(selected ? Color.white : AppTheme.textPrimary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(selected ? Color.teal : AppTheme.elevatedSurface)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+            Text(player.audioSettings.lumiSpaceMode.subtitle
+                 + (player.audioSettings.lumiSpaceMode.isHeadTracked && !SpatialAudioService.shared.isHeadTrackingAvailable
+                    ? " Head tracking needs compatible AirPods; without them the stage stays fixed in front." : ""))
+                .font(.caption)
+                .foregroundStyle(AppTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .animation(.easeInOut(duration: 0.18), value: player.audioSettings.lumiSpaceMode)
     }
 }
 

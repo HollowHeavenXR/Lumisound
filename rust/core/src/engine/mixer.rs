@@ -3,11 +3,13 @@
 //! atomics, so the callback never blocks.
 
 use super::deck::Deck;
-use super::binaural::Binaural;
-use super::dsp::{Biquad, Compressor, Eq10, Limiter, Ramp, Reverb, Shape};
+use super::boost::{BoostRoute, LumiBoost};
+use super::dsp::{Biquad, Compressor, Limiter, Ramp, Reverb, Shape};
+use super::eq::LumiEq;
+use super::space::{LumiSpace, SpatialMode};
 use super::health::{EngineIncident, Health, IncidentKind, PlaybackPhase, SLOW_START_MS, atomic_max};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 pub enum Cmd {
     Play,
@@ -15,11 +17,13 @@ pub enum Cmd {
     Volume(f32),
     /// Per-track gain (ReplayGain / normalization) for the playing deck, linear.
     TrackGain(f32),
-    Eq { gains: [f32; 10], enabled: bool },
+    Eq { gains: [f32; 10], enabled: bool, loudness_match: bool },
+    /// LumiBoost amount (dB, 0 = off) and output route profile.
+    Boost { db: f32, route: BoostRoute },
     Effects { reverb_wet: f32, reverb_preset: String, mono: bool, night: bool },
     /// 8D auto-pan (Hz, 0 = off) and tremolo (Hz, depth 0…1; 0 = off).
-    /// Binaural "spatial audio": on/off and head yaw (degrees).
-    Spatial { enabled: bool, yaw_deg: f32 },
+    /// LumiSpace mode and head yaw (degrees).
+    Spatial { mode: SpatialMode, yaw_deg: f32 },
     Modulation { pan_hz: f32, tremolo_hz: f32, tremolo_depth: f32, vibrato_hz: f32, vibrato_semitones: f32 },
     /// Replace the playing deck immediately (load / seek).
     Replace(Box<Deck>),
@@ -124,6 +128,8 @@ pub struct Telemetry {
     pub deck_id: AtomicU64,
     /// Peak levels (L, R) of the last buffer, f32 bits packed.
     pub levels_bits: AtomicU64,
+    /// LumiBoost's deepest gain reduction in the last buffer (dB ≤ 0, f32 bits).
+    pub boost_reduction_bits: AtomicU32,
     pub health: Health,
 }
 
@@ -149,7 +155,8 @@ pub struct Mixer {
     volume: f32,
     playing: bool,
     pausing: bool,
-    eq: Eq10,
+    eq: LumiEq,
+    boost: LumiBoost,
     reverb: Reverb,
     /// Last settings, to rebuild the rate-dependent processors (`set_rate`).
     reverb_preset: String,
@@ -157,7 +164,7 @@ pub struct Mixer {
     comp: Compressor,
     limiter: Limiter,
     mono: bool,
-    spatial: Binaural,
+    spatial: LumiSpace,
     pan_hz: f32,
     pan_phase: f32,
     trem_hz: f32,
@@ -196,7 +203,7 @@ struct Monitor {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, retune: None, blend: None, swap: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: Eq10::new(rate as f32), reverb: Reverb::new(rate as f32), reverb_preset: String::new(), spatial_yaw: 0.0, comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: Binaural::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_coef: 1.0 - (-1.0 / (0.03 * rate as f32)).exp(), vib_target: 0.0, vib_wet: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
+        Self { rate, cur: None, next: None, fading: None, retune: None, blend: None, swap: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: LumiEq::new(rate as f32), boost: LumiBoost::new(rate as f32), reverb: Reverb::new(rate as f32), reverb_preset: String::new(), spatial_yaw: 0.0, comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: LumiSpace::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_coef: 1.0 - (-1.0 / (0.03 * rate as f32)).exp(), vib_target: 0.0, vib_wet: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -251,9 +258,14 @@ impl Mixer {
                     d.gain = g.clamp(0.0, 4.0);
                 }
             }
-            Cmd::Eq { gains, enabled } => {
+            Cmd::Eq { gains, enabled, loudness_match } => {
                 self.eq.enabled = enabled;
+                self.eq.loudness_match = loudness_match;
                 self.eq.set_gains(&gains);
+            }
+            Cmd::Boost { db, route } => {
+                self.boost.set_route(route);
+                self.boost.set_amount(db);
             }
             Cmd::Effects { reverb_wet, reverb_preset, mono, night } => {
                 self.reverb.set_wet(reverb_wet);
@@ -262,8 +274,8 @@ impl Mixer {
                 self.mono = mono;
                 self.comp.enabled = night;
             }
-            Cmd::Spatial { enabled, yaw_deg } => {
-                self.spatial.enabled = enabled;
+            Cmd::Spatial { mode, yaw_deg } => {
+                self.spatial.set_mode(mode);
                 self.spatial.set_yaw(yaw_deg);
                 self.spatial_yaw = yaw_deg;
             }
@@ -401,10 +413,15 @@ impl Mixer {
         }
         self.rate = rate;
         let r = rate as f32;
-        let (eq_on, gains) = (self.eq.enabled, self.eq.gains());
-        self.eq = Eq10::new(r);
+        let (eq_on, gains, lm) = (self.eq.enabled, self.eq.gains(), self.eq.loudness_match);
+        self.eq = LumiEq::new(r);
         self.eq.enabled = eq_on;
+        self.eq.loudness_match = lm;
         self.eq.set_gains(&gains);
+        let (amount, route) = (self.boost.amount_target(), self.boost.route());
+        self.boost = LumiBoost::new(r);
+        self.boost.set_route(route);
+        self.boost.set_amount(amount);
         let wet = self.reverb.wet_target();
         self.reverb = Reverb::new(r);
         if !self.reverb_preset.is_empty() {
@@ -415,9 +432,9 @@ impl Mixer {
         self.comp = Compressor::new(r);
         self.comp.enabled = night;
         self.limiter = Limiter::new(r);
-        let spatial_on = self.spatial.enabled;
-        self.spatial = Binaural::new(r);
-        self.spatial.enabled = spatial_on;
+        let mode = self.spatial.mode();
+        self.spatial = LumiSpace::new(r);
+        self.spatial.set_mode(mode);
         self.spatial.set_yaw(self.spatial_yaw);
         self.vib_coef = 1.0 - (-1.0 / (0.03 * r)).exp();
     }
@@ -682,8 +699,7 @@ impl Mixer {
                 self.mon.fade_starve = 0;
                 self.retire(d);
             }
-            l = self.eq.process(0, l);
-            r = self.eq.process(1, r);
+            (l, r) = self.eq.process(l, r);
             (l, r) = self.reverb.process(l, r);
             (l, r) = self.comp.process(l, r);
             if self.mono {
@@ -744,6 +760,8 @@ impl Mixer {
             }
             l *= g;
             r *= g;
+            // Volume boost on the final level, ahead of the limiter.
+            (l, r) = self.boost.process(l, r);
             // NaN/Inf (a DSP state blow-up) must never reach the speaker.
             if !l.is_finite() || !r.is_finite() {
                 nonfinite += 1;
@@ -768,6 +786,7 @@ impl Mixer {
             self.tele.duration_bits.store(d.duration().to_bits(), Ordering::Relaxed);
         }
         self.tele.playing.store(self.playing, Ordering::Relaxed);
+        self.tele.boost_reduction_bits.store(self.boost.take_reduction().to_bits(), Ordering::Relaxed);
         self.tele.levels_bits.store(((pk_l.to_bits() as u64) << 32) | pk_r.to_bits() as u64, Ordering::Relaxed);
         self.account(out.len() / 2, t_start, playing_frames, nonfinite, clipped);
     }

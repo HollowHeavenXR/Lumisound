@@ -56,10 +56,17 @@ struct LumisoundLiveActivity: Widget {
         .supplementalActivityFamilies([.small, .medium])
     }
 
+    /// The activity's own state, or the App Group copy when the app has
+    /// published something newer since (an ActivityKit update that was
+    /// dropped or arrived out of order around a crossfade, or a skip from a
+    /// paused, backgrounded app). Both are written by the same publish, so
+    /// whichever has the higher revision is what the player is on now.
     /// Past its stale date (the track ran out with no update from the app),
-    /// the activity shows the track stopped at its end, not still playing.
+    /// a playing snapshot shows the track stopped at its end.
     static func snapshot(_ context: ActivityViewContext<LumisoundActivityAttributes>) -> NowPlayingSnapshot {
-        context.isStale ? context.state.now.finished : context.state.now
+        let s = context.state.now.newest(NowPlayingSnapshot.load())
+        guard s.isPlaying, let end = s.endDate else { return s }
+        return context.isStale && end <= Date() ? s.finished : s
     }
 }
 

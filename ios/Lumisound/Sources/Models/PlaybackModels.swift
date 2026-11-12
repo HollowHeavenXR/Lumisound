@@ -192,6 +192,20 @@ struct AudioSettings: Codable, Equatable, Hashable {
     /// same missing-key-safety reason as `spatialAudioEnabled`.
     var nightModeEnabled: Bool? = false
 
+    /// LumiEQ levels presets by loudness so switching changes the tone, not
+    /// the volume. Off = headroom only (boosts sound louder). Read via `?? true`.
+    var eqLoudnessMatch: Bool? = true
+
+    /// LumiSpace room when Spatial Audio is on (`LumiSpaceMode` raw value).
+    /// nil = Studio. Optional for missing-key safety.
+    var spatialMode: String? = nil
+
+    /// Wraps `spatialMode`.
+    var lumiSpaceMode: LumiSpaceMode {
+        get { spatialMode.flatMap(LumiSpaceMode.init(rawValue:)) ?? .studio }
+        set { spatialMode = newValue.rawValue }
+    }
+
     /// Volume curve used during a crossfade's overlap. Optional so old saved
     /// blobs decode with `.equalPower` (the recommended default — avoids the
     /// perceived-loudness dip a linear fade has at the midpoint — rather than
@@ -218,6 +232,45 @@ extension AudioSettings {
         copy.equalizerEnabled = false
         return copy
     }
+}
+
+/// LumiSpace rooms (rust/core/src/engine/space.rs).
+enum LumiSpaceMode: String, CaseIterable, Codable, Identifiable {
+    case studio
+    case wide
+    case concert
+    case crossfeed
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .studio: return "Studio"
+        case .wide: return "Wide Stage"
+        case .concert: return "Concert Hall"
+        case .crossfeed: return "Crossfeed"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .studio: return "Two speakers in front of you in a treated room. Head-tracked."
+        case .wide: return "Speakers set wide for a big, open stereo image. Head-tracked."
+        case .concert: return "A large hall's reflections around the stage. Head-tracked."
+        case .crossfeed: return "Each side gently reaches the other ear — less fatigue, no tracking."
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .studio: return "hifispeaker.2"
+        case .wide: return "arrow.left.and.right"
+        case .concert: return "building.columns"
+        case .crossfeed: return "headphones"
+        }
+    }
+
+    var isHeadTracked: Bool { self != .crossfeed }
 }
 
 /// Volume curve applied across a crossfade's overlap window. See

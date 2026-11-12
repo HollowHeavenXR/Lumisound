@@ -4,7 +4,9 @@
 //! configures AVAudioSession and Now Playing; it drives this through
 //! `AudioEngine` and gets track events through `EngineListener`.
 
-pub mod binaural;
+pub mod boost;
+pub mod eq;
+pub mod space;
 pub mod health;
 pub mod deck;
 pub mod dsp;
@@ -276,13 +278,29 @@ impl AudioEngine {
         self.send(Cmd::TrackGain(db_to_lin(gain_db)));
     }
 
-    /// Ten gains in dB for 32 Hz…16 kHz.
+    /// Ten gains in dB for 32 Hz…16 kHz (LumiEQ; levelled by loudness).
     pub fn set_eq(&self, gains_db: Vec<f32>, enabled: bool) {
+        self.set_eq_with(gains_db, enabled, true);
+    }
+
+    /// `set_eq` with loudness matching chosen (off = headroom only).
+    pub fn set_eq_with(&self, gains_db: Vec<f32>, enabled: bool, loudness_match: bool) {
         let mut g = [0f32; 10];
         for (i, v) in gains_db.iter().take(10).enumerate() {
             g[i] = *v;
         }
-        self.send(Cmd::Eq { gains: g, enabled });
+        self.send(Cmd::Eq { gains: g, enabled, loudness_match });
+    }
+
+    /// LumiBoost: extra loudness in dB (0 = off, up to 12) for this output route.
+    pub fn set_boost(&self, db: f32, route: boost::BoostRoute) {
+        self.send(Cmd::Boost { db, route });
+    }
+
+    /// Deepest LumiBoost gain reduction in the last buffer, dB (≤ 0): how hard
+    /// the booster is holding loud passages back.
+    pub fn boost_reduction(&self) -> f32 {
+        f32::from_bits(self.tele.boost_reduction_bits.load(Ordering::Relaxed))
     }
 
     /// Reverb wet amount 0…1 with a room preset name, mono fold-down and
@@ -291,10 +309,15 @@ impl AudioEngine {
         self.send(Cmd::Effects { reverb_wet, reverb_preset, mono, night: night_mode });
     }
 
-    /// Binaural spatial audio (source anchored in front) and the head yaw
-    /// from the headphones' motion sensor, in degrees.
+    /// Spatial audio on (Studio) or off, with head yaw in degrees.
     pub fn set_spatial(&self, enabled: bool, yaw_degrees: f32) {
-        self.send(Cmd::Spatial { enabled, yaw_deg: yaw_degrees });
+        let mode = if enabled { space::SpatialMode::Studio } else { space::SpatialMode::Off };
+        self.send(Cmd::Spatial { mode, yaw_deg: yaw_degrees });
+    }
+
+    /// LumiSpace mode and the head yaw from the headphones' motion sensor (degrees).
+    pub fn set_spatial_mode(&self, mode: space::SpatialMode, yaw_degrees: f32) {
+        self.send(Cmd::Spatial { mode, yaw_deg: yaw_degrees });
     }
 
     /// 8D rotation speed (Hz, 0 = off), tremolo rate/depth and vibrato

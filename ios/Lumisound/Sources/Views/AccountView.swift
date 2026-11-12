@@ -59,6 +59,16 @@ struct AccountView: View {
     @State private var showListenRoom = false
 
     var body: some View {
+        // Classic has its own account screen (the listener pass); Lumen and
+        // Strata keep this one.
+        if InterfaceEdition.current == .classic {
+            ClassicAccountView()
+        } else {
+            standardBody
+        }
+    }
+
+    private var standardBody: some View {
         ZStack {
             Color.clear.ignoresSafeArea()
 

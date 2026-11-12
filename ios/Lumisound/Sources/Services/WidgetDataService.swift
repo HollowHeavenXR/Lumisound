@@ -40,6 +40,7 @@ final class WidgetDataService {
     private var trackChangedAt: Date = .distantPast
 
     private var loggedMissingAppGroup = false
+    private static var lastRevision: Int64 = 0
 
     private init() {
         current = NowPlayingSnapshot.load(from: defaults) ?? .empty
@@ -186,7 +187,12 @@ final class WidgetDataService {
     /// `urgent`: a button the user just pressed (play/pause, favourite), so
     /// the widgets reload now instead of waiting out the reload spacing.
     private func publish(_ snapshot: NowPlayingSnapshot, widgets: Bool, urgent: Bool = false) {
-        let snapshot = snapshot.sanitized
+        var snapshot = snapshot.sanitized
+        // Strictly increasing, so the Live Activity view can tell which of its
+        // two copies (ActivityKit state, App Group) is the newer one.
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        Self.lastRevision = max(now, Self.lastRevision + 1)
+        snapshot.revision = Self.lastRevision
         current = snapshot
         // The shared defaults can work even when the App Group *folder* isn't
         // reachable (seen on sideloaded installs), so always write them: the

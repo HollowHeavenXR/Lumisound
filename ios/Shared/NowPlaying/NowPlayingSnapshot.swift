@@ -41,12 +41,37 @@ struct NowPlayingSnapshot: Codable, Hashable, Sendable {
     var artworkAspect: Double
     /// Average artwork colour (0xRRGGBB), used to tint backgrounds and bars.
     var tint: UInt32?
+    /// Publish stamp (ms since 1970, strictly increasing per app run). An
+    /// integer so it survives every encoder exactly; lets the app confirm what
+    /// a Live Activity holds, and lets the Live Activity view prefer the App
+    /// Group copy when that is newer than an update that was dropped.
+    var revision: Int64?
 
     static let empty = NowPlayingSnapshot(
         trackID: "", title: "", artist: "", detail: nil, bpm: nil, isPlaying: false,
         position: 0, duration: 0, rate: 1, anchor: .distantPast, isFavorite: false,
-        artworkFile: nil, thumbFile: nil, artworkAspect: 1, tint: nil
+        artworkFile: nil, thumbFile: nil, artworkAspect: 1, tint: nil, revision: nil
     )
+
+    /// Same content, ignoring the publish stamp.
+    func sameContent(as other: NowPlayingSnapshot) -> Bool {
+        var a = self, b = other
+        a.revision = nil
+        b.revision = nil
+        return a == b
+    }
+
+    /// Whether this (what an activity holds) is the delivery of `latest`.
+    func isDelivery(of latest: NowPlayingSnapshot) -> Bool {
+        if let r = latest.revision { return revision == r }
+        return trackID == latest.trackID && isPlaying == latest.isPlaying
+    }
+
+    /// The newer of two snapshots by publish stamp (`self` on a tie).
+    func newest(_ other: NowPlayingSnapshot?) -> NowPlayingSnapshot {
+        guard let other, other.hasTrack, (other.revision ?? 0) > (revision ?? 0) else { return self }
+        return other
+    }
 
     static let defaultsKey = "now_playing_snapshot_v2"
     static let artworkDirectory = "NowPlayingArt"

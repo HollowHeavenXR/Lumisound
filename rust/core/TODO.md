@@ -21,3 +21,19 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
 - Haptics: downbeat emphasis from the beat grid (bar-level accents).
 - Haptics: tune on a real phone (feel can't be measured on a desktop); strength presets may need adjusting.
 - Intros: optional "skip silent outros" (end the track at its last sound for crossfades).
+
+## Done (2026-11-12)
+- `dupes.rs`: Duplicate Engine — LumiPrint acoustic prints (33-band energy-gradient bits, 3 probes, offset
+  search, on-disk cache), evidence graph, variant guard, keeper scoring, ignore list, merge plan, undo journal.
+  Real-track check: MP3 re-encode shifted 1.3 s matches 3/3 probes at BER 0.19; another track 0/3 at 0.48
+  (`cargo test --release -p lumisound-core --lib dupes::real -- --ignored` with LUMI_DUPE_DIR).
+- `engine/eq.rs`: LumiEQ (proportional Q, 60 ms glide, true-peak headroom, loudness match) + preset catalogue,
+  legacy-name resolver, Auto EQ rules, response curve export. Replaces `Eq10`.
+- `engine/boost.rs`: LumiBoost — 3-band LR4 split, per-band ceilings, route profiles, harmonic bass on the
+  speaker, soft saturation; meter via `boost_reduction()`.
+- `engine/space.rs`: LumiSpace — stereo virtual speakers (4 ITD + head-shadow paths), pinna cue, early
+  reflections per room, bass bypass, crossfeed mode, mode cross-fades. Replaces `binaural.rs`.
+
+## Open (2026-11-12)
+- engine_quality: "hits speed 1.25x / 0.8x pre-echo" limits fail (also before this pass; stretch.rs).
+- LumiPrint: probes only within ±4 s duration clusters; a version with a long extra intro isn't matched.
