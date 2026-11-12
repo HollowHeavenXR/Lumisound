@@ -20,3 +20,13 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
 - [x] `/user/rp-artwork-upload` shapes on upload; older unshaped files are shaped on first read.
 - [x] `ios_playback_state.engine` column (schema.sql); playback handoff clears stale artwork/engine.
 - [ ] Prune rp-art-yt / rp-artwork caches (unbounded today, ~40 KB per track).
+
+## 2026-11-12: age-restricted downloads (403)
+- YouTube now asks the cookie account to age-verify; `web_embedded` is UNPLAYABLE and the fallbacks
+  (`web_creator`, `mweb`) hand out streams that 403 ("unable to download video data"). Cookies, PO token
+  (bgutil 2.0.2) and yt-dlp 2026.10.26 were all fine.
+- Fixed in config: `YTDLP_FALLBACK_CLIENT=tv` (web-stack docker-compose.yml). The `tv` client still serves
+  these with the same cookies; output is .m4a. Verified on 4 previously failing videos.
+- Open: detect "age-restricted ... age-verification" on attempt 1 and jump straight to the `tv` client
+  (saves two failed attempts). "Music Premium members" only videos can't download without Premium cookies:
+  fail fast with that message instead of retrying.
