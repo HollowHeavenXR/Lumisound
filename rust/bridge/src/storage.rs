@@ -202,6 +202,17 @@ pub fn walk_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Bytes available to unprivileged users on the filesystem holding `p`.
+pub fn free_bytes(p: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes()).ok()?;
+    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
+    }
+    Some(s.f_bavail as u64 * s.f_frsize as u64)
+}
+
 /// `_loudness_gain_db`: toward -14 LUFS, clamped to ±12 dB.
 pub fn gain_db(lufs: Option<f64>) -> Option<f64> {
     lufs.map(|l| ((-14.0 - l).clamp(-12.0, 12.0) * 100.0).round() / 100.0)
@@ -217,8 +228,30 @@ impl AppState {
         Some(std::fs::canonicalize(&p).unwrap_or(p))
     }
 
+    /// Every drive that can hold user libraries, main root first.
+    pub fn user_music_roots(&self) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = self.user_music_root().into_iter().collect();
+        for d in &self.cfg.user_music_extra_dirs {
+            let p = std::fs::canonicalize(d).unwrap_or_else(|_| PathBuf::from(d));
+            if !v.contains(&p) && p.is_dir() {
+                v.push(p);
+            }
+        }
+        v
+    }
+
+    /// A user's library folder: wherever it already is, else (new user) on
+    /// the drive with the most free space.
     pub fn user_music_dir(&self, user_id: &str) -> Option<PathBuf> {
-        Some(self.user_music_root()?.join(user_id))
+        let roots = self.user_music_roots();
+        if roots.len() <= 1 || user_id.is_empty() || user_id.contains('/') || user_id.contains("..") {
+            return Some(self.user_music_root()?.join(user_id));
+        }
+        if let Some(existing) = roots.iter().map(|r| r.join(user_id)).find(|p| p.is_dir()) {
+            return Some(existing);
+        }
+        let best = roots.iter().max_by_key(|r| free_bytes(r).unwrap_or(0))?;
+        Some(best.join(user_id))
     }
 
     pub fn user_gallery_dir(&self, user_id: &str) -> Option<PathBuf> {

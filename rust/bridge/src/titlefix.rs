@@ -12,12 +12,11 @@
 //!   lumisound-bridge repair-titles apply    writes the fixes
 
 use crate::state::AppState;
-use std::path::PathBuf;
 
 pub async fn repair(st: &AppState, apply: bool) -> anyhow::Result<()> {
-    let Some(root) = st.cfg.user_music_dir.clone() else {
+    if st.cfg.user_music_dir.is_none() {
         anyhow::bail!("USER_MUSIC_DIR is not set");
-    };
+    }
     let rows: Vec<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT id, user_id, coalesce(relative_path, filename), title, original_filename FROM ios_user_music_metadata \
          WHERE original_filename LIKE '% - %' AND title IS NOT NULL",
@@ -34,7 +33,8 @@ pub async fn repair(st: &AppState, apply: bool) -> anyhow::Result<()> {
             continue;
         }
         checked += 1;
-        let path = PathBuf::from(&root).join(&user).join(&rel);
+        let Some(dir) = st.user_music_dir(&user) else { continue };
+        let path = dir.join(&rel);
         let tag_title = tokio::task::spawn_blocking(move || read_title(&path)).await.ok().flatten();
         match tag_title {
             Some(t) if t.chars().count() > title.chars().count() && t != title => {

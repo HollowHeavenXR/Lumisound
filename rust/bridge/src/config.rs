@@ -54,6 +54,9 @@ pub struct Config {
     pub pending_downloads_dir: String,
     pub server_music_dir: Option<String>,
     pub user_music_dir: Option<String>,
+    /// More drives for user libraries (comma separated). Each user's folder
+    /// stays where it is; new users go to the drive with the most free space.
+    pub user_music_extra_dirs: Vec<String>,
     pub user_music_compression: bool,
     pub user_music_quota_bytes: i64,
 
@@ -115,6 +118,9 @@ impl Config {
             pending_downloads_dir: s("PENDING_DOWNLOADS_DIR", "/tmp/lumisound_pending_downloads"),
             server_music_dir: opt("SERVER_MUSIC_DIR"),
             user_music_dir: opt("USER_MUSIC_DIR"),
+            user_music_extra_dirs: opt("USER_MUSIC_EXTRA_DIRS")
+                .map(|v| v.split(',').map(|s| s.trim().trim_end_matches('/').to_string()).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default(),
             user_music_compression: flag("USER_MUSIC_COMPRESSION", false),
             user_music_quota_bytes: num("USER_MUSIC_QUOTA_BYTES", 0),
             youtube_api_key: opt("YOUTUBE_API_KEY"),
