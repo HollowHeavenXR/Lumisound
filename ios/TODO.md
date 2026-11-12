@@ -70,6 +70,11 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
   (newest last) plus `LiveActivityManager.verify()` each tick: resends when the activity's actual
   `content.state` shows another track or play state.
 
+- Button lag (Live Activity pause/like): intents returned before the Live Activity update landed, and iOS
+  redraws when the intent returns, so the old state stayed until a later redraw. Intents now await
+  `LiveActivityManager.flush()` (via `LumisoundPlaybackCommandRouter.settle`); play/pause and favourite reload
+  widgets immediately instead of through the 1 s reload spacing.
+
 ## Open (widgets)
 - If iOS still shows a bare system player while audio plays, the remaining lever is the audio session's
   `.mixWithOthers` option (then Lumisound no longer pauses other apps' audio).

@@ -49,6 +49,11 @@ enum LumisoundPlaybackCommandRouter {
     /// Installed by the app's player at launch; never set in the widget
     /// extension. Returns whether the command was carried out.
     static var handler: (@MainActor (LumisoundPlaybackCommand) -> Bool)?
+    /// Installed by the app: waits until the widgets and Live Activity have
+    /// been given the command's result. iOS redraws the Live Activity when
+    /// the intent returns, so returning before the update has landed showed
+    /// the old state until the next redraw (the delay after tapping pause).
+    static var settle: (@MainActor () async -> Void)?
 
     static func perform(_ command: LumisoundPlaybackCommand) async {
         // Inside the app the player may still be starting: a button tapped
@@ -60,7 +65,10 @@ enum LumisoundPlaybackCommandRouter {
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
         }
-        if let handler, handler(command) { return }
+        if let handler, handler(command) {
+            await settle?()
+            return
+        }
         CFNotificationCenterPostNotification(
             CFNotificationCenterGetDarwinNotifyCenter(),
             CFNotificationName(command.darwinName as CFString),

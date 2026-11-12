@@ -86,6 +86,13 @@ enum LiveActivityManager {
         send(latest)
     }
 
+    /// Waits (up to ~1.5 s) until queued updates have been delivered.
+    static func flush() async {
+        for _ in 0..<75 where sending || pending != nil {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
     private static var pending: NowPlayingSnapshot?
     private static var sending = false
     private static var lastVerifyResend: Date?

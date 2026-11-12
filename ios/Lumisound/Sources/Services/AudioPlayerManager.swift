@@ -698,6 +698,9 @@ final class AudioPlayerManager: ObservableObject {
             }
             return true
         }
+        LumisoundPlaybackCommandRouter.settle = {
+            await LiveActivityManager.flush()
+        }
 
         // Fallback: commands posted from the WidgetKit extension when the
         // intent ran there instead.

@@ -133,7 +133,7 @@ final class WidgetDataService {
         if duration > 0 { s.duration = duration }
         s.rate = Self.playerRate
         s.anchor = Date()
-        publish(s, widgets: true)
+        publish(s, widgets: true, urgent: true)
     }
 
     func updateFavoriteState(isFavorite: Bool) {
@@ -142,7 +142,7 @@ final class WidgetDataService {
         guard current.hasTrack, current.isFavorite != isFavorite || NowPlayingSnapshot.load(from: defaults)?.isFavorite != isFavorite else { return }
         var s = current
         s.isFavorite = isFavorite
-        publish(s, widgets: true)
+        publish(s, widgets: true, urgent: true)
     }
 
     /// Called every player tick (0.5 s). Re-anchors the surfaces when the
@@ -183,7 +183,9 @@ final class WidgetDataService {
 
     // MARK: - Publishing
 
-    private func publish(_ snapshot: NowPlayingSnapshot, widgets: Bool) {
+    /// `urgent`: a button the user just pressed (play/pause, favourite), so
+    /// the widgets reload now instead of waiting out the reload spacing.
+    private func publish(_ snapshot: NowPlayingSnapshot, widgets: Bool, urgent: Bool = false) {
         let snapshot = snapshot.sanitized
         current = snapshot
         // The shared defaults can work even when the App Group *folder* isn't
@@ -194,7 +196,7 @@ final class WidgetDataService {
             if !snapshot.save(to: ud) {
                 appError("WidgetDataService: could not encode snapshot for \"\(snapshot.title)\"", category: "widget")
             }
-            if widgets { reloadTimelines() }
+            if widgets { reloadTimelines(urgent: urgent) }
         }
         LiveActivityManager.publish(snapshot)
     }
@@ -228,9 +230,9 @@ final class WidgetDataService {
     /// change that lands inside the window is reloaded when it ends instead of
     /// being dropped (the old throttle dropped it, leaving widgets a track or
     /// a play/pause behind).
-    private func reloadTimelines() {
+    private func reloadTimelines(urgent: Bool = false) {
         let since = Date().timeIntervalSince(lastReloadTime)
-        if since >= Self.reloadSpacing {
+        if urgent || since >= Self.reloadSpacing {
             pendingReload?.cancel()
             pendingReload = nil
             lastReloadTime = Date()
