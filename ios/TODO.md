@@ -65,6 +65,11 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
   accepted by the user: AirPods/headphone buttons, car Bluetooth, CarPlay, Siri media commands, Control Center
   and the Watch's Now Playing no longer control Lumisound.
 
+- Live Activity stuck on the previous track after auto-advance/crossfade (widgets were right). Each update was
+  its own `Task`, so updates could land out of order, and steady playback sends no more. Now one serial sender
+  (newest last) plus `LiveActivityManager.verify()` each tick: resends when the activity's actual
+  `content.state` shows another track or play state.
+
 ## Open (widgets)
 - If iOS still shows a bare system player while audio plays, the remaining lever is the audio session's
   `.mixWithOthers` option (then Lumisound no longer pauses other apps' audio).

@@ -150,6 +150,7 @@ final class WidgetDataService {
     /// speed, play state or engine details changed without an explicit call.
     func resync(isPlaying: Bool, position: TimeInterval, duration: TimeInterval, detail: String?) {
         guard current.hasTrack else { return }
+        LiveActivityManager.verify()
         let now = Date()
         guard now.timeIntervalSince(trackChangedAt) > 1.0 else { return }
         let rate = Self.playerRate

@@ -26,26 +26,20 @@ enum LiveActivityManager {
         // skip the IPC round trip.
         if snapshot == lastPublished, activity != nil { return }
         lastPublished = snapshot
-        let content = ActivityContent(
-            state: LumisoundActivityAttributes.ContentState(now: snapshot),
-            // Past the end of the track with no update, the system marks the
-            // activity stale and the view shows it as stopped instead of a
-            // bar pinned at 100 %.
-            staleDate: snapshot.endDate.map { $0.addingTimeInterval(20) },
-            relevanceScore: snapshot.isPlaying ? 100 : 50
-        )
-
-        if let activity {
-            Task { await activity.update(content) }
-            return
-        }
 
         // A Live Activity outlives this process, but `activity` is in-memory,
         // so after a relaunch re-attach to the running one rather than
-        // requesting a second.
-        if let existing = Activity<LumisoundActivityAttributes>.activities.first(where: { $0.activityState == .active || $0.activityState == .stale }) {
+        // requesting a second. A reference to one the user dismissed or the
+        // system ended is dropped.
+        if let a = activity, a.activityState == .ended || a.activityState == .dismissed {
+            activity = nil
+        }
+        if activity == nil,
+           let existing = Activity<LumisoundActivityAttributes>.activities.first(where: { $0.activityState == .active || $0.activityState == .stale }) {
             activity = existing
-            Task { await existing.update(content) }
+        }
+        if activity != nil {
+            send(snapshot)
             return
         }
 
@@ -56,7 +50,7 @@ enum LiveActivityManager {
         do {
             activity = try Activity<LumisoundActivityAttributes>.request(
                 attributes: LumisoundActivityAttributes(),
-                content: content,
+                content: content(for: snapshot),
                 pushType: nil
             )
             lastRequestFailureAt = nil
@@ -77,8 +71,55 @@ enum LiveActivityManager {
         }
     }
 
+    /// Called every player tick. If what the Live Activity actually shows is
+    /// a different track (or play state) than the last published snapshot,
+    /// for example an update that was lost or landed out of order around an
+    /// automatic advance or crossfade, send the latest one again.
+    static func verify() {
+        guard let activity, let latest = lastPublished, pending == nil, !sending else { return }
+        guard activity.activityState == .active || activity.activityState == .stale else { return }
+        let shown = activity.content.state.now
+        guard shown.trackID != latest.trackID || shown.isPlaying != latest.isPlaying else { return }
+        if let last = lastVerifyResend, Date().timeIntervalSince(last) < 2 { return }
+        lastVerifyResend = Date()
+        appWarn("LiveActivityManager: activity showed \"\(shown.title)\", resending \"\(latest.title)\"", category: "widget")
+        send(latest)
+    }
+
+    private static var pending: NowPlayingSnapshot?
+    private static var sending = false
+    private static var lastVerifyResend: Date?
+
+    /// Updates go out one at a time, newest last. Separate `Task`s per update
+    /// could finish out of order, leaving the previous track on screen.
+    private static func send(_ snapshot: NowPlayingSnapshot) {
+        pending = snapshot
+        guard !sending else { return }
+        sending = true
+        Task { @MainActor in
+            while let next = pending, let activity {
+                pending = nil
+                await activity.update(content(for: next))
+            }
+            pending = nil
+            sending = false
+        }
+    }
+
+    private static func content(for snapshot: NowPlayingSnapshot) -> ActivityContent<LumisoundActivityAttributes.ContentState> {
+        ActivityContent(
+            state: LumisoundActivityAttributes.ContentState(now: snapshot),
+            // Past the end of the track with no update, the system marks the
+            // activity stale and the view shows it as stopped instead of a
+            // bar pinned at 100 %.
+            staleDate: snapshot.endDate.map { $0.addingTimeInterval(20) },
+            relevanceScore: snapshot.isPlaying ? 100 : 50
+        )
+    }
+
     static func end() {
         lastPublished = nil
+        pending = nil
         let all = Activity<LumisoundActivityAttributes>.activities
         activity = nil
         guard !all.isEmpty else { return }
