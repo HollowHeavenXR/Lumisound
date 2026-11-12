@@ -56,7 +56,12 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
   defaults (`now_playing_art.<file>`, current + previous track) when there is no folder.
 - Snapshot numbers are sanitized before saving (NaN/inf made JSON encoding fail silently).
 
+- 2.0.0.26: medium/large widgets and the Live Activity crashed (SIGTRAP, 6 MetricKit reports at 21:17 while
+  browsing the widget gallery; small rendered fine). Only those used `Text(timerInterval:countsDown: true)` for
+  the remaining time; replaced with `Text(endDate, style: .timer)`. BPM / time formatting guard Int conversions.
+
 ## Open (widgets)
+- Confirm 2.0.0.26 on device: medium + large in the gallery show the song, Live Activity appears on the Lock Screen.
 - Find out why `containerURL(forSecurityApplicationGroupIdentifier:)` is nil on the SideStore install while the
   shared defaults work (check Settings > About warning, and the suffixed group ID SideStore registered).
 - Verify on device: widget sizes, Dynamic Island layout, Smart Stack, tinted/clear Home Screen modes.

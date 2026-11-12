@@ -187,7 +187,7 @@ struct NowPlayingSnapshot: Codable, Hashable, Sendable {
 /// Time formatting shared by the widget and Live Activity.
 enum NowPlayingFormat {
     static func time(_ seconds: TimeInterval) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        guard seconds.isFinite, seconds >= 0, seconds < 360_000 else { return "0:00" }
         let total = Int(seconds.rounded(.down))
         return total >= 3600
             ? String(format: "%d:%02d:%02d", total / 3600, (total / 60) % 60, total % 60)

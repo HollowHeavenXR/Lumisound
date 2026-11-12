@@ -131,14 +131,12 @@ struct NowPlayingTimeRow: View {
     @ViewBuilder private var remaining: some View {
         if snapshot.duration <= 0 {
             Text("--:--")
-        } else if snapshot.isLive {
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                Text("-")
-                Text(timerInterval: snapshot.wallRange, countsDown: true, showsHours: snapshot.duration >= 3600)
-                    .multilineTextAlignment(.trailing)
-                    .fixedSize()
-            }
+        } else if snapshot.isLive, let end = snapshot.endDate {
+            // A date-style timer counts down to the track's end. (The
+            // countsDown `Text(timerInterval:)` variant crashed the widget
+            // renderer on iOS 27 — medium/large and the Live Activity.)
+            Text("-\(Text(end, style: .timer))")
+                .multilineTextAlignment(.trailing)
         } else {
             Text("-" + NowPlayingFormat.time(max(0, snapshot.duration - snapshot.elapsed())))
         }
@@ -224,7 +222,7 @@ struct NowPlayingLabels: View {
     private var detailLine: String? {
         var parts: [String] = []
         if let d = snapshot.detail, !d.isEmpty { parts.append(d) }
-        if let bpm = snapshot.bpm { parts.append("\(Int(bpm.rounded())) BPM") }
+        if let bpm = snapshot.bpm, bpm.isFinite, bpm > 0, bpm < 1000 { parts.append("\(Int(bpm.rounded())) BPM") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
