@@ -8,6 +8,13 @@ extension AudioPlayerManager {
 
     // MARK: - Now Playing / Remote Commands
 
+    /// Off: Lumisound doesn't appear in the system media player (Lock Screen,
+    /// Control Center). The Live Activity is the Lock Screen card instead, so
+    /// the two aren't shown side by side. This also means headphone/AirPods
+    /// buttons, car Bluetooth, CarPlay, Siri media commands and the Watch's
+    /// Now Playing don't control Lumisound (user's choice, 2026-11-11).
+    static let showsSystemNowPlaying = false
+
     /// Publishes the current track to the system Now Playing surfaces (lock
     /// screen, Control Center, Dynamic Island, CarPlay, Siri).
     ///
@@ -29,6 +36,12 @@ extension AudioPlayerManager {
     /// write is also a cross-process call into the media daemon, so cutting
     /// two a second to a handful a track is a battery saving in its own right.
     func updateNowPlaying() {
+        guard Self.showsSystemNowPlaying else {
+            if MPNowPlayingInfoCenter.default().nowPlayingInfo != nil {
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            }
+            return
+        }
         guard let song = currentSong else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             nowPlayingArtworkSongID = nil
@@ -105,7 +118,9 @@ extension AudioPlayerManager {
         // Do not let an older request overwrite the current system controls
         // or shared widget state.
         guard currentSong?.id == song.id else { return }
-        if let image {
+        if !Self.showsSystemNowPlaying {
+            nowPlayingArtworkSongID = nil
+        } else if let image {
             let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
             var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
             info[MPMediaItemPropertyArtwork] = artwork
@@ -138,6 +153,17 @@ extension AudioPlayerManager {
     /// handler returns with is the state the system sees.
     func configureRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
+        guard Self.showsSystemNowPlaying else {
+            // No targets and nothing enabled: iOS has no controls to show.
+            for command in [center.playCommand, center.pauseCommand, center.togglePlayPauseCommand, center.stopCommand,
+                            center.nextTrackCommand, center.previousTrackCommand, center.changePlaybackPositionCommand,
+                            center.changeShuffleModeCommand, center.changeRepeatModeCommand] as [MPRemoteCommand] {
+                command.isEnabled = false
+                command.removeTarget(nil)
+            }
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
 
         center.playCommand.isEnabled = true
         center.pauseCommand.isEnabled = true

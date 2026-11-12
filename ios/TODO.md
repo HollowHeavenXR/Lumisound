@@ -60,7 +60,16 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
   browsing the widget gallery; small rendered fine). Only those used `Text(timerInterval:countsDown: true)` for
   the remaining time; replaced with `Text(endDate, style: .timer)`. BPM / time formatting guard Int conversions.
 
+- 2.0.0.27: system media player turned off (`AudioPlayerManager.showsSystemNowPlaying = false`): no
+  MPNowPlayingInfo, no remote command targets, so the Live Activity is the only Lock Screen card. Trade-off
+  accepted by the user: AirPods/headphone buttons, car Bluetooth, CarPlay, Siri media commands, Control Center
+  and the Watch's Now Playing no longer control Lumisound.
+
 ## Open (widgets)
+- If iOS still shows a bare system player while audio plays, the remaining lever is the audio session's
+  `.mixWithOthers` option (then Lumisound no longer pauses other apps' audio).
+- Live Activity showed the music-note placeholder instead of artwork for a wide (YouTube) track on 2.0.0.26
+  while the tint was set, so the thumb was written; check whether the thumb loads in the Live Activity.
 - Confirm 2.0.0.26 on device: medium + large in the gallery show the song, Live Activity appears on the Lock Screen.
 - Find out why `containerURL(forSecurityApplicationGroupIdentifier:)` is nil on the SideStore install while the
   shared defaults work (check Settings > About warning, and the suffixed group ID SideStore registered).
