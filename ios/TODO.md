@@ -68,8 +68,10 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 ## Open (widgets)
 - If iOS still shows a bare system player while audio plays, the remaining lever is the audio session's
   `.mixWithOthers` option (then Lumisound no longer pauses other apps' audio).
-- Live Activity showed the music-note placeholder instead of artwork for a wide (YouTube) track on 2.0.0.26
-  while the tint was set, so the thumb was written; check whether the thumb loads in the Live Activity.
+- 2.0.0.28: Live Activity never showed artwork (every song). Cause: `AppGroup.id` used a keychain probe for the
+  team-suffixed group, and the keychain is unreadable while locked (Lock Screen rendering) → wrong group.
+  Now reads the group from embedded.mobileprovision, caches it per process, keychain last. Confirm on device;
+  this may also be why the app reported the App Group folder as unavailable.
 - Confirm 2.0.0.26 on device: medium + large in the gallery show the song, Live Activity appears on the Lock Screen.
 - Find out why `containerURL(forSecurityApplicationGroupIdentifier:)` is nil on the SideStore install while the
   shared defaults work (check Settings > About warning, and the suffixed group ID SideStore registered).

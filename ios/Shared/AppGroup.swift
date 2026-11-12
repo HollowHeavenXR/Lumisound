@@ -26,18 +26,44 @@ import Security
 enum AppGroup {
     static let literal = "group.com.lumisound.ios"
 
+    /// Resolved once per process. The keychain probe fails while the device
+    /// is locked (Live Activities and Lock Screen widgets render then), which
+    /// sent those surfaces to the wrong group: no artwork, or no data at all.
+    /// So the signed group is read from the embedded provisioning profile
+    /// first, then from this process's own cached answer, and the keychain
+    /// is only the last resort.
     static let id: String = {
-        if FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: literal) != nil {
-            return literal
+        let fm = FileManager.default
+        func usable(_ id: String) -> Bool { fm.containerURL(forSecurityApplicationGroupIdentifier: id) != nil }
+        if usable(literal) { return literal }
+
+        let cacheKey = "AppGroup.resolvedID"
+        var candidates = profileGroups()
+        if let cached = UserDefaults.standard.string(forKey: cacheKey) { candidates.append(cached) }
+        if let teamID = discoverTeamIdentifier() { candidates.append("\(literal).\(teamID)") }
+        for id in candidates where usable(id) {
+            UserDefaults.standard.set(id, forKey: cacheKey)
+            return id
         }
-        if let teamID = discoverTeamIdentifier() {
-            let suffixed = "\(literal).\(teamID)"
-            if FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: suffixed) != nil {
-                return suffixed
-            }
-        }
-        return literal
+        // Not provably usable: still prefer what the profile says over the
+        // literal, since that is what this build was signed with.
+        return candidates.first ?? literal
     }()
+
+    /// App Groups granted by this bundle's embedded.mobileprovision that
+    /// belong to Lumisound (the literal or a suffixed form). Readable while
+    /// the device is locked, unlike the keychain.
+    private static func profileGroups() -> [String] {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+              let plist = try? PropertyListSerialization.propertyList(from: data[start.lowerBound..<end.upperBound], format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any],
+              let groups = entitlements["com.apple.security.application-groups"] as? [String]
+        else { return [] }
+        return groups.filter { $0 == literal || $0.hasPrefix(literal + ".") }
+    }
 
     private static func discoverTeamIdentifier() -> String? {
         let probeQuery: [String: Any] = [
@@ -53,6 +79,8 @@ enum AppGroup {
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrAccount as String: "AppGroupTeamIdentifierProbe",
                 kSecValueData as String: Data(),
+                // Readable on the Lock Screen too (after the first unlock).
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
             ]
             SecItemAdd(addQuery as CFDictionary, nil)
             status = SecItemCopyMatching(probeQuery as CFDictionary, &result)
