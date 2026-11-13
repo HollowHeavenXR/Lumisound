@@ -1447,7 +1447,7 @@ pub struct BatchJob {
     pub detail: Option<String>,
 }
 
-const AUDIO_EXTS: &[&str] = &["mp3", "m4a", "aac", "wav", "aif", "aiff", "flac", "opus", "ogg", "caf", "mp4", "m4v", "webm", "mov"];
+use lumisound_media::AUDIO_EXTS;
 
 fn audio_files(dir: &Path) -> HashSet<PathBuf> {
     let mut out = HashSet::new();

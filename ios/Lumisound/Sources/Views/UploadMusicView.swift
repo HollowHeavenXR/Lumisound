@@ -69,7 +69,7 @@ struct UploadMusicView: View {
             // fileImporter must be at the NavigationStack root level
             .fileImporter(
                 isPresented: $showFilePicker,
-                allowedContentTypes: [.audio],
+                allowedContentTypes: AudioImportTypes.all,
                 allowsMultipleSelection: true
             ) { result in
                 handleFilePick(result: result)

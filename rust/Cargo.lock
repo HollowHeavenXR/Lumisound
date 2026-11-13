@@ -2085,6 +2085,7 @@ dependencies = [
  "rustfft",
  "serde",
  "symphonia",
+ "syom",
 ]
 
 [[package]]
@@ -3948,6 +3949,12 @@ dependencies = [
  "quote",
  "syn 3.0.9",
 ]
+
+[[package]]
+name = "syom"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38d60edf8102a376deb2c2d673dafdb5ca0d40a7ffe7ae38958da9ffba3e6d40"
 
 [[package]]
 name = "tempfile"

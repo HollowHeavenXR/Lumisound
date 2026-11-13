@@ -467,7 +467,7 @@ mod tests {
 
 /// Containers the library imports (incl. video with audio, yt-dlp fallbacks
 /// and the `.lms` marker).
-pub const SUPPORTED: &[&str] = &["mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac", "mp4", "opus", "m4v", "mov", "webm", "ogg", "lms"];
+pub const SUPPORTED: &[&str] = &["mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac", "mp4", "opus", "m4v", "mov", "webm", "ogg", "mka", "mp2", "mp1", "lms"];
 
 #[uniffi::export]
 pub fn import_supported_extensions() -> Vec<String> {

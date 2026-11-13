@@ -97,9 +97,6 @@ extension SettingsView {
             // Smart Shuffle
             SmartShuffleToggleRow(player: player)
 
-            // Rust audio engine
-            RustEngineToggleRow(player: player)
-
             // ReplayGain
             Toggle(isOn: $player.audioSettings.replayGainEnabled) {
                 Label("ReplayGain", systemImage: "speaker.wave.3")
@@ -677,32 +674,6 @@ struct EightDSpeedControl: View {
             .tint(AppTheme.dynamicAccent)
         }
         .padding(.top, 4)
-    }
-}
-
-/// Lumisound's own audio engine (Rust), on by default; off = Apple's engine.
-struct RustEngineToggleRow: View {
-    @ObservedObject var player: AudioPlayerManager
-    @AppStorage(AudioPlayerManager.rustEngineKey) private var enabled = true
-
-    var body: some View {
-        Toggle(isOn: $enabled) {
-            Label("Lumisound Audio Engine", systemImage: "waveform.badge.magnifyingglass")
-                .foregroundStyle(AppTheme.textPrimary)
-        }
-        .tint(.teal)
-        .onChange(of: enabled) { _ in
-            // Re-schedule the current track on the newly chosen engine.
-            guard player.currentSong != nil else { return }
-            let at = player.position
-            let wasPlaying = player.isPlaying
-            player.tearDownRustEngine()
-            if wasPlaying { player.playCurrent(from: at) }
-        }
-        Text("Plays every track — library, downloads and streams — in Lumisound's own engine: gapless, crossfade, speed and pitch, EQ, reverb, 8D, spatial and night mode. Tracks re-encoded for the Lumisound engine always play on it. Turn off to use Apple's engine for everything else.")
-            .font(.caption)
-            .foregroundStyle(AppTheme.textSecondary)
-            .padding(.leading, 16)
     }
 }
 

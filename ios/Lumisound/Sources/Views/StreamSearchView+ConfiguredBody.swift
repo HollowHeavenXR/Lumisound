@@ -186,7 +186,7 @@ extension StreamSearchView {
         }
         .fileImporter(
             isPresented: $showUploadPicker,
-            allowedContentTypes: [.audio],
+            allowedContentTypes: AudioImportTypes.all,
             allowsMultipleSelection: true
         ) { result in
             guard let token = account.token else { return }

@@ -82,7 +82,6 @@ extension SettingsView {
     static let settingsIndex: [SettingsIndexEntry] = {
         func e(_ t: String, _ k: String, _ p: SettingsPage) -> SettingsIndexEntry { SettingsIndexEntry(title: t, keywords: k, page: p) }
         return [
-            e("Lumisound Audio Engine", "rust engine apple", .sound),
             e("Smart Shuffle", "shuffle random", .sound),
             e("Crossfade", "fade transition blend", .sound),
             e("Smart Auto Crossfade", "dj beatmatch blend bpm", .sound),
@@ -409,9 +408,7 @@ extension SettingsView {
 
     private var soundPage: some View {
         page(.sound) {
-            LKCard(title: "Engine") {
-                VStack(alignment: .leading, spacing: 4) { RustEngineToggleRow(player: player) }
-                LKDivider()
+            LKCard(title: "Shuffle") {
                 VStack(alignment: .leading, spacing: 4) { SmartShuffleToggleRow(player: player) }
             }
             LKCard(title: "Between songs") {

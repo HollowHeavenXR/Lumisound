@@ -63,6 +63,27 @@ pub fn audio_track(fmt: &dyn symphonia::core::formats::FormatReader) -> Option<&
     fmt.default_track().filter(is_audio).or_else(|| fmt.tracks().iter().find(is_audio))
 }
 
+/// Seeks to `start` seconds of music (past any encoder priming) and
+/// returns the trimmer for the frames decoded from there.
+pub fn start_at(fmt: &mut dyn symphonia::core::formats::FormatReader, id: u32, rate: u32, gapless: Option<crate::gapless::Gapless>, start: Option<f64>) -> (crate::gapless::Trim, f64) {
+    let mut from = 0u64;
+    if let Some(s) = start.filter(|s| *s > 0.0) {
+        let src = gapless.map_or(s, |g| g.source_frame(s, rate) as f64 / rate as f64);
+        if let Ok(seeked) = fmt.seek(SeekMode::Accurate, SeekTo::Time { time: Time::new(src.trunc() as u64, src.fract()), track_id: Some(id) }) {
+            let tb = fmt.tracks().iter().find(|t| t.id == id).and_then(|t| t.codec_params.time_base);
+            from = match tb {
+                Some(tb) => {
+                    let t = tb.calc_time(seeked.actual_ts);
+                    ((t.seconds as f64 + t.frac) * rate as f64).round() as u64
+                }
+                None => seeked.actual_ts,
+            };
+        }
+    }
+    let at = gapless.map_or(from as f64 / rate.max(1) as f64, |g| g.music_secs(from, rate));
+    (gapless.map(|g| g.trim_from(from)).unwrap_or_default(), at)
+}
+
 /// Duration / rate / channels without decoding.
 pub fn probe(path: &Path) -> Option<Probe> {
     let (fmt, id) = open(path)?;
@@ -77,6 +98,7 @@ pub fn probe(path: &Path) -> Option<Probe> {
         (Some(n), None) => n as f64 / sr as f64,
         _ => 0.0,
     };
+    let dur = crate::gapless::for_track(path, p.codec).and_then(|g| g.duration(sr)).unwrap_or(dur);
     Some(Probe { duration: dur, sample_rate: sr, channels: p.channels.map(|c| c.count() as u16).unwrap_or(2) })
 }
 
@@ -85,11 +107,10 @@ pub fn probe(path: &Path) -> Option<Probe> {
 pub fn mono_pcm(path: &Path, rate: u32, start: Option<f64>, max_len: Option<f64>) -> Option<Vec<i16>> {
     let (mut fmt, id) = open(path)?;
     let params = fmt.tracks().iter().find(|t| t.id == id)?.codec_params.clone();
-    let src_rate = params.sample_rate? as f64;
     let mut dec = crate::opus::codecs().make(&params, &DecoderOptions::default()).ok()?;
-    if let Some(s) = start.filter(|s| *s > 0.0) {
-        let _ = fmt.seek(SeekMode::Accurate, SeekTo::Time { time: Time::new(s.trunc() as u64, s.fract()), track_id: Some(id) });
-    }
+    // The decoder's rate: HE-AAC plays at twice its core rate.
+    let src_rate = dec.codec_params().sample_rate.or(params.sample_rate)? as f64;
+    let (mut trim, _) = start_at(&mut *fmt, id, src_rate as u32, crate::gapless::for_track(path, params.codec), start);
     let want = max_len.map(|l| (l * rate as f64) as usize);
     let step = src_rate / rate as f64;
     let mut out: Vec<i16> = Vec::with_capacity(want.unwrap_or(rate as usize * 60));
@@ -120,7 +141,8 @@ pub fn mono_pcm(path: &Path, rate: u32, start: Option<f64>, max_len: Option<f64>
             *b = SampleBuffer::new(decoded.capacity() as u64, spec);
         }
         b.copy_interleaved_ref(decoded);
-        for frame in b.samples().chunks(ch) {
+        let keep = trim.keep(b.samples().len() / ch);
+        for frame in b.samples()[keep.start * ch..keep.end * ch].chunks(ch) {
             mono.push(frame.iter().sum::<f32>() / ch as f32);
         }
         // Resample everything we can from `mono`, keep the remainder.
@@ -150,8 +172,9 @@ pub fn mono_pcm(path: &Path, rate: u32, start: Option<f64>, max_len: Option<f64>
 pub fn mono_pcm_blocks(path: &Path, rate: u32, block: usize, mut f: impl FnMut(Vec<i16>) -> bool) -> bool {
     let Some((mut fmt, id)) = open(path) else { return false };
     let Some(params) = fmt.tracks().iter().find(|t| t.id == id).map(|t| t.codec_params.clone()) else { return false };
-    let Some(src_rate) = params.sample_rate.map(|r| r as f64) else { return false };
     let Ok(mut dec) = crate::opus::codecs().make(&params, &DecoderOptions::default()) else { return false };
+    let Some(src_rate) = dec.codec_params().sample_rate.or(params.sample_rate).map(|r| r as f64) else { return false };
+    let mut trim = crate::gapless::for_track(path, params.codec).map(|g| g.trim_from(0)).unwrap_or_default();
     let step = src_rate / rate as f64;
     let block = block.max(1);
     let mut out: Vec<i16> = Vec::with_capacity(block);
@@ -179,7 +202,8 @@ pub fn mono_pcm_blocks(path: &Path, rate: u32, block: usize, mut f: impl FnMut(V
             *b = SampleBuffer::new(decoded.capacity() as u64, spec);
         }
         b.copy_interleaved_ref(decoded);
-        for frame in b.samples().chunks(ch) {
+        let keep = trim.keep(b.samples().len() / ch);
+        for frame in b.samples()[keep.start * ch..keep.end * ch].chunks(ch) {
             mono.push(frame.iter().sum::<f32>() / ch as f32);
         }
         while pos + 1.0 < mono.len() as f64 {
@@ -211,11 +235,9 @@ pub fn mono_pcm_blocks(path: &Path, rate: u32, block: usize, mut f: impl FnMut(V
 pub fn planar(path: &Path, start: Option<f64>, max_len: Option<f64>) -> Option<(u32, Vec<Vec<f32>>)> {
     let (mut fmt, id) = open(path)?;
     let params = fmt.tracks().iter().find(|t| t.id == id)?.codec_params.clone();
-    let rate = params.sample_rate?;
     let mut dec = crate::opus::codecs().make(&params, &DecoderOptions::default()).ok()?;
-    if let Some(s) = start.filter(|s| *s > 0.0) {
-        let _ = fmt.seek(SeekMode::Accurate, SeekTo::Time { time: Time::new(s.trunc() as u64, s.fract()), track_id: Some(id) });
-    }
+    let rate = dec.codec_params().sample_rate.or(params.sample_rate)?;
+    let (mut trim, _) = start_at(&mut *fmt, id, rate, crate::gapless::for_track(path, params.codec), start);
     let want = max_len.map(|l| (l * rate as f64) as usize);
     let mut chans: Vec<Vec<f32>> = Vec::new();
     let mut buf: Option<SampleBuffer<f32>> = None;
@@ -245,7 +267,8 @@ pub fn planar(path: &Path, start: Option<f64>, max_len: Option<f64>) -> Option<(
             *b = SampleBuffer::new(decoded.capacity() as u64, spec);
         }
         b.copy_interleaved_ref(decoded);
-        for f in b.samples().chunks(ch) {
+        let keep = trim.keep(b.samples().len() / ch);
+        for f in b.samples()[keep.start * ch..keep.end * ch].chunks(ch) {
             for (c, v) in chans.iter_mut().zip(f) {
                 c.push(*v);
             }

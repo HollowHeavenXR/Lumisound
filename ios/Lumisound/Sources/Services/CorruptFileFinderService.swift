@@ -291,11 +291,10 @@ final class CorruptFileFinderService: ObservableObject {
 
     // MARK: - Private Scan Worker (nonisolated, runs off main actor)
 
-    private static let audioExtensions: Set<String> = [
-        "mp3", "m4a", "aac", "flac", "wav", "aiff", "aif",
-        "ogg", "opus", "wma", "caf", "alac", "mp4", "webm",
-        LumisoundExclusiveExtensionService.marker  // "lms" — converted tracks, see that type
-    ]
+    /// Everything the importer takes (from the Rust core's list, so new
+    /// engine formats are covered), plus a couple of legacy names.
+    private static let audioExtensions: Set<String> = DocumentImportService.supportedExtensions
+        .union(["wma", "alac", LumisoundExclusiveExtensionService.marker])
 
     /// - Parameter knownGood: paths (see `ScanCacheService.documentsRelativePath`)
     ///   that validated as `.valid` on a previous scan, keyed to the

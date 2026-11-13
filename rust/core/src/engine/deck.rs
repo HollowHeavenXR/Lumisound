@@ -9,9 +9,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::errors::Error;
-use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
+use symphonia::core::formats::FormatOptions;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::units::Time;
 
 /// ~1.5 s of stereo audio at 48 kHz.
 const RING_SAMPLES: usize = 48_000 * 2 * 3 / 2;
@@ -145,17 +144,14 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f6
         (Some(n), None) => n as f64 / src_rate as f64,
         _ => 0.0,
     };
+    // Encoder priming / padding the container knows about (AAC in MP4,
+    // ADPCM WAV): trimmed so gapless albums really are gapless.
+    let gapless = lumisound_media::gapless::for_track(Path::new(path), p.codec);
+    let duration = gapless.and_then(|g| g.duration(src_rate)).unwrap_or(duration);
     let mut dec = lumisound_media::opus::codecs().make(p, &DecoderOptions::default()).map_err(|e| e.to_string())?;
-    let mut actual_start = 0.0;
-    if start > 0.0 {
-        if let Ok(s) = fmt.seek(SeekMode::Accurate, SeekTo::Time { time: Time::new(start.trunc() as u64, start.fract()), track_id: Some(track.id) }) {
-            actual_start = s.actual_ts as f64 / src_rate as f64;
-            if let Some(tb) = p.time_base {
-                let t = tb.calc_time(s.actual_ts);
-                actual_start = t.seconds as f64 + t.frac;
-            }
-        }
-    }
+    // The decoder's own rate wins: HE-AAC plays at twice its core rate.
+    let src_rate = dec.codec_params().sample_rate.unwrap_or(src_rate);
+    let (trim, actual_start) = lumisound_media::decode::start_at(&mut *fmt, track.id, src_rate, gapless, Some(start));
     let (prod, cons) = rtrb::RingBuffer::<f32>::new(RING_SAMPLES * (out_rate as usize).div_ceil(48_000).max(1));
     let shared = Arc::new(DeckShared { stop: AtomicBool::new(false), eof: AtomicBool::new(false), failed: AtomicBool::new(false), duration_bits: AtomicU64::new(duration.to_bits()) });
     let (seg_prod, segs) = rtrb::RingBuffer::<(u64, f64)>::new(8192);
@@ -167,7 +163,7 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f6
         .spawn(move || {
             raise_decode_priority();
             let mut stats = DecodeStats::default();
-            let r = decode_loop(&mut *fmt, &mut *dec, tid, src_rate, target, out_rate, tempo, prod, seg_prod, &sh, &mut stats);
+            let r = decode_loop(&mut *fmt, &mut *dec, tid, src_rate, target, out_rate, tempo, trim, prod, seg_prod, &sh, &mut stats);
             report_decode(&tele, id, actual_start, duration, src_rate, &stats, r.as_ref().err());
             if r.is_err() {
                 sh.failed.store(true, Ordering::Release);
@@ -322,6 +318,7 @@ fn decode_loop(
     target: f64,
     out_rate: u32,
     tempo: Tempo,
+    mut trim: lumisound_media::gapless::Trim,
     mut prod: rtrb::Producer<f32>,
     mut segs: rtrb::Producer<(u64, f64)>,
     sh: &DeckShared,
@@ -430,13 +427,17 @@ fn decode_loop(
         }
         let b = sbuf.as_mut().unwrap();
         b.copy_interleaved_ref(decoded);
-        for f in b.samples().chunks(ch) {
+        let keep = trim.keep(b.samples().len() / ch);
+        for f in b.samples()[keep.start * ch..keep.end * ch].chunks(ch) {
             let (l, r) = if ch == 1 { (f[0], f[0]) } else { (f[0], f[1]) };
             pending[0].push(l);
             pending[1].push(r);
         }
         if !flush(&mut pending, &mut resampler, &mut prod, &mut inter, false) {
             return Ok(());
+        }
+        if trim.done() {
+            break; // the rest is encoder padding
         }
     }
     flush(&mut pending, &mut resampler, &mut prod, &mut inter, true);
@@ -450,4 +451,58 @@ fn decode_loop(
         let _ = push_seg(&mut segs, stretched.len() / 2, step, sh) && push_all(&mut prod, &stretched, sh);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Everything a deck plays, as interleaved stereo.
+    fn play_all(path: &str, start: f64) -> (Deck, Vec<f32>) {
+        let mut d = open(1, path, start, 44_100, 1.0, 1.0, 0.0, None, Arc::new(super::super::mixer::Telemetry::default())).unwrap();
+        let mut out = Vec::new();
+        let t0 = std::time::Instant::now();
+        while !d.drained() && t0.elapsed().as_secs() < 20 {
+            while let Ok(v) = d.ring.pop() {
+                out.push(v);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        while let Ok(v) = d.ring.pop() {
+            out.push(v);
+        }
+        (d, out)
+    }
+
+    /// AAC in M4A plays without its encoder priming or end padding: the
+    /// music starts on the first frame and the length is exact.
+    #[test]
+    fn aac_m4a_is_gapless() {
+        let dir = std::env::temp_dir().join(format!("deck-gapless-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let m4a = dir.join("t.m4a");
+        let made = std::process::Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=2", "-ac", "2", "-c:a", "aac", "-b:a", "192k"])
+            .arg(&m4a)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !made {
+            eprintln!("ffmpeg not installed: skipping");
+            return;
+        }
+        let (d, out) = play_all(m4a.to_str().unwrap(), 0.0);
+        let frames = out.len() / 2;
+        assert!((frames as i64 - 88_200).abs() <= 2, "played {frames} frames, want 88200");
+        assert!((d.duration() - 2.0).abs() < 0.001, "duration {}", d.duration());
+        // No priming silence: the first 5 ms already carry the tone.
+        let head = &out[..440];
+        let rms = (head.iter().map(|v| v * v).sum::<f32>() / head.len() as f32).sqrt();
+        assert!(rms > 0.05, "head rms {rms}: priming silence still there");
+        // A seek lands on music time.
+        let (d, out) = play_all(m4a.to_str().unwrap(), 1.0);
+        assert!((d.start_offset - 1.0).abs() < 0.03, "seek landed at {}", d.start_offset);
+        let left = d.start_offset + (out.len() / 2) as f64 / 44_100.0;
+        assert!((left - 2.0).abs() < 0.002, "seeked deck ends at {left}s");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

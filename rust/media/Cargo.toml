@@ -8,6 +8,7 @@ description = "Lumisound media primitives shared by the bridge and the app core 
 serde = { version = "1", features = ["derive"] }
 lofty = "0.22"
 opus-decoder = "0.1"
+syom = "0.10"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }
 rustfft = "6"
-symphonia = { version = "0.5", default-features = false, features = ["mp3", "aac", "isomp4", "flac", "wav", "pcm", "ogg", "vorbis", "alac", "adpcm", "aiff", "caf", "mkv"] }
+symphonia = { version = "0.5", default-features = false, features = ["mp1", "mp2", "mp3", "aac", "isomp4", "flac", "wav", "pcm", "ogg", "vorbis", "alac", "adpcm", "aiff", "caf", "mkv"] }

@@ -181,7 +181,7 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - [x] 4. Fix the same track appearing twice in Favorites.
 - [x] 5. Subscriptions: channels are compact ~56pt rows in one grouped card (avatar with auto-download badge, meta line, mute/check/menu icons). TrackedPlaylistDetailView rebuilt: blurred-art hero, downloaded vs missing split bar, Missing / In Library / All filter + search, lazy track card, Tracking settings card.
 - [ ] 6. Audit features still on Apple/iOS systems; build custom (Rust) versions; test each.
-- [ ] 7. Formats: confirm the Lumisound engine handles every format the app plays (opus done; check m4a/aac/mp3/flac/
+- [x] 7. Engine format coverage: rust/media tests/format_matrix.rs encodes every importable format with ffmpeg and checks rate, channels, exact length and tones (plain + locked .lms). Fixed: ALAC in CAF (atom-wrapped cookie, media/src/alac.rs), MP1/MP2 and MKA added, gapless trimming (media/src/gapless.rs: MP4 iTunSMPB / edit list for AAC, WAV fact for ADPCM, Ogg Opus end trim). New AAC path (media/src/aac.rs, pure-Rust syom) for HE-AAC v1/v2, 5.1/7.1 folded to stereo, 960-sample and implicit-SBR streams (tests/aac_profiles.rs). Engine toggle removed: always on, system engine only as automatic fallback. Not importable (no decoder): AC-3, E-AC-3, WMA, WavPack.
        wav/ogg/webm/alac...); custom decoders where missing; then hide the "Lumisound Audio Engine" toggle.
 - [ ] 8. Library screen + every tab/screen connected to it: full creative redesign (iOS).
 - [ ] 9. tvOS: complete functional, visual and structural overhaul of every screen; anything new that iOS lacks

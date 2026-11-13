@@ -16,6 +16,9 @@ pub fn codecs() -> &'static CodecRegistry {
         let mut r = CodecRegistry::new();
         symphonia::default::register_enabled_codecs(&mut r);
         r.register_all::<OpusDecoder>();
+        // After the defaults so it replaces symphonia's ALAC entry.
+        r.register_all::<crate::alac::AlacDecoder>();
+        r.register_all::<crate::aac::AacDecoder>();
         r
     });
     &R
@@ -85,7 +88,10 @@ impl Decoder for OpusDecoder {
         };
         let drop = self.skip.min(n);
         self.skip -= drop;
-        let keep = n - drop;
+        // End trim from the container (Ogg's final granule position): the
+        // encoder pads the last frame, which played as a short silence.
+        // (Its start trim is the pre-skip, already dropped above.)
+        let keep = (n - drop).saturating_sub(packet.trim_end() as usize);
         self.buf.clear();
         self.buf.render_reserved(Some(keep));
         for ch in 0..self.channels {

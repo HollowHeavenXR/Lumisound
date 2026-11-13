@@ -33,9 +33,12 @@ extension AudioPlayerManager {
 
     var isUsingRustEngine: Bool { rustDeckID != nil }
 
-    static var rustEngineEnabled: Bool {
-        UserDefaults.standard.object(forKey: rustEngineKey) as? Bool ?? true
-    }
+    /// Always on: the engine decodes every format the app imports (see
+    /// rust/media tests/format_matrix.rs), so the Settings switch is gone.
+    /// The system engine remains only as the automatic fallback for a file
+    /// the core can't open (reported as `engine_fallback`). A stored "off"
+    /// from the old switch is ignored.
+    static var rustEngineEnabled: Bool { true }
 
     func rustEligible(for url: URL) -> Bool {
         // Engine-exclusive tracks always use the Lumisound engine, whatever
