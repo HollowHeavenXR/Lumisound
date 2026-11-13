@@ -91,7 +91,10 @@ extension AudioPlayerManager {
         if preset != .custom {
             settings.eqBands = preset.bands
         }
-        settings.equalizerEnabled = preset != .flat
+        // With Auto EQ on, the EQ stays on even when the track's best match is
+        // Reference (flat) — otherwise Auto EQ switched the equalizer off and
+        // its own toggle (shown only while the EQ is on) disappeared with it.
+        settings.equalizerEnabled = preset != .flat || settings.autoEQEnabled
         audioSettings = settings   // triggers didSet → applyAudioSettings()
     }
 }

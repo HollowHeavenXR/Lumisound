@@ -62,6 +62,10 @@ enum SpectralEQMatcher {
             // `.custom` is whatever the user set by hand; Auto EQ must never
             // silently adopt it as if it were a suggestion.
             guard candidate != .custom else { continue }
+            // Device presets (Phone Speaker, Earbud Lift, Car Cabin) describe
+            // the listener's gear, not the track; Utility ones (Night Shift,
+            // Spoken Word) a situation. Auto EQ chooses between sound presets.
+            guard candidate.category == "Signature" || candidate.category == "Genre" else { continue }
             let score = deviation(spectrum: spectrum, gains: candidate.bands, target: target)
             if score < bestScore {
                 bestScore = score
