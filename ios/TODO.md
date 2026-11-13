@@ -159,7 +159,7 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - Kept as-is (already bespoke): Interface picker, Rewind, Needle Drop; Heatmap and Hearing Health got the hero.
 - Open: verify on device (dark/light, Liquid Glass on/off, Dynamic Type), Lumen settings pages still old style.
 
-## Queued batch (requested 2026-11-12, start after the redesign IPA is released)
+## Done in 2.0.0.35 (2026-11-13) — batch requested 2026-11-12
 1. Background downloader: no run on every launch/foreground. Manual "Start" button in Settings (one pass),
    still runs on the iOS daily background task, plus an in-app timer every 15 h. Resume only an interrupted pass.
 2. Find out why YouTube API key quotas run out so fast (bridge usage, per-call unit costs, repeat resolves) and
@@ -168,3 +168,8 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 4. Now Playing artwork styles and seeker styles: redesign every one with its own idea.
 5. All app animations remade as custom Lumisound motion, every animation capped at 60 fps.
 6. Loading (launch) screen remade.
+
+- Batch shipped in 2.0.0.35. Quota root cause: Spotify playlist matching spent 100 units (a Data API search) per
+  track, so one 100-song import used a whole day; plus 100-unit interactive searches and tracked playlists
+  re-resolved every 5 min with durations refetched each time. Fixed in the bridge (deployed): see commit 9dd0a453.
+- Open: verify on device — artwork styles/seekers look and feel, launch dial, LumiFX character effects by ear.
