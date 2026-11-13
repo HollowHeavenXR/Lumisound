@@ -1,6 +1,7 @@
 name: Release tvOS IPA
 
-# Produces an unsigned tvOS .ipa (install on Apple TV with atvloadly).
+# Produces an ad-hoc signed tvOS .ipa (install on Apple TV with atvloadly,
+# which re-signs it with your Apple ID).
 # Independent of the iOS release pipeline.
 
 on:
@@ -134,12 +135,33 @@ jobs:
           echo "--- Info.plist icon keys after merge (diagnostic only) ---"
           /usr/libexec/PlistBuddy -c "Print :CFBundleIcons" "$APP_PATH/Info.plist" || echo "(no CFBundleIcons key — check the partial plist dump above for the actual key name)"
 
-      - name: Package IPA (unsigned)
+      # Ad-hoc signature, inner code first (frameworks / dylibs, then the
+      # app), with the App Group entitlement so it travels inside the IPA.
+      # atvloadly re-signs with the user's Apple ID on install.
+      - name: Sign (ad-hoc)
+        working-directory: ios
+        run: |
+          find "$APP_PATH" \( -name "*.dylib" -o -name "*.framework" \) -prune -print | while read -r f; do
+            codesign --force --sign - --timestamp=none "$f"
+          done
+          codesign --force --sign - --timestamp=none --generate-entitlement-der \
+            --entitlements LumisoundTV/LumisoundTV.entitlements "$APP_PATH"
+
+      - name: Verify signature and App Group
+        working-directory: ios
+        run: |
+          codesign --verify --strict --verbose=2 "$APP_PATH"
+          ENT=$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null)
+          echo "$ENT"
+          echo "$ENT" | grep -q "group.com.lumisound.ios" || { echo "::error::tvOS app is missing its App Group entitlement"; exit 1; }
+          [ -d "$APP_PATH/_CodeSignature" ] || { echo "::error::tvOS app is unsigned"; exit 1; }
+
+      - name: Package IPA
         id: ipa
         working-directory: ios
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          IPA_NAME="LumisoundTV-${VERSION}-unsigned.ipa"
+          IPA_NAME="LumisoundTV-${VERSION}.ipa"
           mkdir -p build/Payload/Payload
           cp -R "$APP_PATH" build/Payload/Payload/
           (cd build/Payload && zip -r "../$IPA_NAME" Payload/ -x "*.DS_Store")

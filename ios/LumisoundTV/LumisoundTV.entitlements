@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Ad-hoc release signing (release-tvos.yml). Only what a free Apple ID
+         can use, so atvloadly's re-sign never fails on a restricted entitlement. -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.lumisound.ios</string>
+    </array>
+</dict>
+</plist>
