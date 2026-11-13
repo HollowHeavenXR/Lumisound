@@ -70,7 +70,7 @@ async fn itunes(q: &str) -> Option<Vec<MetaCandidate>> {
 async fn musicbrainz(title: &str, artist: &str) -> Option<Vec<MetaCandidate>> {
     let q = if artist.is_empty() { format!("recording:\"{title}\"") } else { format!("recording:\"{title}\" AND artist:\"{artist}\"") };
     let url = format!("https://musicbrainz.org/ws/2/recording?query={}&limit=3&fmt=json", urlencoding::encode(&q));
-    let v = get(&url, Some("Lumisound/1.0 (https://github.com/HollowHeavenXR/Lumisound)")).await?;
+    let v = get(&url, Some("Lumisound/1.0 (https://github.com/VoxeliseStudios/Lumisound)")).await?;
     let r = v["recordings"].as_array()?;
     let c: Vec<MetaCandidate> = r
         .iter()
@@ -132,7 +132,7 @@ pub async fn metadata_lookup(title: String, artist: String) -> Option<MetaLookup
 
 // ---- artist photos ----------------------------------------------------------------------------
 
-const MB_UA: &str = "Lumisound/1.0 (https://github.com/HollowHeavenXR/Lumisound)";
+const MB_UA: &str = "Lumisound/1.0 (https://github.com/VoxeliseStudios/Lumisound)";
 
 /// The full credit plus the primary artist before the first feat./&/x/vs.
 pub fn artist_candidates(artist: &str) -> Vec<String> {

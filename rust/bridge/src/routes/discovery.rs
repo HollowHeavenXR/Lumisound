@@ -308,7 +308,7 @@ async fn on_this_day(State(st): State<AppState>, u: User) -> ApiResult<Json<Valu
 
 // ---- artists ---------------------------------------------------------------------------------
 
-const BIO_UA: &str = "Lumisound-iOS-Bridge/1.0 (+https://github.com/HollowHeavenXR/Lumisound)";
+const BIO_UA: &str = "Lumisound-iOS-Bridge/1.0 (+https://github.com/VoxeliseStudios/Lumisound)";
 
 async fn get_json(st: &AppState, url: &str, q: &[(&str, &str)]) -> Option<Value> {
     let r = st.http.get(url).query(q).header("User-Agent", BIO_UA).timeout(Duration::from_secs(10)).send().await.ok()?;

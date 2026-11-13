@@ -867,7 +867,7 @@ async fn discord_unverify(State(st): State<AppState>, u: User) -> ApiResult<Stat
     Ok(StatusCode::NO_CONTENT)
 }
 
-const RELEASES_API: &str = "https://api.github.com/repos/HollowHeavenXR/Lumisound/releases";
+const RELEASES_API: &str = "https://api.github.com/repos/VoxeliseStudios/Lumisound/releases";
 
 /// GitHub's releases list (cached 5 min; the last good copy if GitHub fails).
 async fn fetch_releases(st: &AppState) -> Value {

@@ -87,7 +87,7 @@ impl AppState {
             tracing::error!("could not install SQL helpers: {e}");
         }
         let http = reqwest::Client::builder()
-            .user_agent("Lumisound/2.0 (+https://github.com/HollowHeavenXR/Lumisound)")
+            .user_agent("Lumisound/2.0 (+https://github.com/VoxeliseStudios/Lumisound)")
             .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(30))
             .pool_idle_timeout(std::time::Duration::from_secs(90))

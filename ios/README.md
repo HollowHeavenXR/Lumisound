@@ -41,14 +41,14 @@ Either app can add the same source and will keep Lumisound updated automatically
 1. Install [SideStore](https://sidestore.io/) or [AltStore](https://altstore.io/) on your iPhone.
 2. In the app → **Sources**, add:
    ```
-   https://raw.githubusercontent.com/HollowHeavenXR/Lumisound/main/ios/altstore-source.json
+   https://raw.githubusercontent.com/VoxeliseStudios/Lumisound/main/ios/altstore-source.json
    ```
 3. Find **Lumisound** in the Browse tab and tap **Install**.
 4. Updates appear automatically when a new version ships.
 
 ### Option B — Sideloadly / manual IPA
 
-1. Download the latest `Lumisound-{version}-unsigned.ipa` from the [Releases page](https://github.com/HollowHeavenXR/Lumisound/releases/latest).
+1. Download the latest `Lumisound-{version}-unsigned.ipa` from the [Releases page](https://github.com/VoxeliseStudios/Lumisound/releases/latest).
 2. Install with [Sideloadly](https://sideloadly.io/), [AltServer](https://altstore.io/), or any IPA signer.
 
 ---

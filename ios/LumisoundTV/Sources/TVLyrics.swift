@@ -73,7 +73,7 @@ enum TVLrcParser {
 // cache under user auth.
 
 enum TVLyricsService {
-    private static let headers = ["User-Agent": "Lumisound-tvOS/1.0 (https://github.com/HollowHeavenXR/Lumisound)"]
+    private static let headers = ["User-Agent": "Lumisound-tvOS/1.0 (https://github.com/VoxeliseStudios/Lumisound)"]
 
     static func fetch(title: String, artist: String, duration: TimeInterval) async -> [TVLyricLine]? {
         // Account-stored lyrics first — these are the ones the public databases

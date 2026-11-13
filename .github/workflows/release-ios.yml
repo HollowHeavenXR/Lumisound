@@ -337,7 +337,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           IPA_NAME="${{ steps.ipa.outputs.ipa_name }}"
           VERSION_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          DOWNLOAD_URL="https://github.com/HollowHeavenXR/Lumisound/releases/download/ios%2Fv${VERSION}/${IPA_NAME}"
+          DOWNLOAD_URL="https://github.com/VoxeliseStudios/Lumisound/releases/download/ios%2Fv${VERSION}/${IPA_NAME}"
           IPA_SIZE=$(stat -f%z "ios/build/$IPA_NAME")
           # Read from project.yml rather than hardcoding. This was pinned at
           # "16.0" and kept publishing that long after the deployment target

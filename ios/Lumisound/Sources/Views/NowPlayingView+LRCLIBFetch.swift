@@ -6,7 +6,7 @@ extension NowPlayingView {
     // MARK: - LRCLIB fetch (synced LRC)
 
     func fetchLRCLIB(title: String, artist: String, duration: TimeInterval) async -> [LrcLine]? {
-        let headers = ["User-Agent": "Lumisound/1.0 (https://github.com/HollowHeavenXR/Lumisound)"]
+        let headers = ["User-Agent": "Lumisound/1.0 (https://github.com/VoxeliseStudios/Lumisound)"]
 
         // 1. /api/get — exact match by track/artist/duration. LRCLIB matches
         //    duration within a couple seconds, so this avoids returning lyrics

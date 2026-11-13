@@ -10,7 +10,7 @@ final class UpdateService: ObservableObject {
     @Published private(set) var updateAvailable: Bool = false
     @Published private(set) var isChecking: Bool = false
     // swiftlint:disable:next force_unwrapping
-    private static let fallbackReleaseURL = URL(string: "https://github.com/HollowHeavenXR/Lumisound/releases/latest")!
+    private static let fallbackReleaseURL = URL(string: "https://github.com/VoxeliseStudios/Lumisound/releases/latest")!
     @Published private(set) var releasePageURL: URL = UpdateService.fallbackReleaseURL
     @Published private(set) var directDownloadURL: URL? = nil
 
