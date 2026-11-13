@@ -17,28 +17,17 @@ if this is ever revisited:
 
 ## Not possible
 
-### Full parametric EQ
-iOS's equalizer is an `AVAudioUnitEQ` node wired into an `AVAudioEngine`
-graph (`AudioPlayerManager.swift`). tvOS's client streams through a plain
-`AVPlayer`, which has no mixer graph to attach an EQ node to. The only real
-paths in:
-- Rewrite the tvOS player onto `AVAudioEngine` (a large, separate
-  architecture change — this client was deliberately kept on `AVPlayer` for
-  simplicity).
-- `MTAudioProcessingTap` — pull raw sample buffers off the AVPlayer item and
-  run hand-written biquad filters. Real DSP work, not a UI feature.
-
-Neither is "more time," both are separate projects.
+### Full parametric EQ — done (2026-11-13)
+tvOS now plays through the Lumisound engine (the Rust core, same as iPhone):
+`TVLumisoundEngine.swift` pulls samples from the core via `engineRenderInto`
+into an `AVAudioSourceNode` (cpal has no tvOS backend). LumiEQ presets, Night
+Mode and Room reverb are in Settings → Sound; gapless and crossfades are done
+by the engine. The dual-AVPlayer, volume-ramp crossfade and stall watchdog are gone.
 
 ### Listen Together
-iOS's version (`SharePlayCoordinator.swift`, `ListenTogetherActivity.swift`)
-is genuine Apple SharePlay/`GroupActivities`, anchored to a FaceTime call.
-There is no supported path for a third-party, non-video-conferencing tvOS
-app to originate or join a `GroupSession` the way this feature needs. This
-is an Apple platform boundary, not a missing integration — confirmed via
-direct source inspection, not guessed.
-
----
+SharePlay is gone on iPhone too: Listen Together is now Lumisound's own rooms
+(bridge `/rooms`, synced by rust/core `together.rs`), so it is no longer an
+Apple platform wall. A tvOS room client (ListenRoomService port) is still to do.
 
 ## Possible, deliberately skipped
 

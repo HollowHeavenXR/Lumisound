@@ -21,6 +21,10 @@ final class TVAudioSettings: ObservableObject {
         static let autoCrossfade = "tv.audio.autoCrossfade"
         static let djTransitions = "tv.aria.djTransitions"
         static let gridColumns = "tv.library.gridColumns"
+        static let eqEnabled = "tv.audio.eqEnabled"
+        static let eqPreset = "tv.audio.eqPreset"
+        static let nightMode = "tv.audio.nightMode"
+        static let room = "tv.audio.room"
     }
 
     /// Trims a track's leading silence on start — see `TVSilenceTrim`.
@@ -70,8 +74,37 @@ final class TVAudioSettings: ObservableObject {
         didSet { UserDefaults.standard.set(gridColumns, forKey: Key.gridColumns) }
     }
 
+    // MARK: Lumisound engine (the same EQ and effects as the phone)
+
+    /// LumiEQ on / off and its preset (ids from the core's catalogue, `eqPresets()`).
+    @Published var eqEnabled: Bool {
+        didSet { UserDefaults.standard.set(eqEnabled, forKey: Key.eqEnabled); engineChanged() }
+    }
+    @Published var eqPresetID: String {
+        didSet { UserDefaults.standard.set(eqPresetID, forKey: Key.eqPreset); engineChanged() }
+    }
+    /// Night mode: evens out loud and quiet passages for late, low listening.
+    @Published var nightMode: Bool {
+        didSet { UserDefaults.standard.set(nightMode, forKey: Key.nightMode); engineChanged() }
+    }
+    /// A touch of room around the music: 0 off, 1 small room, 2 hall.
+    @Published var room: Int {
+        didSet { UserDefaults.standard.set(room, forKey: Key.room); engineChanged() }
+    }
+
+    var eqBands: [Float] { eqPresetGains(id: eqPresetID) }
+    var reverbWet: Float { [0, 0.12, 0.22][max(0, min(2, room))] }
+
+    private func engineChanged() {
+        TVPlayerModel.shared.applyEngineSettings()
+    }
+
     private init() {
         let d = UserDefaults.standard
+        eqEnabled = d.bool(forKey: Key.eqEnabled)
+        eqPresetID = eqPresetResolve(stored: d.string(forKey: Key.eqPreset) ?? "flat")
+        nightMode = d.bool(forKey: Key.nightMode)
+        room = d.integer(forKey: Key.room)
         // `object(forKey:)` rather than `bool(forKey:)` for the two that default
         // to true — `bool` returns false for an absent key, which would silently
         // ship them off on a fresh install.

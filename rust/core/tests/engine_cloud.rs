@@ -352,13 +352,20 @@ fn cloud_tracks_through_engine_and_effects() {
                     pass &= diff < 1e-6;
                 }
                 n if n.starts_with("spatial") => {
+                    // Measured against the dry render: a wide mix can carry
+                    // its own inter-channel offset (Haas widening, a spaced
+                    // pair), which is the source, not the engine.
+                    let (bl, br) = channels(&baseline.as_ref().unwrap().out);
+                    let base_lag = best_lag(&bl, &br, 48);
+                    let base_ild = db(rms(&bl)) - db(rms(&br));
                     let lag = best_lag(&l, &rr, 48);
                     let ild = db(rms(&l)) - db(rms(&rr));
-                    check = format!("ITD lag {:.2} ms, ILD {ild:+.1} dB", lag as f64 / r.rate * 1000.0);
+                    let (dlag, dild) = (lag - base_lag, ild - base_ild);
+                    check = format!("ITD lag {:.2} ms ({:+.2} vs dry), ILD {ild:+.1} dB ({dild:+.1} vs dry)", lag as f64 / r.rate * 1000.0, dlag as f64 / r.rate * 1000.0);
                     if c.spatial_yaw == Some(60.0) {
-                        pass &= lag.abs() >= 8 || ild.abs() > 1.5;
+                        pass &= dlag.abs() >= 8 || dild.abs() > 1.5;
                     } else {
-                        pass &= lag.abs() <= 2 && ild.abs() < 1.5;
+                        pass &= dlag.abs() <= 2 && dild.abs() < 1.5;
                     }
                 }
                 n if n.starts_with("tremolo") => {

@@ -41,13 +41,21 @@ struct TVSettingsView: View {
                     }
                 }
 
-                section("Audio") {
+                section("Sound · Lumisound Engine") {
                     toggleRow(
-                        title: "Spatial Audio",
-                        detail: "Lets the system widen stereo music into a surround field. Off by default — it smears the stereo image, and is the most likely reason music sounds less direct here than on iPhone.",
-                        systemImage: "airpodspro",
-                        isOn: $settings.allowSpatialization
+                        title: "LumiEQ",
+                        detail: "The phone's equalizer, running in the Lumisound engine on this Apple TV.",
+                        systemImage: "slider.vertical.3",
+                        isOn: $settings.eqEnabled
                     )
+                    if settings.eqEnabled { eqPresetRow }
+                    toggleRow(
+                        title: "Night Mode",
+                        detail: "Evens out loud and quiet passages so late, low listening stays clear without waking the house.",
+                        systemImage: "moon.stars",
+                        isOn: $settings.nightMode
+                    )
+                    roomRow
                 }
 
                 section("Aria Lumi") {
@@ -125,6 +133,63 @@ struct TVSettingsView: View {
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
+    }
+
+    /// The preset families from the core's catalogue as chips; the chosen
+    /// preset's tagline underneath.
+    private var eqPresetRow: some View {
+        let presets = eqPresets().filter { $0.category == "Signature" || $0.category == "Genre" }
+        let current = presets.first { $0.id == settings.eqPresetID }
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Preset · \(current?.name ?? "Custom")")
+                .font(.system(size: 25, weight: .semibold))
+            Text(current?.tagline ?? "")
+                .font(TVType.rowDetail)
+                .foregroundStyle(TVPalette.textTertiary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(presets, id: \.id) { p in
+                        Button {
+                            settings.eqPresetID = p.id
+                            TVRemoteLogger.log(category: "settings", event: "eq_preset_changed", detail: ["preset": p.id])
+                        } label: {
+                            TVChip(title: p.name, isSelected: settings.eqPresetID == p.id)
+                        }
+                        .buttonStyle(.plain)
+                        .focusEffectDisabled()
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+    }
+
+    private var roomRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Room")
+                .font(.system(size: 25, weight: .semibold))
+            Text("A touch of space around the music, from the engine's reverb.")
+                .font(TVType.rowDetail)
+                .foregroundStyle(TVPalette.textTertiary)
+            HStack(spacing: 16) {
+                ForEach(Array(["Off", "Small Room", "Hall"].enumerated()), id: \.offset) { i, name in
+                    Button {
+                        settings.room = i
+                    } label: {
+                        TVChip(title: name, isSelected: settings.room == i)
+                    }
+                    .buttonStyle(.plain)
+                    .focusEffectDisabled()
+                }
+            }
+            .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
     }
 
     /// Column count as a chip row rather than a stepper — three fixed choices

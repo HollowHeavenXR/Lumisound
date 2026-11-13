@@ -625,7 +625,76 @@ mod output {
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+/// Pull output: the platform's audio thread asks the engine for samples
+/// (tvOS, where cpal has no backend: AVAudioSourceNode in the app calls
+/// `lumisound_engine_render`). Compiled everywhere so it can be tested.
+pub mod pull {
+    use super::Mixer;
+    use std::sync::{Arc, Mutex};
+
+    type Target = (Arc<Mutex<Mixer>>, Arc<super::mixer::Telemetry>);
+    static TARGET: Mutex<Option<Target>> = Mutex::new(None);
+
+    pub fn register(mixer: Arc<Mutex<Mixer>>, tele: Arc<super::mixer::Telemetry>) {
+        *TARGET.lock().unwrap_or_else(|e| e.into_inner()) = Some((mixer, tele));
+    }
+
+    pub fn unregister() {
+        *TARGET.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// Fills `out` (interleaved stereo, `out.len() / 2` frames). Never
+    /// blocks: if the engine is busy this buffer is silence. Returns
+    /// whether the engine rendered it.
+    pub fn render(out: &mut [f32]) -> bool {
+        let target = match TARGET.try_lock() {
+            Ok(t) => t.clone(),
+            Err(_) => None,
+        };
+        let Some((mixer, tele)) = target else {
+            out.iter_mut().for_each(|s| *s = 0.0);
+            return false;
+        };
+        match mixer.try_lock() {
+            Ok(mut m) => {
+                m.render(out);
+                true
+            }
+            Err(_) => {
+                tele.health.lock_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                out.iter_mut().for_each(|s| *s = 0.0);
+                false
+            }
+        }
+    }
+}
+
+/// C entry point for the app's audio callback (tvOS): `frames` stereo
+/// frames of float samples into `out`. Returns 1 when the engine rendered.
+///
+/// # Safety
+/// `out` must point to `frames * 2` writable floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lumisound_engine_render(out: *mut f32, frames: u32) -> u32 {
+    if out.is_null() || frames == 0 {
+        return 0;
+    }
+    let buf = unsafe { std::slice::from_raw_parts_mut(out, frames as usize * 2) };
+    u32::from(pull::render(buf))
+}
+
+/// The same render for Swift through UniFFI (scalar arguments only, so the
+/// call allocates nothing on the realtime thread): `ptr` is the address of
+/// `frames * 2` writable floats.
+#[uniffi::export]
+pub fn engine_render_into(ptr: u64, frames: u32) -> u32 {
+    if ptr == 0 {
+        return 0;
+    }
+    unsafe { lumisound_engine_render(ptr as usize as *mut f32, frames) }
+}
+
+#[cfg(target_os = "tvos")]
 mod output {
     use super::Mixer;
     use std::sync::{Arc, Mutex};
@@ -634,7 +703,33 @@ mod output {
         48_000
     }
 
-    /// No audio device on this platform (tests, tvOS/watchOS until wired).
+    /// The app's AVAudioSourceNode pulls from the engine (see `pull`).
+    pub struct Output;
+
+    impl Output {
+        pub fn start(mixer: Arc<Mutex<Mixer>>, tele: Arc<super::mixer::Telemetry>) -> Result<Self, String> {
+            super::pull::register(mixer, tele);
+            Ok(Output)
+        }
+    }
+
+    impl Drop for Output {
+        fn drop(&mut self) {
+            super::pull::unregister();
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "tvos")))]
+mod output {
+    use super::Mixer;
+    use std::sync::{Arc, Mutex};
+
+    pub fn preferred_rate() -> u32 {
+        48_000
+    }
+
+    /// No audio device on this platform (tests, watchOS).
     pub struct Output;
 
     impl Output {
@@ -724,6 +819,34 @@ mod tests {
         // 87.2% of samples -> ~41.9k frames at 48 kHz. A gap at the seam or
         // dropped buffers would show up as a shortfall.
         assert!((40_500..=43_500).contains(&loud), "loud frames {loud}");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// The tvOS path: the app's audio callback pulls through the C entry point.
+    #[test]
+    fn pull_output_renders_through_c_entry_point() {
+        let d = std::env::temp_dir().join(format!("engine-pull-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&d).unwrap();
+        let a = d.join("a.wav");
+        wav(&a, 0.5, 440.0, 48_000);
+        let l = Arc::new(L(Mutex::new(vec![])));
+        let e = AudioEngine::new(l.clone());
+        // Nothing registered: silence, reported as not rendered.
+        let mut buf = vec![1.0f32; 512 * 2];
+        assert_eq!(unsafe { lumisound_engine_render(buf.as_mut_ptr(), 512) }, 0);
+        assert!(buf.iter().all(|s| *s == 0.0));
+        pull::register(e.mixer.clone(), e.tele.clone());
+        e.load(a.to_string_lossy().into(), 0.0, 0.0).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        e.play();
+        let mut loud = 0usize;
+        for _ in 0..40 {
+            assert_eq!(unsafe { lumisound_engine_render(buf.as_mut_ptr(), 512) }, 1);
+            loud += buf.iter().filter(|s| s.abs() > 0.1).count();
+        }
+        pull::unregister();
+        assert!(loud > 10_000, "loud samples {loud}");
+        assert!(e.output_alive(1000), "pull rendering counts as a live output");
         let _ = std::fs::remove_dir_all(d);
     }
 

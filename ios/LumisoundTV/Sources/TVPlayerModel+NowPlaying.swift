@@ -86,12 +86,12 @@ extension TVPlayerModel {
 
         center.playCommand.addTarget { [weak self] _ in
             guard let self else { return .commandFailed }
-            self.player.play()
+            self.resumePlayback()
             return .success
         }
         center.pauseCommand.addTarget { [weak self] _ in
             guard let self else { return .commandFailed }
-            self.player.pause()
+            self.pausePlayback()
             return .success
         }
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
@@ -111,7 +111,7 @@ extension TVPlayerModel {
         }
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let self, let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            self.player.seek(to: CMTime(seconds: e.positionTime, preferredTimescale: 600))
+            self.seek(to: e.positionTime)
             return .success
         }
     }
@@ -151,12 +151,12 @@ extension TVPlayerModel {
                 else { return }
                 switch type {
                 case .began:
-                    self.player.pause()
+                    self.pausePlayback()
                 case .ended:
                     let optionsRaw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
                     if AVAudioSession.InterruptionOptions(rawValue: optionsRaw).contains(.shouldResume) {
                         try? AVAudioSession.sharedInstance().setActive(true)
-                        self.player.play()
+                        self.resumePlayback()
                     }
                 @unknown default:
                     break
@@ -177,7 +177,7 @@ extension TVPlayerModel {
                 // system convention of pausing rather than continuing on
                 // whatever device was implicitly switched to.
                 if reason == .oldDeviceUnavailable {
-                    self.player.pause()
+                    self.pausePlayback()
                 }
             }
         }

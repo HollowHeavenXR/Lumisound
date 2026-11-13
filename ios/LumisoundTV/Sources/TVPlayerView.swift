@@ -71,43 +71,35 @@ final class TVPlayerModel: ObservableObject {
     // matching how the iOS app's `AudioPlayerManager` already behaves.
     static let shared = TVPlayerModel()
 
-    // MARK: Dual-player crossfade
+    // MARK: Engine
     //
-    // Two fixed AVPlayer instances rather than one — crossfading means the
-    // outgoing track's player and the incoming track's player must both be
-    // audible and advancing at once for `crossfadeDuration` seconds, which a
-    // single `replaceCurrentItem` swap can't do. `player` always means
-    // "whichever one is currently the audible/active track"; observers (time/
-    // status/end) are attached to BOTH once, each self-filtering to only act
-    // when it's the currently-active instance — simpler and safer than tearing
-    // down and reattaching observers every time the active player changes.
-    private let playerA = AVPlayer()
-    private let playerB = AVPlayer()
-    private var activeIsA = true
-    var player: AVPlayer { activeIsA ? playerA : playerB }
-    private var inactivePlayer: AVPlayer { activeIsA ? playerB : playerA }
+    // Playback runs on the Lumisound engine (TVLumisoundEngine: the Rust core,
+    // the same engine as the iPhone app). Every track is a local file
+    // (TVTrackFiles downloads it; locked tracks are decoded in place), the
+    // engine does gapless hand-over and crossfades itself, and reports
+    // track start / end / failure by deck id.
+    private var engine: TVLumisoundEngine { TVLumisoundEngine.shared }
+    private var core: AudioEngine { TVLumisoundEngine.shared.core }
+    /// Deck id of the playing track.
+    private var currentDeck: UInt64 = 0
+    /// The queued / crossfading next track, once the engine has it.
+    private var pendingNext: (deck: UInt64, index: Int, crossfade: Bool)?
+    /// The next transition has been set up (or is being) for this track.
+    private var transitionArmed = false
+    /// Local file of the playing track.
+    private var currentFile: URL?
+    /// Bumped on every load, so a slow download can't start a track the
+    /// listener already skipped.
+    private var loadGeneration = 0
+    private var ticker: Timer?
     /// Base overlap. With Auto Crossfade on, `TVAutoCrossfade` picks a length
     /// per transition from this starting point; with it off this is used as-is.
     private let crossfadeDuration: TimeInterval = TVAutoCrossfade.baseDuration
-    /// The length chosen for the transition currently in flight. Computed once
-    /// when the crossfade begins, not per step — the fade must run at a constant
-    /// rate, and recomputing mid-fade would make it speed up or stall.
-    private var activeCrossfadeDuration: TimeInterval = TVAutoCrossfade.baseDuration
-    private var crossfadeTask: Task<Void, Never>?
-    private var hasCrossfadedForCurrentTrack = false
-
-    // MARK: Stall watchdog state — see `checkForPlaybackStall()`.
-    private var lastStallCheckPosition: Double = 0
-    private var stalledTickCount = 0
-    private var lastStallRecoveryPosition: Double?
-    private var consecutiveStallRecoveriesAtSamePosition = 0
+    /// Queue a gapless next track this long before the end.
+    private let gaplessLead: TimeInterval = 20
 
     /// Queue order before shuffling — restored when shuffle is toggled off.
     private var originalQueue: [TVPlayable] = []
-    private var endObservers: [NSObjectProtocol] = []
-    private var failureObservers: [NSObjectProtocol] = []
-    private var timeObservers: [(AVPlayer, Any)] = []
-    private var statusObservations: [NSKeyValueObservation] = []
     private var sleepTimerTask: Task<Void, Never>?
     private var lyricsTask: Task<Void, Never>?
     /// The track Aria is handing over FROM — see TVAria.requestTransition.
@@ -117,257 +109,89 @@ final class TVPlayerModel: ObservableObject {
     var current: TVPlayable? { queue.indices.contains(currentIndex) ? queue[currentIndex] : nil }
 
     /// The queue/start-point `start(context:)` most recently actually
-    /// adopted — lets repeat calls with the SAME context (e.g. navigating
-    /// back to Now Playing without picking a new track, now that this is a
-    /// persistent singleton instead of a fresh-per-screen instance) resume
-    /// in place rather than restarting, while a genuinely different
-    /// context still replaces the queue as before.
+    /// adopted — repeat calls with the SAME context (navigating back to Now
+    /// Playing without picking a new track) resume in place.
     private var currentContext: TVPlayContext?
 
     func start(context: TVPlayContext) {
         guard currentContext != context else { return }
         currentContext = context
-        cancelCrossfade()
+        cancelTransition()
         isShuffled = false
         queue = context.queue
         originalQueue = context.queue
         currentIndex = queue.firstIndex(where: { $0.id == context.startID }) ?? 0
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-        try? AVAudioSession.sharedInstance().setActive(true)
-        setupObservers()
+        engine.relay.player = self
+        engine.start()
+        startTicker()
         setupAudioSessionObservers()
         configureRemoteCommands()
         loadCurrent()
     }
 
-    /// Seeks within the current track, clamped to `[0, duration]` — used by
-    /// the "skip forward/back N seconds" Siri intents (TVAppIntents.swift).
-    /// `position` is updated immediately rather than waiting for the next
-    /// periodic time-observer tick, so a seek doesn't visibly lag.
+    /// Seeks within the current track, clamped to `[0, duration]`.
     func seek(to newPosition: Double) {
         guard duration > 0 else { return }
-        let target = max(0, min(newPosition, duration))
+        let target = max(0, min(newPosition, duration - 0.25))
         position = target
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+        // A seek reopens the track; anything queued after it is dropped.
+        cancelTransition()
+        if let id = try? core.seek(secs: target) { currentDeck = id }
     }
 
-    /// Watches for the AVPlayer-reports-playing-but-position-frozen stall —
-    /// buffering indefinitely on a flaky connection, or AVPlayer just
-    /// getting internally stuck, both real AVPlayer failure modes. Without
-    /// this, tvOS had NO recovery at all for a hung stream: `isPlaying`
-    /// stays true, nothing is audible, and nothing ever retries — the main
-    /// iOS app's AVPlayer fallback path already had to fix this exact gap
-    /// (`checkForOpusPlayerStall`, `AudioPlayerManager+PositionTracking.swift`)
-    /// after it showed up in production; this mirrors that fix for tvOS's
-    /// own AVPlayer-only playback path, which never got it. Called every
-    /// 0.2s from the periodic time observer above, so the tick counts below
-    /// are scaled from that function's 0.5s-tick thresholds to the same
-    /// wall-clock durations.
-    private func checkForPlaybackStall() {
-        // Every condition here is a state where position legitimately does
-        // not advance — treating any of them as a stall would restart
-        // playback on top of itself.
-        guard isPlaying, !isBuffering, crossfadeTask == nil,
-              duration > 0, position < duration - 1.0
-        else {
-            stalledTickCount = 0
-            lastStallCheckPosition = position
-            return
-        }
-
-        // A tick is 0.2s, so anything genuinely playing moves well beyond this.
-        if position > lastStallCheckPosition + 0.02 {
-            stalledTickCount = 0
-            lastStallCheckPosition = position
-            if let recoveredAt = lastStallRecoveryPosition, position > recoveredAt + 3 {
-                lastStallRecoveryPosition = nil
-                consecutiveStallRecoveriesAtSamePosition = 0
-            }
-            return
-        }
-
-        stalledTickCount += 1
-        // 15 ticks at 0.2s = 3 seconds of believing we play while rendering
-        // nothing — same 3s budget as the main app's 6 ticks at 0.5s.
-        guard stalledTickCount >= 15 else { return }
-
-        let resumeAt = position
-        stalledTickCount = 0
-        lastStallCheckPosition = resumeAt
-
-        if let lastPosition = lastStallRecoveryPosition, abs(resumeAt - lastPosition) < 1.5 {
-            consecutiveStallRecoveriesAtSamePosition += 1
-        } else {
-            consecutiveStallRecoveriesAtSamePosition = 1
-        }
-        lastStallRecoveryPosition = resumeAt
-
-        if consecutiveStallRecoveriesAtSamePosition >= 5 {
-            tvWarn("Playback stall at \(String(format: "%.1f", resumeAt))s recurred \(consecutiveStallRecoveriesAtSamePosition)x — giving up and skipping", category: "playback")
-            TVRemoteLogger.logError(category: "playback", event: "playback_stall_unrecoverable",
-                                     message: "position frozen at \(Int(resumeAt))s, \(consecutiveStallRecoveriesAtSamePosition) recovery attempts")
-            lastStallRecoveryPosition = nil
-            consecutiveStallRecoveriesAtSamePosition = 0
-            next()
-            return
-        }
-
-        // First attempt: a cheap pause/play "kick" — no reseek, near-
-        // instant. Only escalate to a real re-seek (which forces AVPlayer
-        // to drop and refill its buffer from scratch) once that's confirmed
-        // not to be enough; and only nudge a few seconds past the dead spot
-        // once even a same-position re-seek has failed repeatedly, same
-        // escalation shape as the main app's version.
-        if consecutiveStallRecoveriesAtSamePosition == 1 {
-            tvWarn("Playback stalled — reports playing but position frozen at \(String(format: "%.1f", resumeAt))s for 3s; kicking", category: "playback")
-            TVRemoteLogger.log(category: "playback", event: "playback_stall_recovered",
-                                detail: ["position": Int(resumeAt), "attempt": consecutiveStallRecoveriesAtSamePosition, "kicked": true])
-            player.pause()
-            player.play()
-            return
-        }
-
-        let nudging = consecutiveStallRecoveriesAtSamePosition >= 3
-        let target = nudging ? min(resumeAt + 5, max(0, duration - 0.5)) : resumeAt
-        tvWarn("Playback stalled — reports playing but position frozen at \(String(format: "%.1f", resumeAt))s for 3s; \(nudging ? "nudging to \(String(format: "%.1f", target))s" : "re-seeking") (attempt \(consecutiveStallRecoveriesAtSamePosition))", category: "playback")
-        TVRemoteLogger.log(category: "playback", event: "playback_stall_recovered",
-                            detail: ["position": Int(resumeAt), "attempt": consecutiveStallRecoveriesAtSamePosition, "nudged": nudging])
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600)) { [weak self] _ in
-            self?.player.play()
-        }
+    func resumePlayback() {
+        engine.restartIfNeeded()
+        core.play()
+        isPlaying = true
+        updateNowPlayingInfo()
     }
 
-    private func setupObservers() {
-        guard endObservers.isEmpty else { return }  // set up once, on both players
-
-        for p in [playerA, playerB] {
-            // Only reacts when `p` is the currently-active player AND the item
-            // that ended is still that player's current item — guards against
-            // a stale notification from a player that's since been reused/
-            // reset (e.g. a cancelled crossfade's incoming player).
-            let endObs = NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main
-            ) { [weak self, weak p] note in
-                Task { @MainActor in
-                    guard let self, let p, self.player === p,
-                          let endedItem = note.object as? AVPlayerItem, endedItem === p.currentItem
-                    else { return }
-                    self.handleNaturalEnd()
-                }
-            }
-            endObservers.append(endObs)
-
-            // Playback failures (bad stream, dropped connection mid-track)
-            // previously went completely unlogged — the UI would just spin
-            // forever with nothing surfaced anywhere, client or server.
-            let failureObs = NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemFailedToPlayToEndTime, object: nil, queue: .main
-            ) { [weak self, weak p] note in
-                Task { @MainActor in
-                    guard let self, let p, self.player === p,
-                          let failedItem = note.object as? AVPlayerItem, failedItem === p.currentItem
-                    else { return }
-                    let underlying = (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.localizedDescription
-                        ?? p.currentItem?.error?.localizedDescription ?? "unknown error"
-                    tvError("Playback failed: \(underlying)", category: "playback",
-                            extra: ["title": self.current?.title ?? "?"])
-                    TVRemoteLogger.logError(category: "playback", event: "playback_failed", message: underlying)
-                }
-            }
-            failureObservers.append(failureObs)
-
-            // Drives the scrubber + elapsed/remaining time, and the crossfade trigger.
-            // 0.2s, not 0.5s: this timer is what advances the lyric
-            // highlight, and at 0.5s the lit line lagged the audio by up to
-            // half a second, which reads as lyrics simply being out of sync.
-            let interval = CMTime(seconds: 0.2, preferredTimescale: 600)
-            let timeObs = p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak p] time in
-                Task { @MainActor in
-                    guard let self, let p, self.player === p else { return }
-                    self.position = time.seconds.isFinite ? time.seconds : 0
-                    if let d = p.currentItem?.duration.seconds, d.isFinite, d > 0 {
-                        self.duration = d
-                    }
-                    self.checkCrossfadeTrigger()
-                    self.checkForPlaybackStall()
-                    self.updateNowPlayingInfo()
-                }
-            }
-            timeObservers.append((p, timeObs))
-
-            // Keeps play/pause + the loading spinner in sync with real playback.
-            let statusObs = p.observe(\.timeControlStatus, options: [.new]) { [weak self, weak p] observed, _ in
-                Task { @MainActor in
-                    guard let self, let p, self.player === p else { return }
-                    self.isPlaying = observed.timeControlStatus == .playing
-                    self.isBuffering = observed.timeControlStatus == .waitingToPlayAtSpecifiedRate
-                    self.updateNowPlayingInfo()
-                }
-            }
-            statusObservations.append(statusObs)
-        }
+    func pausePlayback() {
+        core.pause(fadeSecs: 0.12)
+        isPlaying = false
+        updateNowPlayingInfo()
     }
 
-    private func asset(for item: TVPlayable) -> AVURLAsset {
-        // /api/stream/proxy is check_auth()-gated (needs "Authorization: Bearer
-        // <IOS_BRIDGE_API_KEY>") and separately reads the user's personal
-        // YouTube key off the raw "X-Account-Token" header; it never reads
-        // Authorization for its own business logic, so putting the API key
-        // there doesn't collide with anything. /user/music/stream instead
-        // checks "Authorization: Bearer <user token>" and ignores
-        // X-Account-Token. Both headers are always sent — each endpoint
-        // ignores the one it doesn't recognize — except Authorization itself,
-        // which has to pick the right value for whichever endpoint this
-        // particular item's streamURL actually targets.
-        let isStreamProxy = item.streamURL.path == "/api/stream/proxy"
-        let authorization = isStreamProxy
-            ? "Bearer \(TVBridgeClient.officialBridgeAPIKey)"
-            : item.authToken.map { "Bearer \($0)" }
-        var headers: [String: String] = [:]
-        if let authorization { headers["Authorization"] = authorization }
-        if let token = item.authToken { headers["X-Account-Token"] = token }
-        guard !headers.isEmpty else { return AVURLAsset(url: item.streamURL) }
-        return AVURLAsset(url: item.streamURL, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+    private func startTicker() {
+        guard ticker == nil else { return }
+        // 0.2 s: drives the scrubber, the lyric highlight and the transition
+        // trigger (at 0.5 s the lit lyric line lagged the audio noticeably).
+        let t = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.tick() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        ticker = t
     }
 
-    /// Locked-aware version of `asset(for:)` — a non-locked item resolves
-    /// instantly via the same URL/header construction as before. A
-    /// Lumisound-locked Personal Cloud Library item (`item.isLocked`) is
-    /// downloaded in full and unlocked to a local temp file first, via
-    /// `TVLockedTrackCache` — its bytes aren't a decodable audio container
-    /// to AVFoundation until that transform is reversed (see
-    /// `TVLockFormat`'s header comment). Falls back to the raw (undecoded)
-    /// stream on a download/unlock failure, matching this app's "never leave
-    /// playback silently stuck" pattern elsewhere — the player's existing
-    /// failure observer surfaces that the same way it would any other
-    /// unplayable item, rather than hanging forever on a resolution that
-    /// already failed.
-    private func resolvedAsset(for item: TVPlayable) async -> AVURLAsset {
-        guard item.isLocked else { return asset(for: item) }
-        if let localURL = await TVLockedTrackCache.shared.playableURL(for: item) {
-            return AVURLAsset(url: localURL)
-        }
-        return asset(for: item)
+    private func tick() {
+        guard currentDeck != 0 else { return }
+        position = core.position()
+        let d = core.duration()
+        if d > 0 { duration = d }
+        let playing = core.isPlaying()
+        if playing != isPlaying { isPlaying = playing }
+        if playing { engine.restartIfNeeded() }
+        checkTransition()
+        updateNowPlayingInfo()
     }
 
     private func loadCurrent() {
         guard let item = current else { return }
-        cancelCrossfade()
+        cancelTransition()
+        loadGeneration += 1
+        let generation = loadGeneration
         position = 0
-        duration = 0
+        duration = item.durationSeconds
         isBuffering = true
-        player.volume = 1
         loadLyrics(for: item)
         // Single chokepoint for every track transition (initial start, skip,
-        // repeat-all wrap, Up Next jump) — logging once here instead of at
-        // each caller avoids duplicating this at four call sites.
+        // repeat-all wrap, Up Next jump).
         tvBreadcrumb("Playing: \(item.title)")
         TVRemoteLogger.log(category: "playback", event: "track_started",
-                            detail: ["title": item.title, "artist": item.artist])
+                            detail: ["title": item.title, "artist": item.artist, "engine": "lumisound"])
         updateNowPlayingInfo()
         updateNowPlayingArtwork()
-        // Aria's handover into this track. Fire-and-forget: it never gates
-        // playback, so a slow or absent answer costs nothing but a missing line.
+        // Aria's handover into this track. Fire-and-forget: never gates playback.
         if let token = TVAccount.shared.token {
             TVAria.shared.requestTransition(from: previousTrack, to: item, token: token)
         }
@@ -375,55 +199,54 @@ final class TVPlayerModel: ObservableObject {
 
         Task { [weak self] in
             guard let self else { return }
-            let resolved = await self.resolvedAsset(for: item)
-            // The user may have skipped again while a locked track was
-            // downloading — don't stomp over whatever's playing now.
-            guard self.current?.id == item.id else { return }
-            let playerItem = AVPlayerItem(asset: resolved)
-
-            // Stop the system widening stereo music into a virtual surround
-            // field. On by default on an Apple TV, and it smears the stereo
-            // image — the most likely reason the same file sounds less direct
-            // here than on a phone, which never takes this path at all.
-            playerItem.allowedAudioSpatializationFormats =
-                TVAudioSettings.shared.allowSpatialization ? .monoStereoAndMultichannel : .monoAndStereo
-
-            self.player.replaceCurrentItem(with: playerItem)
-            self.player.play()
-
-            // Leading-silence trim, AFTER the item is attached so the seek
-            // lands on a real asset. Analysis decodes the head of the file, so
-            // it runs off the main actor and only applies if this is still the
-            // track playing when it finishes.
-            guard TVAudioSettings.shared.skipSilentIntros,
-                  let assetURL = (resolved as? AVURLAsset)?.url else { return }
-            let trim = await TVSilenceTrim.analyze(url: assetURL, trackID: item.id)
-            guard trim > 0, self.current?.id == item.id else { return }
-            // `await`: inside an async context Swift resolves seek(to:) to the
-            // async overload, which must be awaited rather than fired and
-            // forgotten.
-            await self.player.seek(to: CMTime(seconds: trim, preferredTimescale: 600))
-            TVRemoteLogger.log(category: "audio", event: "silent_intro_skipped",
-                               detail: ["title": item.title, "seconds": round(trim * 100) / 100])
+            guard let file = await TVTrackFiles.shared.file(for: item) else {
+                guard self.loadGeneration == generation else { return }
+                self.isBuffering = false
+                tvError("Couldn't fetch \(item.title)", category: "playback")
+                // Don't loop forever on a queue of unplayable tracks.
+                if self.queue.count > 1 { self.next() }
+                return
+            }
+            guard self.loadGeneration == generation, self.current?.id == item.id else { return }
+            self.currentFile = file
+            // Leading-silence trim (skips dead air before the music).
+            var start: Double = 0
+            if TVAudioSettings.shared.skipSilentIntros, !item.isLocked {
+                start = await TVSilenceTrim.analyze(url: file, trackID: item.id)
+                guard self.loadGeneration == generation else { return }
+            }
+            do {
+                self.applyEngineSettings()
+                self.currentDeck = try self.core.load(path: file.path, startSecs: start, gainDb: 0)
+                self.core.play()
+                self.isPlaying = true
+                if start > 0 {
+                    TVRemoteLogger.log(category: "audio", event: "silent_intro_skipped",
+                                       detail: ["title": item.title, "seconds": round(start * 100) / 100])
+                }
+            } catch {
+                tvError("Engine couldn't open \(item.title): \(error)", category: "playback")
+                TVRemoteLogger.logError(category: "playback", event: "playback_failed", message: "\(error)")
+                if self.queue.count > 1 { self.next() }
+            }
+            self.isBuffering = false
+            // Get the next file in early so the hand-over never waits on the network.
+            if let n = self.nextIndexForTransition(), self.queue.indices.contains(n) {
+                await TVTrackFiles.shared.prefetch(self.queue[n])
+            }
         }
     }
 
-    // MARK: Crossfade
-
-    /// Only the natural end of the *active* player's item reaches here — if
-    /// a crossfade already claimed this transition (`hasCrossfadedForCurrentTrack`),
-    /// `completeCrossfade` handles advancing instead, so this no-ops to avoid
-    /// double-advancing.
-    private func handleNaturalEnd() {
-        guard !hasCrossfadedForCurrentTrack else { return }
-        advanceOnEnd()
+    /// Engine settings the TV exposes (see TVAudioSettings).
+    func applyEngineSettings() {
+        let s = TVAudioSettings.shared
+        core.setEqWith(gainsDb: s.eqBands, enabled: s.eqEnabled, loudnessMatch: true)
+        core.setEffects(reverbWet: s.reverbWet, reverbPreset: "mediumRoom", mono: false, nightMode: s.nightMode)
     }
 
+    // MARK: Transitions (gapless / crossfade, done by the engine)
+
     /// The plan for the transition out of the current track.
-    ///
-    /// Computed from the same inputs in both places it is needed — the trigger
-    /// and the fade itself — so the moment the fade starts and how long it runs
-    /// can never disagree.
     private func currentTransitionPlan(into nextItem: TVPlayable) -> TVAutoCrossfade.Plan {
         guard TVAudioSettings.shared.autoCrossfade else {
             return TVAutoCrossfade.Plan(duration: crossfadeDuration,
@@ -431,10 +254,8 @@ final class TVPlayerModel: ObservableObject {
                                         reason: "auto-off")
         }
         // Only measured locally when the server has not profiled this track yet.
-        let tail: Double? = current?.transitionProfile == nil
-            ? (player.currentItem?.asset as? AVURLAsset).flatMap {
-                TVTailLevel.measure(url: $0.url, duration: duration)
-              }
+        let tail: Double? = (current?.transitionProfile == nil && current?.isLocked == false)
+            ? currentFile.flatMap { TVTailLevel.measure(url: $0, duration: duration) }
             : nil
         return TVAutoCrossfade.plan(
             outgoingDuration: duration,
@@ -447,132 +268,99 @@ final class TVPlayerModel: ObservableObject {
         )
     }
 
-    /// How far before the end of the file the fade should begin.
-    private func pendingTransitionLead() -> TimeInterval {
-        guard let nextIndex = nextIndexForCrossfade(), queue.indices.contains(nextIndex) else {
-            return crossfadeDuration
-        }
-        return currentTransitionPlan(into: queue[nextIndex]).startBefore
-    }
-
-    private func nextIndexForCrossfade() -> Int? {
-        guard crossfadeEnabled, queue.count > 1, repeatMode != .one else { return nil }
+    /// The track that plays after this one on its own (repeat-one: itself).
+    private func nextIndexForTransition() -> Int? {
+        guard !queue.isEmpty else { return nil }
+        if repeatMode == .one { return currentIndex }
         if currentIndex + 1 < queue.count { return currentIndex + 1 }
         if repeatMode == .all { return 0 }
         return nil
     }
 
-    private func checkCrossfadeTrigger() {
-        // The window now includes the outgoing track's TRAILING SILENCE.
-        //
-        // Triggering at `duration - fade` assumes the track is still playing
-        // that close to the end. Measured across a real library it often is not:
-        // a third of tracks carry more than 1.5s of dead air and one had
-        // thirty-eight seconds, so the "crossfade" was partly or entirely the
-        // next track fading up over nothing. Starting earlier by exactly the
-        // amount of silence puts the overlap back on music.
-        let lead = pendingTransitionLead()
-        guard !hasCrossfadedForCurrentTrack, duration > lead,
-              duration - position <= lead,
-              nextIndexForCrossfade() != nil
-        else { return }
-        hasCrossfadedForCurrentTrack = true
-        beginCrossfade()
-    }
-
-    private func beginCrossfade() {
-        guard let nextIndex = nextIndexForCrossfade(), queue.indices.contains(nextIndex) else { return }
+    private func checkTransition() {
+        guard !transitionArmed, duration > 1, let nextIndex = nextIndexForTransition(),
+              queue.indices.contains(nextIndex) else { return }
         let nextItem = queue[nextIndex]
-        let outgoing = player
-        let incoming = inactivePlayer
-
-        incoming.pause()
-        incoming.volume = 0
-
-        activeCrossfadeDuration = currentTransitionPlan(into: nextItem).duration
-
-        tvLog("Crossfade started into: \(nextItem.title)", category: "playback")
-        let plan = currentTransitionPlan(into: nextItem)
-        TVRemoteLogger.log(
-            category: "playback", event: "crossfade_started",
-            detail: ["into": nextItem.title,
-                     "seconds": round(plan.duration * 10) / 10,
-                     "startBefore": round(plan.startBefore * 10) / 10,
-                     // Why this length — a transition that sounds wrong is very
-                     // hard to reason about after the fact without it.
-                     "reason": plan.reason,
-                     "auto": TVAudioSettings.shared.autoCrossfade]
-        )
-
-        let steps = 30
-        let stepNanoseconds = UInt64(activeCrossfadeDuration / Double(steps) * 1_000_000_000)
-        crossfadeTask = Task { [weak self] in
+        let remaining = duration - position
+        let crossfade = crossfadeEnabled && queue.count > 1 && repeatMode != .one
+        let plan = crossfade ? currentTransitionPlan(into: nextItem) : nil
+        let lead = plan.map { $0.startBefore } ?? gaplessLead
+        guard remaining <= lead, duration > lead else { return }
+        transitionArmed = true
+        let deck = currentDeck
+        Task { [weak self] in
             guard let self else { return }
-            let resolved = await self.resolvedAsset(for: nextItem)
-            guard !Task.isCancelled else { return }
-            incoming.replaceCurrentItem(with: AVPlayerItem(asset: resolved))
-            incoming.play()
-            for i in 0...steps {
-                guard !Task.isCancelled else { return }
-                let t = Double(i) / Double(steps)
-                // Equal-power curve so the perceived combined loudness stays
-                // roughly constant through the fade, rather than dipping in
-                // the middle the way a plain linear crossfade would.
-                outgoing.volume = Float(cos(t * .pi / 2))
-                incoming.volume = Float(sin(t * .pi / 2))
-                try? await Task.sleep(nanoseconds: stepNanoseconds)
+            guard let file = await TVTrackFiles.shared.file(for: nextItem),
+                  self.currentDeck == deck, self.transitionArmed else { return }
+            do {
+                if let plan {
+                    let id = try self.core.crossfadeTo(path: file.path, secs: plan.duration, startSecs: 0,
+                                                       gainDb: 0, equalPower: true, tempoMatch: 0)
+                    self.pendingNext = (id, nextIndex, true)
+                    tvLog("Crossfade started into: \(nextItem.title)", category: "playback")
+                    TVRemoteLogger.log(category: "playback", event: "crossfade_started",
+                                       detail: ["into": nextItem.title, "seconds": round(plan.duration * 10) / 10,
+                                                "startBefore": round(plan.startBefore * 10) / 10,
+                                                "reason": plan.reason, "auto": TVAudioSettings.shared.autoCrossfade])
+                } else {
+                    let id = try self.core.queueNext(path: file.path, gainDb: 0)
+                    self.pendingNext = (id, nextIndex, false)
+                }
+            } catch {
+                tvWarn("Couldn't queue \(nextItem.title): \(error)", category: "playback")
             }
-            guard !Task.isCancelled else { return }
-            self.completeCrossfade(to: nextIndex)
         }
     }
 
-    private func completeCrossfade(to index: Int) {
-        logPlayForCurrentTrackIfNeeded()
-        let finishedOutgoing = player
-        activeIsA.toggle()
-        currentIndex = index
-        position = 0
-        duration = 0
-        isBuffering = false
-        hasCrossfadedForCurrentTrack = false
-        crossfadeTask = nil
-        player.volume = 1
-        finishedOutgoing.pause()
-        finishedOutgoing.replaceCurrentItem(with: nil)
-        loadLyrics(for: queue[index])
-        let newItem = queue[index]
-        tvBreadcrumb("Crossfaded to: \(newItem.title)")
-        TVRemoteLogger.log(category: "playback", event: "track_started",
-                            detail: ["title": newItem.title, "artist": newItem.artist, "via": "crossfade"])
-        updateNowPlayingInfo()
-        updateNowPlayingArtwork()
+    /// Drops a queued / pending transition (skip, seek, queue edits).
+    private func cancelTransition() {
+        if pendingNext != nil, pendingNext?.crossfade == false { core.clearNext() }
+        pendingNext = nil
+        transitionArmed = false
     }
 
-    /// Stops and silences an in-flight crossfade (the not-yet-promoted
-    /// incoming player is fully paused/cleared, not just volume-reset —
-    /// leaving it playing at any nonzero volume would mean two tracks
-    /// audible at once until something else resolved it). Safe to call any
-    /// time; a no-op when no crossfade is in flight.
-    private func cancelCrossfade() {
-        guard crossfadeTask != nil else { return }
-        crossfadeTask?.cancel()
-        crossfadeTask = nil
-        hasCrossfadedForCurrentTrack = false
-        player.volume = 1
-        inactivePlayer.pause()
-        inactivePlayer.replaceCurrentItem(with: nil)
-        inactivePlayer.volume = 1
+    // MARK: Engine events
+
+    func engineTrackStarted(id: UInt64) {
+        guard let next = pendingNext, next.deck == id, queue.indices.contains(next.index) else { return }
+        logPlayForCurrentTrackIfNeeded()
+        currentIndex = next.index
+        currentDeck = id
+        pendingNext = nil
+        transitionArmed = false
+        position = 0
+        duration = queue[next.index].durationSeconds
+        let item = queue[next.index]
+        previousTrack = item
+        loadLyrics(for: item)
+        tvBreadcrumb("\(next.crossfade ? "Crossfaded" : "Gapless") to: \(item.title)")
+        TVRemoteLogger.log(category: "playback", event: "track_started",
+                            detail: ["title": item.title, "artist": item.artist, "via": next.crossfade ? "crossfade" : "gapless"])
+        updateNowPlayingInfo()
+        updateNowPlayingArtwork()
+        if let n = nextIndexForTransition(), queue.indices.contains(n) {
+            Task { await TVTrackFiles.shared.prefetch(queue[n]) }
+        }
+    }
+
+    func engineTrackEnded(id: UInt64) {
+        guard id == currentDeck else { return }
+        isPlaying = false
+        advanceOnEnd()
+    }
+
+    func engineTrackFailed(id: UInt64) {
+        guard id == currentDeck || id == pendingNext?.deck else { return }
+        tvError("Playback failed: \(current?.title ?? "?")", category: "playback")
+        TVRemoteLogger.logError(category: "playback", event: "playback_failed", message: "engine decode failure")
+        if id == pendingNext?.deck { pendingNext = nil; transitionArmed = false } else { next() }
     }
 
     // MARK: Play history
 
     /// Reports the currently-loaded track's play to the bridge — called
     /// right before advancing/stopping, while `current`/`position` still
-    /// describe the track that's ending. Skips near-instant skips (<2s of
-    /// real listening) so scrubbing through a queue doesn't inflate stats;
-    /// requires a signed-in token (always true in practice — the player is
-    /// only reachable from behind TVAccount's login gate).
+    /// describe the track that's ending. Skips near-instant skips (<2s).
     private func logPlayForCurrentTrackIfNeeded() {
         guard let item = current, position > 2, let token = TVAccount.shared.token else { return }
         let listenSeconds = Int(position)
@@ -587,26 +375,16 @@ final class TVPlayerModel: ObservableObject {
 
     // MARK: Lyrics
 
-    /// Waits briefly for the asset's real duration to load (used to reject a
-    /// same-titled-but-wrong recording/song — see TVLyricsService) before
-    /// fetching, falling back to an undisambiguated search if it takes too
-    /// long. Re-checks `current?.id == item.id` after every suspension point
-    /// since the user may have skipped tracks while this was waiting/in flight.
+    /// Waits briefly for the real duration (used to reject a same-titled but
+    /// wrong recording — see TVLyricsService) before fetching; re-checks the
+    /// current track after every suspension point.
     private func loadLyrics(for item: TVPlayable) {
         lyricsTask?.cancel()
         lyrics = []
         isLoadingLyrics = true
         lyricsTask = Task { [weak self] in
             guard let self else { return }
-            // Cleared on EVERY exit. It was only cleared on the success path, so
-            // any of the three early returns below — the user skipping tracks
-            // while the duration probe waited, or while the fetch was in flight,
-            // or the task being cancelled outright — left the flag stuck true
-            // for the rest of the session. The UI then showed "loading lyrics"
-            // forever for a track whose fetch had long since been abandoned,
-            // which is indistinguishable from a hung request.
             defer { self.isLoadingLyrics = false }
-
             var waited = 0.0
             while self.duration <= 0, waited < 5, !Task.isCancelled, self.current?.id == item.id {
                 try? await Task.sleep(nanoseconds: 200_000_000)
@@ -617,14 +395,6 @@ final class TVPlayerModel: ObservableObject {
             let fetched = await TVLyricsService.fetch(title: item.title, artist: item.artist, duration: self.duration)
             guard !Task.isCancelled, self.current?.id == item.id else { return }
             self.lyrics = fetched ?? []
-
-            // Whether a lookup MATCHED is the only way to tell "this track has
-            // no lyrics published" from "our query never had a chance" — a
-            // title like "How It's Done (from the Netflix film KPop Demon
-            // Hunters)" carries a parenthetical the lyrics database does not
-            // have. Logging the title we actually searched with, and the
-            // outcome, is what makes that difference measurable instead of a
-            // guess about why the panel is empty.
             TVRemoteLogger.log(
                 category: "lyrics",
                 event: fetched?.isEmpty == false ? "lyrics_matched" : "lyrics_not_found",
@@ -642,82 +412,71 @@ final class TVPlayerModel: ObservableObject {
     }
 
     func togglePlayPause() {
-        if player.timeControlStatus == .playing { player.pause() } else { player.play() }
+        if core.isPlaying() { pausePlayback() } else { resumePlayback() }
     }
 
     /// Manual "skip forward" — always advances (or stops at the end of a
-    /// non-repeating queue), regardless of repeat mode. Repeat-one only
-    /// affects what happens when a track ends on its own; see `advanceOnEnd`.
+    /// non-repeating queue), regardless of repeat mode.
     func next() {
-        cancelCrossfade()
+        cancelTransition()
+        logPlayForCurrentTrackIfNeeded()
         guard currentIndex + 1 < queue.count else {
             if repeatMode == .all, !queue.isEmpty {
-                logPlayForCurrentTrackIfNeeded()
                 currentIndex = 0
                 loadCurrent()
             } else {
-                logPlayForCurrentTrackIfNeeded()
-                player.pause()
+                pausePlayback()
             }
             return
         }
-        logPlayForCurrentTrackIfNeeded()
         currentIndex += 1
         loadCurrent()
     }
 
-    /// Called when the current item finishes playing on its own.
+    /// Called when the current track finished and nothing was queued after it.
     private func advanceOnEnd() {
         if repeatMode == .one {
             logPlayForCurrentTrackIfNeeded()
-            player.seek(to: .zero)
-            player.play()
+            loadCurrent()
             return
         }
         next()
     }
 
-    /// Jumps directly to a track elsewhere in the queue — used by the "Up
-    /// Next" panel so picking a track doesn't require stepping through
-    /// `next()` one at a time.
+    /// Jumps directly to a track elsewhere in the queue (Up Next panel).
     func jump(to index: Int) {
         guard queue.indices.contains(index), index != currentIndex else { return }
-        cancelCrossfade()
+        cancelTransition()
         logPlayForCurrentTrackIfNeeded()
         currentIndex = index
         loadCurrent()
     }
 
     func previous() {
-        cancelCrossfade()
-        // If we're more than 3s in, restart the track instead of skipping back.
-        if position > 3 {
-            player.seek(to: .zero); return
+        // More than 3 s in: back to the start of this track.
+        if position > 3 || currentIndex == 0 {
+            seek(to: 0)
+            return
         }
-        guard currentIndex > 0 else { player.seek(to: .zero); return }
+        cancelTransition()
         logPlayForCurrentTrackIfNeeded()
         currentIndex -= 1
         loadCurrent()
     }
 
-    /// Removes a queued-up track. The currently-playing track can't be
-    /// removed this way — skip to another track first.
+    /// Removes a queued-up track (not the playing one).
     func removeFromQueue(at index: Int) {
         guard queue.indices.contains(index), index != currentIndex else { return }
-        // A removal could invalidate the index an in-flight crossfade is
-        // ramping toward — simplest safe response is to cancel it; the
-        // transition falls back to an instant swap when this track ends.
-        cancelCrossfade()
+        cancelTransition()
         let removedID = queue[index].id
         queue.remove(at: index)
         if index < currentIndex { currentIndex -= 1 }
         originalQueue.removeAll { $0.id == removedID }
     }
 
-    /// Shuffles everything except leaves the currently-playing track findable
-    /// by id afterward (rather than resetting to index 0), so toggling
-    /// shuffle mid-playback doesn't yank the listener to a different track.
+    /// Shuffles everything, keeping the playing track where it is in time.
     func toggleShuffle() {
+        cancelTransition()
         isShuffled.toggle()
         let currentID = current?.id
         queue = isShuffled ? originalQueue.shuffled() : originalQueue
@@ -728,6 +487,7 @@ final class TVPlayerModel: ObservableObject {
     }
 
     func cycleRepeatMode() {
+        cancelTransition()
         repeatMode = repeatMode.next
         TVRemoteLogger.log(category: "playback", event: "repeat_mode_changed", detail: ["mode": "\(repeatMode)"])
     }
@@ -743,9 +503,10 @@ final class TVPlayerModel: ObservableObject {
         sleepTimerTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let remaining = end.timeIntervalSinceNow
-                if remaining <= 0 {
-                    self.player.pause()
+                if end.timeIntervalSinceNow <= 0 {
+                    // A slow fade out rather than a hard stop.
+                    self.core.pause(fadeSecs: 4)
+                    self.isPlaying = false
                     self.sleepTimerEndDate = nil
                     tvBreadcrumb("Sleep timer paused playback")
                     TVRemoteLogger.log(category: "playback", event: "sleep_timer_fired")
@@ -757,10 +518,6 @@ final class TVPlayerModel: ObservableObject {
     }
 
     func cancelSleepTimer() {
-        // `sleepTimerEndDate` (not `sleepTimerTask`) is the accurate "is a
-        // timer genuinely pending" check — the task reference itself stays
-        // non-nil even after firing naturally, which would otherwise log a
-        // misleading "cancelled" event for a timer that already fired.
         guard sleepTimerEndDate != nil else { return }
         sleepTimerTask?.cancel()
         sleepTimerTask = nil
@@ -770,20 +527,13 @@ final class TVPlayerModel: ObservableObject {
 
     func stop() {
         logPlayForCurrentTrackIfNeeded()
-        crossfadeTask?.cancel()
-        crossfadeTask = nil
-        for p in [playerA, playerB] {
-            p.pause()
-            p.replaceCurrentItem(with: nil)
-        }
-        for (p, observer) in timeObservers { p.removeTimeObserver(observer) }
-        timeObservers.removeAll()
-        statusObservations.forEach { $0.invalidate() }
-        statusObservations.removeAll()
-        endObservers.forEach { NotificationCenter.default.removeObserver($0) }
-        endObservers.removeAll()
-        failureObservers.forEach { NotificationCenter.default.removeObserver($0) }
-        failureObservers.removeAll()
+        cancelTransition()
+        loadGeneration += 1
+        core.stop()
+        currentDeck = 0
+        isPlaying = false
+        ticker?.invalidate()
+        ticker = nil
         cancelSleepTimer()
         lyricsTask?.cancel()
         lyricsTask = nil
