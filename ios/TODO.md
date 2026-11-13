@@ -175,7 +175,7 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - Open: verify on device — artwork styles/seekers look and feel, launch dial, LumiFX character effects by ear.
 
 ## Task list (requested 2026-11-12 22:26) — auto-continue armed for 01:25
-- [ ] 1. Auto EQ fully on LumiEQ (catalogue presets, eqAutoPreset, spectral matcher + analyzer correction).
+- [x] 1. Auto EQ fully on LumiEQ (catalogue presets, eqAutoPreset, spectral matcher + analyzer correction).
 - [ ] 2. New app identity: original icon/logo (replace the "S" mark) for iOS, widget, tvOS, watch.
 - [ ] 3. README: only what users need (what it is, install via AltStore/SideStore source, features). No build internals.
 - [ ] 4. Fix the same track appearing twice in Favorites.

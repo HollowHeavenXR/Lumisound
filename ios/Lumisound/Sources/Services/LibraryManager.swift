@@ -188,12 +188,35 @@ final class LibraryManager: ObservableObject {
     var favoriteSongs: [Song] {
         if let cached = favoriteSongsCache { return cached }
         let result = MainThreadActivity.measure("library.favoriteSongs") {
-            allSongs.filter { isFavorite(songID: $0.id) }
+            Self.collapseFavorites(allSongs.filter { isFavorite(songID: $0.id) }, exact: favoriteSongIDs)
         }
         favoriteSongsCache = result
         return result
     }
     private var favoriteSongsCache: [Song]?
+
+    /// One entry per favourite track. The filename fallback in `isFavorite`
+    /// (needed for favourites made on the Apple TV) also matched every other
+    /// copy of the same file — a second folder, a local copy beside the
+    /// cloud entry — so one favourite showed up twice. Keeps, per filename,
+    /// the copy whose id was actually favourited, else one with a local file;
+    /// order is preserved.
+    static func collapseFavorites(_ songs: [Song], exact: Set<String>) -> [Song] {
+        var chosen: [String: Song] = [:]
+        var order: [String] = []
+        for song in songs {
+            let key = favoriteKey(for: song.id)
+            guard let current = chosen[key] else {
+                chosen[key] = song
+                order.append(key)
+                continue
+            }
+            let better = (exact.contains(song.id) && !exact.contains(current.id))
+                || (exact.contains(song.id) == exact.contains(current.id) && current.url?.isFileURL != true && song.url?.isFileURL == true)
+            if better { chosen[key] = song }
+        }
+        return order.compactMap { chosen[$0] }
+    }
 
     init(persistence: PersistenceService = .shared, artwork: ArtworkService = .shared) {
         self.persistence = persistence
