@@ -1,5 +1,3 @@
-import DSWaveformImage
-import DSWaveformImageViews
 import SwiftUI
 
 // MARK: - Lumisound seekers
@@ -510,10 +508,7 @@ struct WaveformScrubberView: View {
     @State private var drag: Double?
 
     private func wave(_ color: UIColor) -> some View {
-        WaveformView(audioURL: url, configuration: Waveform.Configuration(
-            style: .striped(.init(color: color, width: 2, spacing: 1.5)),
-            verticalScalingFactor: 0.9
-        ))
+        RustWaveformView(url: url, color: Color(color))
     }
 
     var body: some View {
@@ -544,5 +539,58 @@ struct WaveformScrubberView: View {
             .frame(height: 60)
             SeekerTimes(shown: m.shown, duration: duration)
         }
+    }
+}
+
+// MARK: Waveform (Rust peaks)
+
+/// Peaks per track from the Lumisound core (`waveformPeaks`: 200 values,
+/// 0…1), decoded once per file off the main thread and shared by every
+/// waveform drawn for it (the mirror seeker draws four).
+@MainActor
+final class WaveformPeaksCache {
+    static let shared = WaveformPeaksCache()
+    private var done: [String: [Float]] = [:]
+    private var inFlight: [String: Task<[Float], Never>] = [:]
+
+    func peaks(for url: URL) async -> [Float] {
+        let key = url.path
+        if let p = done[key] { return p }
+        if let t = inFlight[key] { return await t.value }
+        let t = Task.detached(priority: .utility) { () -> [Float] in
+            (waveformPeaks(path: key, cacheDir: CoreAudio.unlockDir) ?? []).map(Float.init)
+        }
+        inFlight[key] = t
+        let p = await t.value
+        inFlight[key] = nil
+        done[key] = p
+        if done.count > 64 { done.removeAll(keepingCapacity: true); done[key] = p }
+        return p
+    }
+}
+
+/// Striped waveform bars (2 pt wide, 1.5 pt apart) from the Rust peaks.
+struct RustWaveformView: View {
+    let url: URL
+    let color: Color
+    @State private var peaks: [Float] = []
+
+    var body: some View {
+        Canvas { ctx, size in
+            guard !peaks.isEmpty else { return }
+            let bar: CGFloat = 2, gap: CGFloat = 1.5
+            let count = max(1, Int((size.width + gap) / (bar + gap)))
+            let loudest = CGFloat(max(peaks.max() ?? 1, 0.05))
+            for i in 0..<count {
+                // Max over the peaks this bar covers, so short hits aren't lost.
+                let a = i * peaks.count / count, b = max(a + 1, (i + 1) * peaks.count / count)
+                let v = CGFloat(peaks[a..<min(b, peaks.count)].max() ?? 0) / loudest
+                let h = max(1, v * size.height * 0.9)
+                let rect = CGRect(x: CGFloat(i) * (bar + gap), y: size.height - h, width: bar, height: h)
+                ctx.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(color))
+            }
+        }
+        .task(id: url) { peaks = await WaveformPeaksCache.shared.peaks(for: url) }
+        .accessibilityHidden(true)
     }
 }

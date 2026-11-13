@@ -66,8 +66,9 @@ logic around them is kept minimal and calls into the core.
 ## 4. Intentionally still Swift
 
 - AVAudioEngine/AVPlayer path in `AudioPlayerManager`: fallback only, for Apple
-  Music `ipod-library://` items (readable only through AVFoundation), files the
-  core can't decode, and the Settings toggle.
+  Music `ipod-library://` items (readable only through AVFoundation) and a file
+  the core fails to open. The Settings toggle is gone (2026-11-13): every
+  importable format decodes in the core (rust/media `tests/format_matrix.rs`).
 - AVFoundation tag reading in `DocumentImportService`: only for files lofty
   can't parse (rules applied are the core's), plus video first-frame thumbnails.
 - Image caches (`CachedAsyncImage`, `TVAuthImage`): `URLCache`-backed UI caches.
@@ -76,3 +77,30 @@ logic around them is kept minimal and calls into the core.
 - `PodcastDownloadManager` scheduling, `BackgroundDownloadManager`
   (`UIApplication` background tasks); transfers themselves are the core's.
 - Debounce timers and `Task` orchestration that glue SwiftUI state to core calls.
+
+## 5. Audit 2026-11-13 (task 6)
+
+Moved / replaced:
+
+| Was | Now |
+|---|---|
+| DSWaveformImage package (waveform seeker) | `waveformPeaks` (rust/core analysis) drawn by `RustWaveformView`; package removed |
+| Library search: three `localizedCaseInsensitiveContains` per song | `LibrarySearch` (rust/core/src/search.rs) |
+| AVFoundation for ALAC-in-CAF, HE-AAC, 5.1 AAC, MP2 (engine fallback) | rust/media `alac.rs`, `aac.rs` (syom), symphonia mp1/mp2 |
+| "Lumisound Audio Engine" toggle (system engine as an option) | engine always on |
+
+Already Rust-first, AVFoundation only as a last resort (now effectively unreachable, kept as a safety net):
+`CorruptFileFinderService` validation (core decode check first), `BPMAnalyzerService`
+(core decode + bpm), stream playback (download → Rust deck).
+
+Still Apple, by necessity: AVAudioSession / MediaPlayer now-playing & remote commands,
+ActivityKit, WidgetKit, AppIntents, CarPlay, HealthKit, WatchConnectivity, Keychain
+(Security), LocalAuthentication, AuthenticationServices, UserNotifications,
+BackgroundTasks, AVAudioRecorder (microphone capture), PhotosUI.
+
+Still Apple, could move later:
+- `AVSpeechSynthesizer` (AI DJ voice): needs an on-device TTS model in Rust.
+- `AVAssetExportSession` / `AVAssetWriter` exports (clips, lyric videos, M4A
+  re-encodes): needs an AAC/video encoder in Rust (syom can encode AAC; video stays Apple).
+- `CryptoKit.SHA256` in two places (avatar / folder cover hashing): trivial, low value.
+- `GroupActivities` (SharePlay): task 12 replaces it with Lumisound's own Listen Together.
