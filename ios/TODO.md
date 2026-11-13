@@ -191,5 +191,5 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - [ ] 12. SharePlay / Listen Together: custom system (no GroupActivities dependency).
 - [ ] 13. After every system is custom: run tests against cloud tracks.
 - [ ] 14. Optimize app responsiveness.
-- [ ] 15. Afterwards: admin/owner email voxellickinetix@icloud.com for SwarmPanel, Nyxframe and Lumisound (bridge admin).
+- [x] 15. Owner/admin email voxellickinetix@icloud.com: SwarmPanel .env SWARM_PANEL_SITE_OWNER_EMAIL (new first, old kept) + container recreated; Nyxframe SITE_OWNER_EMAILS list (pushed, redeployed); Lumisound admin is the operator account (id ca8a4c53…), its email set to voxellickinetix@icloud.com.
 - [x] 16. Git: global identity VoxeliseStudios <voxellickinetix@icloud.com>; remotes moved to github.com/VoxeliseStudios.
