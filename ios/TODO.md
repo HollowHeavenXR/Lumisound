@@ -187,3 +187,9 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - [ ] 9. tvOS: complete functional, visual and structural overhaul of every screen; anything new that iOS lacks
        must be ported to iOS too.
 - [ ] 10. Tests for every changed custom system; release; verify IPA signing + App Group.
+- [ ] 11. Library search: custom search system (songs, albums, artists, playlists, lyrics…) in Rust, new UI.
+- [ ] 12. SharePlay / Listen Together: custom system (no GroupActivities dependency).
+- [ ] 13. After every system is custom: run tests against cloud tracks.
+- [ ] 14. Optimize app responsiveness.
+- [ ] 15. Afterwards: admin/owner email voxellickinetix@icloud.com for SwarmPanel, Nyxframe and Lumisound (bridge admin).
+- [x] 16. Git: global identity VoxeliseStudios <voxellickinetix@icloud.com>; remotes moved to github.com/VoxeliseStudios.
