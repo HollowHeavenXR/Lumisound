@@ -11,86 +11,65 @@ struct GlassSettingsView: View {
     @ObservedObject private var glass = GlassSettings.shared
 
     var body: some View {
-        List {
-            // Live preview
-            Section {
-                previewCard
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .listRowBackground(Color.clear)
-            } header: {
-                sectionHeader("Preview")
-            }
-
-            Section {
-                Toggle(isOn: $glass.useAccentTint) {
-                    Label("Use App Accent Color", systemImage: "paintpalette")
-                        .foregroundStyle(AppTheme.textPrimary)
-                }
-                .tint(AppTheme.dynamicAccent)
-
-                if !glass.useAccentTint {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Label("Tone", systemImage: "drop.halffull")
-                                .foregroundStyle(AppTheme.textSecondary)
-                                .font(AppTheme.bodyFont(size: 14))
-                            Spacer()
-                            Circle()
-                                .fill(Color(hue: glass.tintHue, saturation: 0.55, brightness: 0.92))
-                                .frame(width: 18, height: 18)
-                                .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
+        LKPage(title: "Liquid Glass", subtitle: "Tint and translucency of every glass surface.", icon: "circle.hexagongrid.fill", tint: .cyan, showsHero: false) {
+            // Preview floats over a colourful backdrop so translucency is visible.
+            ZStack {
+                LinearGradient(colors: [.pink, .purple, .blue, .teal], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .overlay(
+                        HStack(spacing: 18) {
+                            ForEach(0..<6, id: \.self) { i in
+                                Image(systemName: ["music.note", "waveform", "headphones", "star.fill", "heart.fill", "play.fill"][i])
+                                    .font(.system(size: 26, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.55))
+                            }
                         }
-                        // Hue gradient track behind the slider so the user sees
-                        // exactly which tone each position maps to.
+                    )
+                previewCard.padding(28)
+            }
+            .frame(height: 230)
+            .clipShape(RoundedRectangle(cornerRadius: LK.corner, style: .continuous))
+
+            LKCard(title: "Tint") {
+                LKToggle(icon: "paintpalette", tint: AppTheme.dynamicAccent, title: "Follow the app accent", isOn: $glass.useAccentTint)
+                if !glass.useAccentTint {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 6) {
+                            ForEach(Array(stride(from: 0.0, to: 1.0, by: 1.0 / 9)), id: \.self) { h in
+                                Button { glass.tintHue = h } label: {
+                                    Circle()
+                                        .fill(Color(hue: h, saturation: 0.55, brightness: 0.92))
+                                        .frame(width: 26, height: 26)
+                                        .overlay(Circle().strokeBorder(.white, lineWidth: abs(glass.tintHue - h) < 0.02 ? 2.5 : 0))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                         Slider(value: $glass.tintHue, in: 0...1)
-                            .tint(AppTheme.dynamicAccent)
+                            .tint(Color(hue: glass.tintHue, saturation: 0.55, brightness: 0.92))
                             .background(
-                                LinearGradient(
-                                    colors: stride(from: 0.0, through: 1.0, by: 0.1).map {
-                                        Color(hue: $0, saturation: 0.55, brightness: 0.92)
-                                    },
-                                    startPoint: .leading, endPoint: .trailing
-                                )
-                                .frame(height: 4)
-                                .clipShape(Capsule())
-                                .padding(.horizontal, 2)
+                                LinearGradient(colors: stride(from: 0.0, through: 1.0, by: 0.1).map { Color(hue: $0, saturation: 0.55, brightness: 0.92) },
+                                               startPoint: .leading, endPoint: .trailing)
+                                    .frame(height: 4).clipShape(Capsule()).padding(.horizontal, 2)
                             )
                     }
+                    .padding(.leading, 42)
+                    .padding(.vertical, 6)
                 }
-
-                sliderRow(
-                    title: "Tint Strength", icon: "circle.lefthalf.filled",
-                    value: $glass.tintStrength, label: "\(Int(glass.tintStrength * 100))%"
-                )
-
-                sliderRow(
-                    title: "Translucency", icon: "square.on.square.dashed",
-                    value: $glass.translucency, label: "\(Int(glass.translucency * 100))%"
-                )
-            } header: {
-                sectionHeader("Liquid Glass")
-            } footer: {
-                Text("Adjusts the tint and translucency of glass surfaces throughout the app — song cards, the mini-player, toasts and floating buttons. Translucency applies on iOS versions before the system Liquid Glass material.")
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
-            .listRowBackground(tintedRowBackground(.purple))
-
-            Section {
-                Button(role: .destructive) {
-                    glass.resetToDefaults()
-                } label: {
-                    Label("Reset to Defaults", systemImage: "arrow.counterclockwise")
+                LKDivider()
+                LKControlRow(icon: "circle.lefthalf.filled", tint: .cyan, title: "Tint strength", value: "\(Int(glass.tintStrength * 100))%") {
+                    Slider(value: $glass.tintStrength, in: 0...1)
                 }
             }
-            .listRowBackground(tintedRowBackground(.purple))
+            LKCard(title: "Material", footer: "Translucency applies on iOS versions before the system Liquid Glass material.") {
+                LKControlRow(icon: "square.on.square.dashed", tint: .cyan, title: "Translucency", value: "\(Int(glass.translucency * 100))%") {
+                    Slider(value: $glass.translucency, in: 0...1)
+                }
+            }
+            LKPrimaryButton(title: "Reset to Defaults", icon: "arrow.counterclockwise", tint: .gray, prominent: false) {
+                glass.resetToDefaults()
+            }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
-        .navigationTitle("Liquid Glass")
-        .navigationBarTitleDisplayMode(.inline)
+        .animation(.easeInOut(duration: 0.2), value: glass.useAccentTint)
     }
 
     private var previewCard: some View {

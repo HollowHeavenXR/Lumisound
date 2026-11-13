@@ -14,8 +14,8 @@ struct NotificationsView: View {
     @State private var isLoading = false
 
     var body: some View {
-        List {
-            Section {
+        LKPage(title: "Inbox", subtitle: "Everything Lumisound has told you.", icon: "bell.fill", tint: .orange) {
+            LKSection {
                 Toggle(isOn: $notificationService.isEnabled) {
                     Label("Device Notifications", systemImage: "bell.badge")
                         .foregroundStyle(AppTheme.textPrimary)
@@ -32,7 +32,6 @@ struct NotificationsView: View {
                     .font(AppTheme.bodyFont(size: 12))
                     .foregroundStyle(AppTheme.textSecondary)
             }
-            .listRowBackground(AppTheme.surface)
 
             if isLoading && notifications.isEmpty {
                 HStack {
@@ -40,14 +39,12 @@ struct NotificationsView: View {
                     ProgressView()
                     Spacer()
                 }
-                .listRowBackground(Color.clear)
             } else if notifications.isEmpty {
                 EmptyStateView(
                     icon: "bell",
                     title: "No notifications",
                     message: "Updates about achievements, subscriptions, and shared playlists will show up here."
                 )
-                .listRowBackground(Color.clear)
             } else {
                 ForEach(notifications) { notification in
                     HStack(alignment: .top, spacing: 10) {
@@ -77,12 +74,9 @@ struct NotificationsView: View {
                         guard notification.isUnread else { return }
                         markRead(notification)
                     }
-                    .listRowBackground(AppTheme.surface.opacity(0.5))
                 }
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(Color.clear.ignoresSafeArea())
         .navigationTitle("Notifications")
         .navigationBarTitleDisplayMode(.inline)

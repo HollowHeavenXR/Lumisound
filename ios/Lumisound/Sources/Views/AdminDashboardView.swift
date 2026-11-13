@@ -48,8 +48,8 @@ struct AdminDashboardView: View {
     }
 
     private var dashboard: some View {
-        List {
-            Section("Overview") {
+        LKPage(title: "Admin", subtitle: "Operator tools for the Lumisound server.", icon: "server.rack", tint: .gray) {
+            LKSection("Overview") {
                 if let o = account.adminOverview {
                     overviewGrid(o)
                 } else {
@@ -58,9 +58,10 @@ struct AdminDashboardView: View {
                 NavigationLink(destination: AdminLogsView()) {
                     Label("Browse Audit Logs", systemImage: "doc.text.magnifyingglass")
                 }
+                .buttonStyle(LKRowLinkStyle())
             }
 
-            Section("Download Jobs (last 24h)") {
+            LKSection("Download Jobs (last 24h)") {
                 if let o = account.adminOverview {
                     ForEach(o.downloadJobs24h.sorted(by: { $0.key < $1.key }), id: \.key) { status, count in
                         HStack {
@@ -73,7 +74,7 @@ struct AdminDashboardView: View {
                 }
             }
 
-            Section {
+            LKSection {
                 if account.adminDownloadJobs.isEmpty {
                     Text("No jobs recorded.")
                         .foregroundStyle(AppTheme.textSecondary)
@@ -108,7 +109,7 @@ struct AdminDashboardView: View {
                 }
             }
 
-            Section {
+            LKSection {
                 if account.adminUsers.isEmpty {
                     Text("No users found.")
                         .foregroundStyle(AppTheme.textSecondary)
@@ -121,7 +122,7 @@ struct AdminDashboardView: View {
                 Text("Users")
             }
 
-            Section {
+            LKSection {
                 if isCheckingIntegrity {
                     HStack {
                         ProgressView()
@@ -150,7 +151,7 @@ struct AdminDashboardView: View {
                 Text("Storage Integrity")
             }
 
-            Section {
+            LKSection {
                 if account.adminErrors.isEmpty {
                     Text("No errors logged.")
                         .foregroundStyle(AppTheme.textSecondary)

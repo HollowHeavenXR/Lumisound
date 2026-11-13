@@ -9,53 +9,41 @@ struct ListeningGoalView: View {
 
     @State private var draftMinutes: Int = 300 // 5 hours, a reasonable default suggestion
 
-    var body: some View {
-        List {
-            if let target = goal.targetMinutes {
-                Section {
-                    progressCard(target: target)
-                } header: {
-                    Text("This Week")
-                }
-                .listRowBackground(Color.clear)
-                .listSectionSeparator(.hidden)
+    private let quickGoals = [120, 300, 600, 900, 1200]
 
-                Section {
-                    Stepper("Goal: \(formatted(target))", value: Binding(
-                        get: { target },
-                        set: { goal.targetMinutes = $0 }
-                    ), in: 30...4200, step: 30)
-                    Button(role: .destructive) {
-                        goal.targetMinutes = nil
-                    } label: {
-                        Text("Remove Goal")
+    var body: some View {
+        LKPage(title: "Listening Goal", subtitle: "A weekly target, measured from the last 7 days.", icon: "target", tint: .green) {
+            if let target = goal.targetMinutes {
+                progressCard(target: target)
+                    .padding(.vertical, 8)
+                    .background(LKCardBackground(tint: goal.isGoalMet ? .green : nil))
+                LKCard(title: "Adjust") {
+                    LKControlRow(icon: "target", tint: .green, title: "Weekly goal", value: formatted(target)) {
+                        Stepper("", value: Binding(get: { target }, set: { goal.targetMinutes = $0 }), in: 30...4200, step: 30).labelsHidden()
                     }
+                    LKDivider()
+                    LKButtonRow(icon: "xmark.circle", title: "Remove Goal", destructive: true) { goal.targetMinutes = nil }
                 }
-                .listRowBackground(AppTheme.surface)
             } else {
-                Section {
-                    Stepper("Target: \(formatted(draftMinutes))", value: $draftMinutes, in: 30...4200, step: 30)
-                    Button {
-                        goal.targetMinutes = draftMinutes
-                    } label: {
-                        Label("Set Weekly Goal", systemImage: "target")
-                            .frame(maxWidth: .infinity)
+                LKCard(title: "Pick a goal") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(quickGoals, id: \.self) { m in
+                                    Button { draftMinutes = m } label: { LKChip(title: formatted(m), selected: draftMinutes == m, tint: .green) }
+                                        .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                        LKControlRow(icon: "slider.horizontal.3", tint: .green, title: "Custom", value: formatted(draftMinutes)) {
+                            Stepper("", value: $draftMinutes, in: 30...4200, step: 30).labelsHidden()
+                        }
+                        Text("That's about \(formatted(draftMinutes / 7)) a day.").font(.caption).foregroundStyle(AppTheme.textSecondary)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(AppTheme.dynamicAccent)
-                } header: {
-                    Text("New Goal")
-                } footer: {
-                    Text("Pick a weekly listening-time target. Progress is measured from your real listening over the last 7 days.")
                 }
-                .listRowBackground(AppTheme.surface)
+                LKPrimaryButton(title: "Set Weekly Goal", icon: "target", tint: .green) { goal.targetMinutes = draftMinutes }
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
-        .navigationTitle("Listening Goal")
-        .navigationBarTitleDisplayMode(.inline)
         .task { await goal.refresh(account: account) }
         .refreshable { await goal.refresh(account: account) }
     }

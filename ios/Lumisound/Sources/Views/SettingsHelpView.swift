@@ -27,13 +27,14 @@ private struct HelpCategory: Identifiable {
 struct SettingsHelpView: View {
 
     var body: some View {
-        List {
-            Section {
+        LKPage(title: "Help & Guide", subtitle: "What every Lumisound feature does, and where to find it.", icon: "book.fill", tint: .blue) {
+            LKSection {
                 ForEach(Self.categories) { category in
                     NavigationLink(destination: SettingsHelpDetailView(category: category)) {
                         Label(category.title, systemImage: category.icon)
                             .foregroundStyle(AppTheme.textPrimary)
                     }
+                    .buttonStyle(LKRowLinkStyle())
                 }
             } header: {
                 sectionHeader("Topics")
@@ -42,12 +43,9 @@ struct SettingsHelpView: View {
                     .font(AppTheme.bodyFont(size: 12))
                     .foregroundStyle(AppTheme.textSecondary)
             }
-            .listRowBackground(tintedRowBackground(.blue))
         }
         // Without an explicit style this defaults to a grouped-card look —
         // see FavoritesView's identical fix.
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(GalleryBackgroundView().ignoresSafeArea())
         .navigationTitle("Help & Feature Guide")
         .navigationBarTitleDisplayMode(.large)
@@ -680,18 +678,15 @@ private struct SettingsHelpDetailView: View {
     let category: HelpCategory
 
     var body: some View {
-        List {
-            Section {
+        LKScroll {
+            LKSection {
                 ForEach(category.topics) { topic in
                     helpRow(icon: topic.icon, title: topic.title, body: topic.body)
                 }
             }
-            .listRowBackground(tintedRowBackground(.blue))
         }
         // Without an explicit style this defaults to a grouped-card look —
         // see FavoritesView's identical fix.
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(GalleryBackgroundView().ignoresSafeArea())
         .navigationTitle(category.title)
         .navigationBarTitleDisplayMode(.large)

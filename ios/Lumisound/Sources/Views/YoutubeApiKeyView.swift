@@ -24,90 +24,70 @@ struct YoutubeApiKeyView: View {
     @AppStorage("youtube_api_key_quota_exceeded") private var quotaExceeded = false
 
     var body: some View {
-        List {
-            Section {
-                if status?.configured == true {
-                    LabeledContent("API Key") {
-                        Text(status?.apiKey ?? "")
-                            .font(AppTheme.monoFont(size: 12))
-                            .foregroundStyle(AppTheme.textSecondary)
-                    }
-                    .foregroundStyle(AppTheme.textPrimary)
+        LKPage(title: "YouTube API Key", subtitle: "Resolve whole playlists, not just the first ~205 videos.", icon: "key.fill", tint: .red) {
+            // The key as a credential card.
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Image(systemName: "play.rectangle.fill").font(.title2).foregroundStyle(.white)
+                    Spacer()
+                    Text(status?.configured == true ? (quotaExceeded ? "QUOTA USED UP" : "ACTIVE") : "NOT SET")
+                        .font(.system(size: 10, weight: .heavy)).kerning(1).foregroundStyle(.white.opacity(0.85))
                 }
-
-                // Entry field — hidden once a key is configured, unless that
-                // key's quota has been exhausted (so the user can replace it).
-                if status?.configured != true || quotaExceeded {
-                    TextField("AIza...", text: $apiKey)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .foregroundStyle(AppTheme.textPrimary)
-                }
-            } header: {
-                sectionHeader("YouTube Data API Key")
-            } footer: {
-                Text("Lets full YouTube playlists (beyond ~205 tracks) resolve completely when you import or play them. Create a free key in the Google Cloud Console by enabling \"YouTube Data API v3\" and generating an API key under Credentials.")
+                Text(status?.configured == true ? (status?.apiKey ?? "•••••") : "AIza••••••••••••••••••")
+                    .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                Text("YouTube Data API v3").font(.caption2).foregroundStyle(.white.opacity(0.8))
             }
-            .listRowBackground(tintedRowBackground(.yellow))
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                LinearGradient(colors: status?.configured == true ? [.red, .orange] : [.gray, .gray.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+            )
+            .shadow(color: .red.opacity(status?.configured == true ? 0.3 : 0), radius: 14, x: 0, y: 6)
 
             if status?.configured != true || quotaExceeded {
-                Section {
-                    Button {
-                        save()
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                        } else {
-                            Text(didSave ? "Saved" : "Save")
-                        }
-                    }
+                LKCard(title: quotaExceeded ? "Replace the key" : "Add your key") {
+                    LKField(placeholder: "AIza…", text: $apiKey, mono: true).padding(.vertical, 4)
+                }
+                LKPrimaryButton(title: didSave ? "Saved" : "Save Key", icon: didSave ? "checkmark" : "square.and.arrow.down", tint: .red, busy: isSaving) { save() }
                     .disabled(isSaving || apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .foregroundStyle(AppTheme.dynamicAccent)
+                LKCard(title: "Get a free key") {
+                    steps(["Open the Google Cloud Console and create a project.",
+                           "Enable \"YouTube Data API v3\" for it.",
+                           "Credentials → Create credentials → API key.",
+                           "Paste it above."], tint: .red)
                 }
-                .listRowBackground(tintedRowBackground(.yellow))
             }
-
-            if let errorText {
-                Section {
-                    Text(errorText)
-                        .font(.footnote)
-                        .foregroundStyle(AppTheme.error)
-                }
-                .listRowBackground(Color.clear)
-            }
-
-            // Validate / Remove — always visible once a key is configured.
             if status?.configured == true {
-                Section {
-                    Button {
-                        validate()
-                    } label: {
-                        HStack {
-                            Label("Validate API Key", systemImage: "checkmark.shield")
-                                .foregroundStyle(AppTheme.dynamicAccent)
-                            Spacer()
-                            if isValidating {
-                                ProgressView().tint(AppTheme.dynamicAccent)
-                            }
-                        }
-                    }
-                    .disabled(isValidating)
-
-                    Button(role: .destructive) {
-                        removeKey()
-                    } label: {
-                        Text("Remove API Key")
-                    }
+                LKCard {
+                    LKButtonRow(icon: "checkmark.shield", tint: .green, title: "Validate Key", subtitle: "Checks the key and today's estimated quota", busy: isValidating) { validate() }
+                    LKDivider()
+                    LKButtonRow(icon: "trash", title: "Remove Key", subtitle: "Falls back to the shared server key", destructive: true) { removeKey() }
                 }
-                .listRowBackground(tintedRowBackground(.yellow))
+            }
+            if let errorText {
+                LKBanner(icon: "exclamationmark.triangle.fill", text: errorText, tint: AppTheme.error)
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color.clear.ignoresSafeArea())
-        .navigationTitle("YouTube API Key")
-        .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+    }
+
+    private func steps(_ items: [String], tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(items.enumerated()), id: \.offset) { i, text in
+                HStack(alignment: .top, spacing: 10) {
+                    Text("\(i + 1)")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(width: 22, height: 22)
+                        .background(tint.gradient, in: Circle())
+                    Text(text).font(.caption).foregroundStyle(AppTheme.textPrimary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private func load() async {

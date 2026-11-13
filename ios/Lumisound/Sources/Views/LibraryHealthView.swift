@@ -53,145 +53,118 @@ struct LibraryHealthView: View {
         }
     }
 
+    private var grade: String {
+        switch healthScore {
+        case 95...: return "A+"
+        case 90..<95: return "A"
+        case 80..<90: return "B"
+        case 70..<80: return "C"
+        default: return "D"
+        }
+    }
+
+    /// The biggest fixable issue, for the "fix this first" card.
+    private var fixFirst: (title: String, count: Int, icon: String)? {
+        let candidates: [(String, Int, String)] = [
+            ("Missing Metadata", missingMetadataCount, "text.badge.xmark"),
+            ("Low Bitrate", lowBitrateCount, "waveform.badge.exclamationmark"),
+            ("Corrupt Files", corruptFinder.corruptFiles.count, "exclamationmark.triangle"),
+            ("Duplicates", duplicateFinder.groups.count, "doc.on.doc"),
+        ]
+        return candidates.filter { $0.1 > 0 }.max { $0.1 < $1.1 }.map { (title: $0.0, count: $0.1, icon: $0.2) }
+    }
+
     var body: some View {
-        List {
-            Section {
-                scoreCard
-            }
-            .listRowBackground(Color.clear)
-            .listSectionSeparator(.hidden)
-
+        LKPage(title: "Library Health", subtitle: nil, icon: "heart.text.square.fill", tint: .pink, showsHero: false) {
+            scoreCard
             if songs.isEmpty {
-                Section {
-                    EmptyStateView(
-                        icon: "checkmark.seal",
-                        title: "Nothing to Check Yet",
-                        message: "Add some music to your library and its health checks will show up here."
-                    )
-                }
-                .listRowBackground(Color.clear)
+                LKEmpty(icon: "checkmark.seal", title: "Nothing to check yet", message: "Add music and its health checks appear here.", tint: .green)
             } else {
-                Section("Metadata") {
-                    NavigationLink(destination: LibraryHealthSongListView(
-                        title: "Missing Metadata",
-                        songs: missingMetadataSongs
-                    )) {
-                        healthRow(
-                            icon: "text.badge.xmark",
-                            title: "Missing Metadata",
-                            subtitle: "Artist, album, genre, or year",
-                            count: missingMetadataCount
-                        )
-                    }
-                    NavigationLink(destination: LibraryHealthSongListView(
-                        title: "Low Bitrate",
-                        songs: lowBitrateSongs
-                    )) {
-                        healthRow(
-                            icon: "waveform.badge.exclamationmark",
-                            title: "Low Bitrate",
-                            subtitle: "Under 128 kbps",
-                            count: lowBitrateCount
-                        )
+                if let fix = fixFirst {
+                    LKBanner(icon: fix.icon, text: "Fix first: \(fix.title) — \(fix.count) item\(fix.count == 1 ? "" : "s").", tint: AppTheme.warning)
+                }
+                LKSectionTitle("Files & tags")
+                LKGrid {
+                    NavigationLink { LibraryHealthSongListView(title: "Missing Metadata", songs: missingMetadataSongs) } label: {
+                        issueTile(icon: "text.badge.xmark", title: "Missing tags", detail: "Artist, album, genre or year", count: missingMetadataCount)
+                    }.buttonStyle(.plain)
+                    NavigationLink { LibraryHealthSongListView(title: "Low Bitrate", songs: lowBitrateSongs) } label: {
+                        issueTile(icon: "waveform.badge.exclamationmark", title: "Low bitrate", detail: "Under 128 kbps", count: lowBitrateCount)
+                    }.buttonStyle(.plain)
+                    NavigationLink { CorruptFilesView() } label: {
+                        issueTile(icon: "exclamationmark.triangle", title: "Corrupt", detail: scanSubtitle(corruptFinder.lastScanDate, isScanning: corruptFinder.isScanning),
+                                  count: corruptFinder.corruptFiles.count)
+                    }.buttonStyle(.plain)
+                    NavigationLink { DuplicateFilesView() } label: {
+                        issueTile(icon: "doc.on.doc", title: "Duplicates", detail: scanSubtitle(duplicateFinder.lastScanDate, isScanning: duplicateFinder.isScanning),
+                                  count: duplicateFinder.groups.count, scored: false)
+                    }.buttonStyle(.plain)
+                }
+                LKSectionTitle("Listening")
+                LKCard {
+                    LKLink(icon: "forward.end", tint: .purple, title: "Often Skipped", subtitle: "Smart Shuffle plays these later",
+                           value: "\(oftenSkippedCount)") {
+                        OftenSkippedView(onChange: refreshIssueLists)
                     }
                 }
-                .listRowBackground(tintedRowBackground(.pink))
-
-                Section {
-                    NavigationLink(destination: DuplicateFilesView()) {
-                        healthRow(
-                            icon: "doc.on.doc",
-                            title: "Duplicates",
-                            subtitle: scanSubtitle(duplicateFinder.lastScanDate, isScanning: duplicateFinder.isScanning),
-                            count: duplicateFinder.groups.count
-                        )
-                    }
-                    NavigationLink(destination: CorruptFilesView()) {
-                        healthRow(
-                            icon: "exclamationmark.triangle",
-                            title: "Corrupt Files",
-                            subtitle: scanSubtitle(corruptFinder.lastScanDate, isScanning: corruptFinder.isScanning),
-                            count: corruptFinder.corruptFiles.count
-                        )
-                    }
-                } header: {
-                    Text("Downloads")
-                } footer: {
-                    Text("These two run on demand — open either one and tap Scan Now for an up-to-date count.")
-                }
-                .listRowBackground(tintedRowBackground(.pink))
-
-                Section {
-                    NavigationLink(destination: OftenSkippedView(onChange: refreshIssueLists)) {
-                        healthRow(
-                            icon: "forward.end",
-                            title: "Often Skipped",
-                            subtitle: "Played later by Smart Shuffle",
-                            count: oftenSkippedCount
-                        )
-                    }
-                } header: {
-                    Text("Listening")
-                }
-                .listRowBackground(tintedRowBackground(.pink))
+                Text("Duplicates don't lower the score — they aren't broken, just extra.")
+                    .font(.caption2).foregroundStyle(AppTheme.textSecondary).padding(.horizontal, 6)
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
-        // `onChange(of: allSongs)`, not a count — fixing a song's metadata
-        // keeps the count but should drop it from the list. The comparison
-        // is a buffer-identity check unless the library really changed.
         .onAppear(perform: refreshIssueLists)
         .onChange(of: library.allSongs) { refreshIssueLists() }
-        .navigationTitle("Library Health")
-        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var scoreCard: some View {
-        VStack(spacing: 10) {
+        HStack(spacing: 18) {
             ZStack {
-                Circle()
-                    .stroke(AppTheme.elevatedSurface, lineWidth: 10)
+                Circle().stroke(scoreColor.opacity(0.18), lineWidth: 12)
                 Circle()
                     .trim(from: 0, to: CGFloat(healthScore) / 100)
-                    .stroke(scoreColor, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                    .stroke(AngularGradient(colors: [scoreColor.opacity(0.6), scoreColor], center: .center),
+                            style: StrokeStyle(lineWidth: 12, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                Text("\(healthScore)")
-                    .font(.system(size: 34, weight: .heavy, design: .rounded))
-                    .foregroundStyle(AppTheme.textPrimary)
+                VStack(spacing: -2) {
+                    Text(grade).font(.system(size: 30, weight: .heavy, design: .rounded)).foregroundStyle(AppTheme.textPrimary)
+                    Text("\(healthScore)/100").font(.caption2.monospacedDigit()).foregroundStyle(AppTheme.textSecondary)
+                }
             }
-            .frame(width: 120, height: 120)
-            .padding(.top, 8)
-
-            Text("\(songs.count) song\(songs.count == 1 ? "" : "s") in your library")
-                .font(.caption)
-                .foregroundStyle(AppTheme.textSecondary)
+            .frame(width: 112, height: 112)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(healthScore >= 90 ? "In great shape" : healthScore >= 70 ? "Mostly healthy" : "Needs some care")
+                    .font(.title3.bold()).foregroundStyle(AppTheme.textPrimary)
+                Text("\(songs.count) song\(songs.count == 1 ? "" : "s") checked").font(.caption).foregroundStyle(AppTheme.textSecondary)
+                let issues = missingMetadataCount + lowBitrateCount + corruptFinder.corruptFiles.count
+                LKPill(text: issues == 0 ? "No issues" : "\(issues) issue\(issues == 1 ? "" : "s")", tint: issues == 0 ? .green : AppTheme.warning)
+            }
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
+        .padding(18)
+        .background(LKCardBackground(tint: scoreColor))
+        .animation(.easeOut(duration: 0.5), value: healthScore)
     }
 
-    private func healthRow(icon: String, title: String, subtitle: String, count: Int) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 18))
-                .foregroundStyle(count > 0 ? AppTheme.warning : AppTheme.textSecondary)
-                .frame(width: 26)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(AppTheme.textPrimary)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.textSecondary)
+    private func issueTile(icon: String, title: String, detail: String, count: Int, scored: Bool = true) -> some View {
+        let share = songs.isEmpty ? 0 : min(1, Double(count) / Double(songs.count))
+        let tint: Color = count == 0 ? .green : (scored ? AppTheme.warning : .purple)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                LKIcon(symbol: count == 0 ? "checkmark" : icon, tint: tint, size: 32)
+                Spacer()
+                Text("\(count)").font(.system(size: 22, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(AppTheme.textPrimary)
             }
-            Spacer()
-            Text("\(count)")
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-                .foregroundStyle(count > 0 ? AppTheme.warning : AppTheme.textSecondary)
+            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.textPrimary)
+            Text(detail).font(.caption2).foregroundStyle(AppTheme.textSecondary).lineLimit(1)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(AppTheme.textSecondary.opacity(0.15))
+                    Capsule().fill(tint).frame(width: geo.size.width * share)
+                }
+            }
+            .frame(height: 4)
         }
-        .padding(.vertical, 2)
+        .padding(14)
+        .background(LKCardBackground(corner: 18))
     }
 
     private func scanSubtitle(_ lastScan: Date?, isScanning: Bool) -> String {
@@ -212,25 +185,21 @@ private struct LibraryHealthSongListView: View {
     @EnvironmentObject private var player: AudioPlayerManager
 
     var body: some View {
-        List {
+        LKPage(title: title, icon: nil, showsHero: false) {
             if songs.isEmpty {
-                EmptyStateView(icon: "checkmark.seal", title: "All Clear", message: "No songs currently have this issue.")
-                    .listRowBackground(Color.clear)
+                LKEmpty(icon: "checkmark.seal", title: "All clear", message: "No songs have this issue right now.", tint: .green)
             } else {
+                // Rows straight in the page's lazy stack: these lists can be long.
                 ForEach(songs, id: \.id) { song in
-                    Button {
-                        player.play(song: song, in: songs)
-                    } label: {
+                    Button { player.play(song: song, in: songs) } label: {
                         SongRow(song: song, isCurrent: player.currentSong?.id == song.id)
+                            .padding(.horizontal, 8)
+                            .background(LKCardBackground(corner: 14))
                     }
                     .buttonStyle(.plain)
                 }
-                .listRowBackground(AppTheme.surface.opacity(0.5))
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
     }

@@ -38,86 +38,88 @@ struct PlaylistMergeToolView: View {
     }
 
     var body: some View {
-        List {
-            Section("Compare") {
-                LumiPicker("Playlist A", selection: $playlistAID) {
-                    Text("Choose one").lumiOptionLabel("Choose one").tag(UUID?.none)
-                    ForEach(library.playlists) { playlist in
-                        Text(playlist.name).lumiOptionLabel(String(describing: playlist.name)).tag(Optional(playlist.id))
-                    }
-                }
-                LumiPicker("Playlist B", selection: $playlistBID) {
-                    Text("Choose one").lumiOptionLabel("Choose one").tag(UUID?.none)
-                    ForEach(library.playlists) { playlist in
-                        Text(playlist.name).lumiOptionLabel(String(describing: playlist.name)).tag(Optional(playlist.id))
-                    }
-                }
+        LKPage(title: "Compare Playlists", subtitle: "See what two playlists share, and save any part as a new one.",
+               icon: "rectangle.2.swap", tint: .blue) {
+            HStack(spacing: 10) {
+                pickerCard("A", selection: $playlistAID, tint: .blue)
+                pickerCard("B", selection: $playlistBID, tint: .pink)
             }
-            .listRowBackground(tintedRowBackground(.pink))
-
             if let playlistA, let playlistB, playlistA.id == playlistB.id {
-                Section {
-                    Text("Choose two different playlists to compare.")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
-                .listRowBackground(Color.clear)
-            } else if playlistA != nil, playlistB != nil {
-                resultSection(
-                    title: "In Both",
-                    subtitle: "\(inBoth.count) track\(inBoth.count == 1 ? "" : "s")",
-                    songIDs: inBoth,
-                    defaultName: "\(playlistA?.name ?? "") ∩ \(playlistB?.name ?? "")"
-                )
-                resultSection(
-                    title: "Only in \(playlistA?.name ?? "A")",
-                    subtitle: "\(onlyInA.count) track\(onlyInA.count == 1 ? "" : "s")",
-                    songIDs: onlyInA,
-                    defaultName: "\(playlistA?.name ?? "") only"
-                )
-                resultSection(
-                    title: "Only in \(playlistB?.name ?? "B")",
-                    subtitle: "\(onlyInB.count) track\(onlyInB.count == 1 ? "" : "s")",
-                    songIDs: onlyInB,
-                    defaultName: "\(playlistB?.name ?? "") only"
-                )
+                LKBanner(icon: "exclamationmark.circle", text: "Pick two different playlists.", tint: AppTheme.warning)
+            } else if let playlistA, let playlistB {
+                venn(a: playlistA, b: playlistB)
+                resultCard(title: "In both", count: inBoth.count, tint: .purple, songIDs: inBoth, defaultName: "\(playlistA.name) ∩ \(playlistB.name)")
+                resultCard(title: "Only in \(playlistA.name)", count: onlyInA.count, tint: .blue, songIDs: onlyInA, defaultName: "\(playlistA.name) only")
+                resultCard(title: "Only in \(playlistB.name)", count: onlyInB.count, tint: .pink, songIDs: onlyInB, defaultName: "\(playlistB.name) only")
             } else {
-                Section {
-                    EmptyStateView(
-                        icon: "rectangle.2.swap",
-                        title: "Pick Two Playlists",
-                        message: "Choose Playlist A and Playlist B above to see what overlaps and what's unique to each."
-                    )
-                }
-                .listRowBackground(Color.clear)
+                LKEmpty(icon: "circle.lefthalf.filled", title: "Pick two playlists", message: "Choose A and B to see the overlap.", tint: .blue)
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
-        .navigationTitle("Compare Playlists")
-        .navigationBarTitleDisplayMode(.inline)
     }
 
-    @ViewBuilder
-    private func resultSection(title: String, subtitle: String, songIDs: [Song.ID], defaultName: String) -> some View {
-        Section {
+    private func pickerCard(_ label: String, selection: Binding<UUID?>, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(tint.gradient, in: Circle())
+            LumiPicker("Playlist \(label)", selection: selection) {
+                Text("Choose one").lumiOptionLabel("Choose one").tag(UUID?.none)
+                ForEach(library.playlists) { playlist in
+                    Text(playlist.name).lumiOptionLabel(String(describing: playlist.name)).tag(Optional(playlist.id))
+                }
+            }
+            .tint(tint)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(LKCardBackground(tint: tint, corner: 18))
+    }
+
+    private func venn(a: Playlist, b: Playlist) -> some View {
+        HStack(spacing: -46) {
+            ZStack {
+                Circle().fill(Color.blue.opacity(0.35))
+                Text("\(onlyInA.count)").font(.title2.bold()).offset(x: -18)
+            }
+            .frame(width: 130, height: 130)
+            ZStack {
+                Circle().fill(Color.pink.opacity(0.35))
+                Text("\(onlyInB.count)").font(.title2.bold()).offset(x: 18)
+            }
+            .frame(width: 130, height: 130)
+        }
+        .overlay {
+            Text("\(inBoth.count)")
+                .font(.title3.bold())
+                .padding(8)
+                .background(.ultraThinMaterial, in: Circle())
+        }
+        .foregroundStyle(AppTheme.textPrimary)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(LKCardBackground())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(inBoth.count) in both, \(onlyInA.count) only in \(a.name), \(onlyInB.count) only in \(b.name)")
+    }
+
+    private func resultCard(title: String, count: Int, tint: Color, songIDs: [Song.ID], defaultName: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Circle().fill(tint).frame(width: 10, height: 10)
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.textPrimary).lineLimit(1)
+                Spacer()
+                LKPill(text: "\(count) track\(count == 1 ? "" : "s")", tint: tint)
+            }
             if songIDs.isEmpty {
-                Text("Nothing here.")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.textSecondary)
+                Text("Nothing here.").font(.caption).foregroundStyle(AppTheme.textSecondary)
             } else {
                 SaveAsPlaylistRow(songIDs: songIDs, defaultName: defaultName)
             }
-        } header: {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(subtitle)
-            }
-            .textCase(nil)
         }
-        .listRowBackground(tintedRowBackground(.pink))
+        .padding(14)
+        .background(LKCardBackground())
     }
 }
 
@@ -137,7 +139,9 @@ private struct SaveAsPlaylistRow: View {
                 get: { name.isEmpty ? defaultName : name },
                 set: { name = $0 }
             ))
-            .textFieldStyle(.roundedBorder)
+            .padding(10)
+            .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .foregroundStyle(AppTheme.textPrimary)
 
             Button {
                 let resolvedName = name.isEmpty ? defaultName : name

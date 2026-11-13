@@ -35,6 +35,8 @@ struct ListeningHeatmapView: View {
                 .padding(.top, 60)
             } else {
                 VStack(alignment: .leading, spacing: 16) {
+                    LKHero(title: "Heatmap", subtitle: "Every day you listened, at a glance.", icon: "calendar", tint: .green)
+                        .padding(.horizontal, 16)
                     summaryRow
                     ScrollView(.horizontal, showsIndicators: false) {
                         heatmapGrid

@@ -16,33 +16,30 @@ struct LuaVisualizerScriptsView: View {
     @State private var importName = ""
 
     var body: some View {
-        List {
-            Section {
+        LKPage(title: "Scripted Visualizer", subtitle: "Lua scripts that draw to your music.", icon: "waveform.path.ecg.rectangle", tint: .pink) {
+            LKSection {
                 Text("Restyles the \u{201C}Live Spectrum\u{201D} Now Playing artwork style — the real-time FFT analysis stays native, but a script controls the gradient colors, sensitivity, bar spacing/rounding, and mirroring. Select \u{201C}Live Spectrum\u{201D} under artwork styles to see it.")
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.textSecondary)
-                    .listRowBackground(Color.clear)
             }
 
             if let error = store.lastError {
-                Section {
+                LKSection {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(AppTheme.bodyFont(size: 13))
                         .foregroundStyle(AppTheme.error)
                 }
-                .listRowBackground(AppTheme.surface)
             }
 
-            Section {
+            LKSection {
                 ForEach(bundled) { ref in
                     scriptRow(ref)
                 }
             } header: {
                 Text("Bundled Examples")
             }
-            .listRowBackground(AppTheme.surface)
 
-            Section {
+            LKSection {
                 if userScripts.isEmpty {
                     Text("No imported scripts yet.")
                         .font(AppTheme.bodyFont(size: 13))
@@ -50,7 +47,7 @@ struct LuaVisualizerScriptsView: View {
                 } else {
                     ForEach(userScripts) { ref in
                         scriptRow(ref)
-                            .swipeActions {
+                            .contextMenu {
                                 Button(role: .destructive) {
                                     LuaVisualizerEngine.deleteUserScript(ref)
                                     userScripts = LuaVisualizerEngine.userScripts()
@@ -63,10 +60,9 @@ struct LuaVisualizerScriptsView: View {
             } header: {
                 Text("Imported")
             }
-            .listRowBackground(AppTheme.surface)
 
             if store.activeScriptID != nil {
-                Section {
+                LKSection {
                     Button(role: .destructive) {
                         store.clear()
                         ToastCenter.shared.show("Visualizer style cleared", category: .info, icon: "arrow.counterclockwise")
@@ -75,10 +71,8 @@ struct LuaVisualizerScriptsView: View {
                     }
                     .foregroundStyle(AppTheme.dynamicAccent)
                 }
-                .listRowBackground(AppTheme.surface)
             }
         }
-        .scrollContentBackground(.hidden)
         .background(Color.clear.ignoresSafeArea())
         .navigationTitle("Scripted Visualizer")
         .navigationBarTitleDisplayMode(.inline)
@@ -127,18 +121,18 @@ struct LuaVisualizerScriptsView: View {
 
     private var importSheet: some View {
         NavigationStack {
-            Form {
-                Section("Script Name") {
+            LKScroll {
+                LKSection("Script Name") {
                     TextField("e.g. my_visualizer", text: $importName)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
-                Section("Lua Source") {
+                LKSection("Lua Source") {
                     TextEditor(text: $importText)
                         .font(.system(.footnote, design: .monospaced))
                         .frame(minHeight: 220)
                 }
-                Section {
+                LKSection {
                     Text("Paste a script someone shared with you — it must set a global `visualizer` table (see the bundled examples for the exact shape).")
                         .font(.caption)
                         .foregroundStyle(AppTheme.textSecondary)

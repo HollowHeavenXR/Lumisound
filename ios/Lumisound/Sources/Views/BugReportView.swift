@@ -45,8 +45,8 @@ struct BugReportView: View {
     @State private var didSubmit = false
 
     var body: some View {
-        List {
-            Section {
+        LKPage(title: "Report a Bug", subtitle: "Tell us what happened — logs are attached for you.", icon: "ladybug.fill", tint: .red) {
+            LKSection {
                 LumiPicker("Category", selection: $category) {
                     ForEach(BugReportCategory.allCases) { cat in
                         Text(cat.displayName).lumiOptionLabel(String(describing: cat.displayName)).tag(cat)
@@ -56,12 +56,10 @@ struct BugReportView: View {
             } header: {
                 sectionHeader("What's this about?")
             }
-            .listRowBackground(tintedRowBackground(.blue))
 
-            Section {
+            LKSection {
                 TextEditor(text: $description)
                     .frame(minHeight: 140)
-                    .scrollContentBackground(.hidden)
                     .foregroundStyle(AppTheme.textPrimary)
                     .overlay(alignment: .topLeading) {
                         if description.isEmpty {
@@ -76,9 +74,8 @@ struct BugReportView: View {
             } header: {
                 sectionHeader("Description")
             }
-            .listRowBackground(tintedRowBackground(.blue))
 
-            Section {
+            LKSection {
                 TextField("Email (optional)", text: $contactEmail)
                     .foregroundStyle(AppTheme.textPrimary)
                     .keyboardType(.emailAddress)
@@ -91,9 +88,8 @@ struct BugReportView: View {
                     .font(AppTheme.bodyFont(size: 12))
                     .foregroundStyle(AppTheme.textSecondary)
             }
-            .listRowBackground(tintedRowBackground(.blue))
 
-            Section {
+            LKSection {
                 Toggle(isOn: $includeLogs) {
                     Label("Include recent activity log", systemImage: "doc.text.magnifyingglass")
                         .foregroundStyle(AppTheme.textPrimary)
@@ -104,9 +100,8 @@ struct BugReportView: View {
                     .font(AppTheme.bodyFont(size: 12))
                     .foregroundStyle(AppTheme.textSecondary)
             }
-            .listRowBackground(tintedRowBackground(.blue))
 
-            Section {
+            LKSection {
                 Button {
                     Task { await submit() }
                 } label: {
@@ -133,11 +128,9 @@ struct BugReportView: View {
                     Text(submitError)
                         .font(.caption)
                         .foregroundStyle(AppTheme.error)
-                        .listRowBackground(tintedRowBackground(.blue))
                 }
             }
         }
-        .scrollContentBackground(.hidden)
         .background(GalleryBackgroundView().ignoresSafeArea())
         .navigationTitle("Report a Bug")
         .navigationBarTitleDisplayMode(.inline)

@@ -8,71 +8,68 @@ struct DeletedPlaylistsView: View {
     @ObservedObject private var store = DeletedPlaylistsStore.shared
 
     var body: some View {
-        List {
+        LKPage(title: "Recently Deleted", subtitle: "Playlists wait here 30 days before they're gone for good.",
+               icon: "trash.fill", tint: .red) {
             if store.entries.isEmpty {
-                EmptyStateView(
-                    icon: "trash",
-                    title: "Nothing Here",
-                    message: "Deleted playlists stay here for 30 days before being purged for good."
-                )
-                .listRowBackground(Color.clear)
+                LKEmpty(icon: "checkmark.circle", title: "Nothing deleted", message: "Deleted playlists show up here for 30 days.", tint: .green)
             } else {
-                Section {
-                    ForEach(store.entries) { entry in
-                        entryRow(entry)
-                    }
-                } footer: {
-                    Text("Deleted playlists are kept for 30 days, then purged automatically.")
+                ForEach(store.entries) { entry in entryCard(entry) }
+                Button(role: .destructive) { store.purgeAll() } label: {
+                    Label("Delete all forever", systemImage: "trash")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .foregroundStyle(AppTheme.error)
+                        .background(AppTheme.error.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
-                .listRowBackground(tintedRowBackground(.pink))
+                .buttonStyle(.plain)
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
-        .navigationTitle("Recently Deleted Playlists")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if !store.entries.isEmpty {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(role: .destructive) {
-                        store.purgeAll()
-                    } label: {
-                        Text("Delete All")
-                    }
-                }
-            }
-        }
+        .animation(.easeInOut(duration: 0.2), value: store.entries.map(\.id))
     }
 
-    private func entryRow(_ entry: DeletedPlaylistEntry) -> some View {
-        HStack(spacing: 12) {
+    /// Days left before the 30-day purge, as a draining ring.
+    private func entryCard(_ entry: DeletedPlaylistEntry) -> some View {
+        let elapsed = Date().timeIntervalSince(entry.deletedAt) / 86_400
+        let left = max(0, 30 - Int(elapsed.rounded(.down)))
+        return HStack(spacing: 14) {
+            ZStack {
+                Circle().stroke(AppTheme.textSecondary.opacity(0.15), lineWidth: 4)
+                Circle().trim(from: 0, to: Double(left) / 30)
+                    .stroke(left <= 3 ? AppTheme.error : Color.orange, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                VStack(spacing: -2) {
+                    Text("\(left)").font(.system(size: 15, weight: .bold, design: .rounded))
+                    Text("days").font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(AppTheme.textPrimary)
+            }
+            .frame(width: 48, height: 48)
             VStack(alignment: .leading, spacing: 3) {
-                Text(entry.playlist.name)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(AppTheme.textPrimary)
+                Text(entry.playlist.name).font(.headline).foregroundStyle(AppTheme.textPrimary).lineLimit(1)
                 Text("\(entry.playlist.songCount) song\(entry.playlist.songCount == 1 ? "" : "s") · deleted \(relativeDate(entry.deletedAt))")
-                    .font(.caption)
+                    .font(.caption).foregroundStyle(AppTheme.textSecondary)
+            }
+            Spacer(minLength: 6)
+            Button { restore(entry) } label: {
+                Image(systemName: "arrow.uturn.backward").font(.system(size: 14, weight: .bold))
+                    .frame(width: 36, height: 36)
+                    .foregroundStyle(.white)
+                    .background(AppTheme.dynamicAccent.gradient, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Restore \(entry.playlist.name)")
+            Menu {
+                Button { restore(entry) } label: { Label("Restore", systemImage: "arrow.uturn.backward") }
+                Button(role: .destructive) { store.purge(entryID: entry.id) } label: { Label("Delete Forever", systemImage: "trash") }
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 14, weight: .bold))
+                    .frame(width: 32, height: 36)
                     .foregroundStyle(AppTheme.textSecondary)
             }
-            Spacer()
         }
-        .padding(.vertical, 2)
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(role: .destructive) {
-                store.purge(entryID: entry.id)
-            } label: {
-                Label("Delete Forever", systemImage: "trash")
-            }
-        }
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            Button {
-                restore(entry)
-            } label: {
-                Label("Restore", systemImage: "arrow.uturn.backward")
-            }
-            .tint(AppTheme.dynamicAccent)
-        }
+        .padding(14)
+        .background(LKCardBackground())
     }
 
     private func restore(_ entry: DeletedPlaylistEntry) {

@@ -17,88 +17,69 @@ struct BackupHistoryView: View {
     @State private var pendingRestore: SyncBackup?
     @State private var showClearAllConfirm = false
 
-    var body: some View {
-        List {
-            if isLoading && account.backups.isEmpty {
-                HStack {
-                    Spacer()
-                    ProgressView()
-                    Spacer()
-                }
-                .listRowBackground(AppTheme.surface)
-            } else if account.backups.isEmpty {
-                Text("No backups yet. A snapshot is taken automatically every time your data syncs to the server.")
-                    .font(AppTheme.bodyFont(size: 13))
-                    .foregroundStyle(AppTheme.textSecondary)
-                    .listRowBackground(AppTheme.surface)
-            } else {
-                Section {
-                    ForEach(account.backups) { backup in
-                        Button {
-                            pendingRestore = backup
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    if let date = backup.date {
-                                        Text(date, style: .relative)
-                                            .font(AppTheme.bodyFont(size: 14))
-                                            .foregroundStyle(AppTheme.textPrimary)
-                                    } else {
-                                        Text(backup.createdAt)
-                                            .font(AppTheme.bodyFont(size: 14))
-                                            .foregroundStyle(AppTheme.textPrimary)
-                                    }
-                                    Text("\(backup.reasonDisplayName) · \(backup.favoriteCount) favorites, \(backup.playlistCount) playlists")
-                                        .font(AppTheme.bodyFont(size: 12))
-                                        .foregroundStyle(AppTheme.textSecondary)
-                                }
-                                Spacer()
-                                Image(systemName: "arrow.uturn.backward.circle")
-                                    .foregroundStyle(AppTheme.dynamicAccent)
-                            }
-                        }
-                        .disabled(account.isSyncing)
-                    }
-                } header: {
-                    Text("BACKUPS")
-                        .font(AppTheme.bodyFont(size: 11))
-                        .foregroundStyle(AppTheme.textSecondary)
-                        .kerning(0.8)
-                } footer: {
-                    Text("Restoring replaces your favorites, playlists, and synced settings with this snapshot, then merges the result onto this device. The current state is backed up first, so a restore can always be undone.")
-                        .font(AppTheme.bodyFont(size: 12))
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
-                .listRowBackground(AppTheme.surface)
+    /// Backups grouped by calendar day, newest first.
+    private var days: [(day: String, items: [SyncBackup])] {
+        var order: [String] = []
+        var map: [String: [SyncBackup]] = [:]
+        for b in account.backups {
+            let key = b.date.map { $0.formatted(date: .complete, time: .omitted) } ?? "Earlier"
+            if map[key] == nil { order.append(key) }
+            map[key, default: []].append(b)
+        }
+        return order.map { ($0, map[$0] ?? []) }
+    }
 
-                Section {
-                    Button(role: .destructive) {
-                        showClearAllConfirm = true
-                    } label: {
-                        HStack {
-                            Label("Clear All Backups", systemImage: "trash")
-                            Spacer()
-                            if account.isSyncing {
-                                ProgressView()
+    var body: some View {
+        LKPage(title: "Backup History", subtitle: "A snapshot is saved before every sync and every restore.",
+               icon: "clock.arrow.circlepath", tint: .blue) {
+            if isLoading && account.backups.isEmpty {
+                ProgressView().frame(maxWidth: .infinity).padding(30)
+            } else if account.backups.isEmpty {
+                LKEmpty(icon: "clock.badge.questionmark", title: "No backups yet", message: "One is taken automatically each time your library syncs.", tint: .blue)
+            } else {
+                LKBanner(icon: "arrow.uturn.backward.circle", text: "Restoring replaces favorites, playlists and synced settings with that snapshot. Your current state is backed up first, so a restore can be undone.", tint: .blue)
+                ForEach(days, id: \.day) { day in
+                    LKSectionTitle(day.day)
+                    VStack(spacing: 0) {
+                        ForEach(Array(day.items.enumerated()), id: \.element.id) { i, backup in
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(spacing: 0) {
+                                    Circle().fill(Color.blue).frame(width: 10, height: 10).padding(.top, 5)
+                                    if i < day.items.count - 1 {
+                                        Rectangle().fill(Color.blue.opacity(0.3)).frame(width: 2).frame(maxHeight: .infinity)
+                                    }
+                                }
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(backup.date.map { $0.formatted(date: .omitted, time: .shortened) } ?? backup.createdAt)
+                                        .font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.textPrimary)
+                                    Text(backup.reasonDisplayName).font(.caption).foregroundStyle(AppTheme.textSecondary)
+                                    HStack(spacing: 6) {
+                                        LKPill(text: "\(backup.favoriteCount) favorites", tint: .pink)
+                                        LKPill(text: "\(backup.playlistCount) playlists", tint: .blue)
+                                    }
+                                }
+                                .padding(.bottom, 14)
+                                Spacer()
+                                Button { pendingRestore = backup } label: {
+                                    Text("Restore")
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 12).padding(.vertical, 7)
+                                        .foregroundStyle(.blue)
+                                        .background(Color.blue.opacity(0.14), in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(account.isSyncing)
                             }
                         }
                     }
-                    .disabled(account.isSyncing)
-                } footer: {
-                    Text("Permanently deletes all backup snapshots. Your current favorites, playlists, and settings are not affected.")
-                        .font(AppTheme.bodyFont(size: 12))
-                        .foregroundStyle(AppTheme.textSecondary)
+                    .padding(14)
+                    .background(LKCardBackground())
                 }
-                .listRowBackground(AppTheme.surface)
+                LKCard(footer: "Deletes every snapshot. Your current favorites, playlists and settings stay as they are.") {
+                    LKButtonRow(icon: "trash", title: "Clear All Backups", destructive: true, busy: account.isSyncing) { showClearAllConfirm = true }
+                }
             }
         }
-        // Without an explicit style this defaults to a grouped-card look —
-        // see FavoritesView's identical fix.
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
-        .navigationTitle("Backup History")
-        .navigationBarTitleDisplayMode(.inline)
         .task {
             isLoading = true
             await account.fetchBackups()

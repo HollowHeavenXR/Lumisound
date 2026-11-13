@@ -125,8 +125,8 @@ struct ConstellationView: View {
     @ViewBuilder
     private func starDetailSheet(_ star: Star) -> some View {
         NavigationStack {
-            List {
-                Section {
+            LKPage(title: "Constellation", subtitle: "Your artists as a map of stars.", icon: "sparkles", tint: .indigo) {
+                LKSection {
                     Button {
                         player.shuffleEnabled = true
                         if let first = star.songs.randomElement() {
@@ -137,9 +137,8 @@ struct ConstellationView: View {
                         Label("Shuffle Play", systemImage: "shuffle")
                     }
                 }
-                .listRowBackground(AppTheme.surface)
 
-                Section("\(star.songs.count) Songs") {
+                LKSection("\(star.songs.count) Songs") {
                     ForEach(star.songs.prefix(50), id: \.id) { song in
                         Button {
                             player.play(song: song, in: star.songs)
@@ -150,10 +149,7 @@ struct ConstellationView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .listRowBackground(AppTheme.surface.opacity(0.5))
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
             .background(GalleryBackgroundView().ignoresSafeArea())
             .navigationTitle(star.name)
             .navigationBarTitleDisplayMode(.inline)

@@ -136,3 +136,25 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
   - Background resend loop removed (it could never succeed).
   - Settings > Playback > Lock Screen Player: Live Activity / System Player / Both (system player always follows).
 - Open: a second automatic advance in a row while backgrounded still waits for the app/a button (no redraw trigger).
+
+## Settings family redesign (2026-11-12, branch settings-redesign → main)
+- `Views/Kit/LumiKit.swift`: shared kit (LKPage/LKHero, LKCard/LKSection, LKRow/LKLink/LKToggle/LKControlRow,
+  LKTile/LKGrid, LKStat, LKChip/LKPill/LKSegmented, LKField, LKBanner, LKEmpty, LKPrimaryButton, LKScroll,
+  LKRowLinkStyle). Colours from AppTheme, so it follows the edition, accent and Liquid Glass.
+- Settings (Classic + Strata): `SettingsView+Home.swift` — control-room home (search over every setting,
+  account card, quick switches, nine room tiles with live details) and pages: Sound, Library, Downloads,
+  Look & Feel, Notifications, Sleep & Wake, Lock Screen & Car, Privacy & Security, Help & About.
+  Lumen keeps its own settings pages (old section vars, untouched).
+- Own layouts: Notifications, Subscriptions & Tracked Playlists (dashboard + smart add + channel cards +
+  playlist grid), Profile editor (live header, Identity/Style/Showcase/Privacy tabs, unsaved-changes bar),
+  Library Health (grade gauge + issue tiles), Storage (usage bar), Duplicate Finder, Corrupt Files, Backup &
+  Restore, Backup History (timeline), Compare Playlists (Venn), Listening Stats (podium), Liquid Glass (lab),
+  Appearance (four shelves), Gallery Background (source cards), Deleted Playlists (countdown rings),
+  Sessions (device cards), Wake-Up Alarm (clock face), Change Password (strength meter), Delete Account,
+  Listening Goal, 2FA, YouTube API Key (credential card), Cookies (health checklist), Discord Webhook
+  (message mock), Channel Settings sheet.
+- Converted onto kit sections: Lua Themes, Help & Guide, Bug Report, Discover, Admin, Scrobbling, Rich
+  Presence, Podcasts, Achievements, Time Capsules, Constellation, Inbox, Scripted Visualizer. Swipe actions
+  there became long-press context menus (no List to swipe in).
+- Kept as-is (already bespoke): Interface picker, Rewind, Needle Drop; Heatmap and Hearing Health got the hero.
+- Open: verify on device (dark/light, Liquid Glass on/off, Dynamic Type), Lumen settings pages still old style.

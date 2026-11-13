@@ -17,83 +17,64 @@ struct DiscordWebhookView: View {
     @State private var errorText: String?
     @State private var didSave = false
 
+    private static let blurple = Color(red: 0.345, green: 0.396, blue: 0.949)
+
     var body: some View {
-        List {
-            Section {
-                if status?.configured == true {
-                    LabeledContent("Webhook") {
-                        Text(status?.webhookUrl ?? "")
-                            .font(AppTheme.monoFont(size: 12))
-                            .foregroundStyle(AppTheme.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+        LKPage(title: "Now Playing Webhook", subtitle: "Post what you play to a Discord channel.", icon: "message.fill", tint: Self.blurple) {
+            // A mock of the message Discord will show.
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Circle().fill(Self.blurple.gradient).frame(width: 30, height: 30)
+                        .overlay(Image(systemName: "music.note").font(.caption.weight(.bold)).foregroundStyle(.white))
+                    Text("Lumisound").font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.textPrimary)
+                    Text("BOT").font(.system(size: 9, weight: .bold)).padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(Self.blurple, in: RoundedRectangle(cornerRadius: 3)).foregroundStyle(.white)
+                }
+                HStack(spacing: 0) {
+                    Rectangle().fill(Self.blurple).frame(width: 4)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Now Playing").font(.caption2.weight(.bold)).foregroundStyle(AppTheme.textSecondary)
+                        Text("Your current song").font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.textPrimary)
+                        Text("by the artist").font(.caption).foregroundStyle(AppTheme.textSecondary)
                     }
-                    .foregroundStyle(AppTheme.textPrimary)
-
-                    Toggle("Enabled", isOn: $enabled)
-                        .tint(AppTheme.dynamicAccent)
-                        .foregroundStyle(AppTheme.textPrimary)
-                        .onChange(of: enabled) { newValue in
-                            Task {
-                                _ = await account.setDiscordWebhook(url: nil, enabled: newValue)
-                            }
-                        }
-                } else {
-                    TextField("https://discord.com/api/webhooks/...", text: $webhookURL)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
-                        .foregroundStyle(AppTheme.textPrimary)
+                    .padding(10)
+                    Spacer()
                 }
-            } header: {
-                sectionHeader("Discord Webhook")
-            } footer: {
-                Text("Posts a \"Now Playing\" message to a Discord channel whenever you start a track. Create an incoming webhook in your server's Channel Settings \u{2192} Integrations \u{2192} Webhooks.")
+                .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 6))
             }
-            .listRowBackground(AppTheme.surface)
-
-            if status?.configured != true {
-                Section {
-                    Button {
-                        save()
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                        } else {
-                            Text(didSave ? "Saved" : "Save")
-                        }
-                    }
-                    .disabled(isSaving || webhookURL.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .foregroundStyle(AppTheme.dynamicAccent)
-                }
-                .listRowBackground(AppTheme.surface)
-            }
-
-            if let errorText {
-                Section {
-                    Text(errorText)
-                        .font(.footnote)
-                        .foregroundStyle(AppTheme.error)
-                }
-                .listRowBackground(Color.clear)
-            }
+            .padding(14)
+            .background(LKCardBackground(tint: Self.blurple))
 
             if status?.configured == true {
-                Section {
-                    Button(role: .destructive) {
-                        removeWebhook()
-                    } label: {
-                        Text("Remove Webhook")
+                LKCard(title: "Connected") {
+                    HStack(spacing: 12) {
+                        LKIcon(symbol: "link", tint: Self.blurple)
+                        Text(status?.webhookUrl ?? "")
+                            .font(AppTheme.monoFont(size: 12)).foregroundStyle(AppTheme.textSecondary)
+                            .lineLimit(1).truncationMode(.middle)
                     }
+                    .padding(.vertical, 6)
+                    LKDivider()
+                    LKToggle(icon: "power", tint: Self.blurple, title: "Posting", subtitle: enabled ? "Every new track is posted" : "Paused", isOn: $enabled)
+                        .onChange(of: enabled) { newValue in
+                            Task { _ = await account.setDiscordWebhook(url: nil, enabled: newValue) }
+                        }
+                    LKDivider()
+                    LKButtonRow(icon: "trash", title: "Remove Webhook", destructive: true) { removeWebhook() }
                 }
-                .listRowBackground(AppTheme.surface)
+            } else {
+                LKCard(title: "Paste a webhook URL", footer: "In Discord: Channel Settings → Integrations → Webhooks → New Webhook → Copy URL.") {
+                    LKField(placeholder: "https://discord.com/api/webhooks/…", text: $webhookURL, mono: true)
+                        .keyboardType(.URL)
+                        .padding(.vertical, 4)
+                }
+                LKPrimaryButton(title: didSave ? "Saved" : "Connect", icon: didSave ? "checkmark" : "link", tint: Self.blurple, busy: isSaving) { save() }
+                    .disabled(isSaving || webhookURL.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            if let errorText {
+                LKBanner(icon: "exclamationmark.triangle.fill", text: errorText, tint: AppTheme.error)
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color.clear.ignoresSafeArea())
-        .navigationTitle("Discord Webhook")
-        .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
     }
 

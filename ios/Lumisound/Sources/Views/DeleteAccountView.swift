@@ -16,62 +16,31 @@ struct DeleteAccountView: View {
     @State private var showConfirm = false
 
     var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 28))
-                        .foregroundStyle(AppTheme.error)
-                    Text("This will permanently delete your Lumisound account, including your saved favorites, playlists, listening history, sync backups, and any music or images you've uploaded to the server. This cannot be undone.")
-                        .font(AppTheme.bodyFont(size: 13))
-                        .foregroundStyle(AppTheme.textSecondary)
+        LKPage(title: "Delete Account", subtitle: "This can't be undone.", icon: "trash.fill", tint: AppTheme.error) {
+            LKCard(title: "What gets erased") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach([("heart.fill", "Favorites and playlists"), ("clock.fill", "Listening history and stats"),
+                             ("externaldrive.fill", "Sync backups"), ("icloud.fill", "Music and images you uploaded"),
+                             ("person.crop.circle.fill", "Your profile, friends and guestbook")], id: \.1) { item in
+                        Label(item.1, systemImage: item.0)
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.textPrimary)
+                    }
                 }
                 .padding(.vertical, 4)
             }
-            .listRowBackground(AppTheme.surface)
-
-            Section {
-                SecureField("Password", text: $password)
+            LKBanner(icon: "iphone", text: "Songs downloaded to this phone stay on this phone.", tint: .gray)
+            LKCard(title: "Confirm with your password") {
+                LKField(placeholder: "Password", text: $password, secure: true)
                     .textContentType(.password)
-            } header: {
-                Text("Confirm Your Password")
             }
-            .listRowBackground(AppTheme.surface)
-
             if let localError {
-                Section {
-                    Text(localError)
-                        .font(AppTheme.bodyFont(size: 13))
-                        .foregroundStyle(AppTheme.error)
-                }
-                .listRowBackground(AppTheme.surface)
+                LKBanner(icon: "exclamationmark.triangle.fill", text: localError, tint: AppTheme.error)
             }
-
-            Section {
-                Button(role: .destructive) {
-                    showConfirm = true
-                } label: {
-                    HStack {
-                        Spacer()
-                        if isSubmitting {
-                            ProgressView()
-                                .tint(AppTheme.error)
-                        } else {
-                            Text("Delete Account")
-                                .font(AppTheme.bodyFont(size: 15).weight(.semibold))
-                        }
-                        Spacer()
-                    }
-                    .foregroundStyle(AppTheme.error)
-                }
+            LKPrimaryButton(title: "Delete My Account", icon: "trash", tint: AppTheme.error, busy: isSubmitting) { showConfirm = true }
                 .disabled(password.isEmpty || isSubmitting)
-            }
-            .listRowBackground(AppTheme.surface)
+                .opacity(password.isEmpty ? 0.5 : 1)
         }
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
-        .navigationTitle("Delete Account")
-        .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog(
             "Delete your account permanently?",
             isPresented: $showConfirm,

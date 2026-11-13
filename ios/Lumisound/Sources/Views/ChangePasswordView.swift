@@ -23,64 +23,56 @@ struct ChangePasswordView: View {
             && !isSubmitting
     }
 
+    /// Simple strength estimate for the meter (length + character variety).
+    private var strength: Int {
+        var score = 0
+        if newPassword.count >= 8 { score += 1 }
+        if newPassword.count >= 12 { score += 1 }
+        if newPassword.rangeOfCharacter(from: .decimalDigits) != nil { score += 1 }
+        if newPassword.rangeOfCharacter(from: .punctuationCharacters.union(.symbols)) != nil { score += 1 }
+        if newPassword.rangeOfCharacter(from: .uppercaseLetters) != nil && newPassword.rangeOfCharacter(from: .lowercaseLetters) != nil { score += 1 }
+        return min(score, 4)
+    }
+
+    private func check(_ ok: Bool, _ text: String) -> some View {
+        Label(text, systemImage: ok ? "checkmark.circle.fill" : "circle")
+            .font(.caption)
+            .foregroundStyle(ok ? AppTheme.success : AppTheme.textSecondary)
+    }
+
     var body: some View {
-        List {
-            Section {
-                SecureField("Current Password", text: $currentPassword)
+        LKPage(title: "Change Password", subtitle: "Other devices are signed out when you change it.", icon: "key.fill", tint: .orange) {
+            LKCard(title: "Current") {
+                LKField(placeholder: "Current password", text: $currentPassword, secure: true)
                     .textContentType(.password)
-            } header: {
-                Text("Current Password")
             }
-            .listRowBackground(AppTheme.surface)
-
-            Section {
-                SecureField("New Password", text: $newPassword)
-                    .textContentType(.newPassword)
-                SecureField("Confirm New Password", text: $confirmPassword)
-                    .textContentType(.newPassword)
-            } header: {
-                Text("New Password")
-            } footer: {
-                Text("Password must be at least 8 characters. Other devices signed into your account will be signed out.")
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
-            .listRowBackground(AppTheme.surface)
-
-            if let localError {
-                Section {
-                    Text(localError)
-                        .font(AppTheme.bodyFont(size: 13))
-                        .foregroundStyle(AppTheme.error)
-                }
-                .listRowBackground(AppTheme.surface)
-            }
-
-            Section {
-                Button {
-                    submit()
-                } label: {
-                    HStack {
-                        Spacer()
-                        if isSubmitting {
-                            ProgressView()
-                                .tint(AppTheme.textPrimary)
-                        } else {
-                            Text("Change Password")
-                                .font(AppTheme.bodyFont(size: 15).weight(.semibold))
+            LKCard(title: "New") {
+                VStack(alignment: .leading, spacing: 10) {
+                    LKField(placeholder: "New password", text: $newPassword, secure: true)
+                        .textContentType(.newPassword)
+                    HStack(spacing: 4) {
+                        ForEach(0..<4, id: \.self) { i in
+                            Capsule()
+                                .fill(i < strength ? [AppTheme.error, Color.orange, Color.yellow, AppTheme.success][max(strength - 1, 0)] : AppTheme.textSecondary.opacity(0.15))
+                                .frame(height: 5)
                         }
-                        Spacer()
                     }
-                    .foregroundStyle(AppTheme.dynamicAccent)
+                    .animation(.easeInOut(duration: 0.2), value: strength)
+                    LKField(placeholder: "Confirm new password", text: $confirmPassword, secure: true)
+                        .textContentType(.newPassword)
+                    VStack(alignment: .leading, spacing: 4) {
+                        check(newPassword.count >= 8, "At least 8 characters")
+                        check(!confirmPassword.isEmpty && newPassword == confirmPassword, "Both new passwords match")
+                    }
                 }
-                .disabled(!canSubmit)
             }
-            .listRowBackground(AppTheme.surface)
+            if let localError {
+                LKBanner(icon: "exclamationmark.triangle.fill", text: localError, tint: AppTheme.error)
+            }
+            LKPrimaryButton(title: "Change Password", icon: "lock.rotation", tint: .orange, busy: isSubmitting) { submit() }
+                .disabled(!canSubmit)
+                .opacity(canSubmit || isSubmitting ? 1 : 0.5)
         }
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
-        .navigationTitle("Change Password")
-        .navigationBarTitleDisplayMode(.inline)
         .alert("Password Updated", isPresented: $didSucceed) {
             Button("OK") { dismiss() }
         } message: {

@@ -9,32 +9,29 @@ struct TimeCapsulesView: View {
     @State private var showSealSheet = false
 
     var body: some View {
-        List {
+        LKPage(title: "Time Capsules", subtitle: "Songs sealed now, opened later.", icon: "shippingbox.fill", tint: .brown) {
             if store.capsules.isEmpty {
-                Section {
+                LKSection {
                     EmptyStateView(
                         icon: "shippingbox",
                         title: "No Time Capsules Yet",
                         message: "Seal a set of songs and a note to your future self — it stays locked until the date you choose."
                     )
                 }
-                .listRowBackground(Color.clear)
             } else {
-                Section {
+                LKSection {
                     ForEach(store.capsules) { capsule in
                         NavigationLink(destination: TimeCapsuleDetailView(capsule: capsule)) {
                             capsuleRow(capsule)
                         }
-                    }
-                    .onDelete { offsets in
-                        for index in offsets { store.delete(store.capsules[index].id) }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button(role: .destructive) { store.delete(capsule.id) } label: { Label("Delete Capsule", systemImage: "trash") }
+                        }
                     }
                 }
-                .listRowBackground(AppTheme.surface)
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(GalleryBackgroundView().ignoresSafeArea())
         .navigationTitle("Time Capsules")
         .navigationBarTitleDisplayMode(.inline)
@@ -109,14 +106,14 @@ private struct SealTimeCapsuleView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Name & Note") {
+            LKScroll {
+                LKSection("Name & Note") {
                     TextField("Capsule name", text: $name)
                     TextField("A note to your future self (optional)", text: $message, axis: .vertical)
                         .lineLimit(3...6)
                 }
 
-                Section("What's Inside") {
+                LKSection("What's Inside") {
                     Picker("Source", selection: $source) {
                         ForEach(Source.allCases) { Text($0.rawValue).tag($0) }
                     }
@@ -142,7 +139,7 @@ private struct SealTimeCapsuleView: View {
                         .foregroundStyle(AppTheme.textSecondary)
                 }
 
-                Section("Unlock Date") {
+                LKSection("Unlock Date") {
                     DatePicker("Opens on", selection: $unlockDate, in: Date()..., displayedComponents: .date)
                 }
             }
@@ -215,19 +212,18 @@ struct TimeCapsuleDetailView: View {
     }
 
     private var unlockedContent: some View {
-        List {
+        LKScroll {
             if !capsule.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Section {
+                LKSection {
                     Text(capsule.message)
                         .font(.body)
                         .foregroundStyle(AppTheme.textPrimary)
                 } header: {
                     Text("Sealed \(capsule.createdAt.formatted(date: .abbreviated, time: .omitted))")
                 }
-                .listRowBackground(AppTheme.surface)
             }
 
-            Section {
+            LKSection {
                 Button {
                     player.setQueue(songs, startIndex: 0, autoplay: true)
                 } label: {
@@ -239,10 +235,7 @@ struct TimeCapsuleDetailView: View {
             } header: {
                 Text("\(songs.count) Songs")
             }
-            .listRowBackground(AppTheme.surface)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(GalleryBackgroundView().ignoresSafeArea())
     }
 }

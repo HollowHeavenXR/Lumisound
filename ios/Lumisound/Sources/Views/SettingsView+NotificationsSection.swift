@@ -57,74 +57,65 @@ extension SettingsView {
 
 struct NotificationsSettingsView: View {
     @ObservedObject private var service = NotificationService.shared
-
-    /// Every group starts expanded; collapsing is purely a display
-    /// convenience so a long list of topics (as more get registered over
-    /// time) doesn't force a wall of toggles on first open.
-    @State private var collapsedGroups: Set<NotificationTopicGroup> = []
+    /// nil = every group.
+    @State private var group: NotificationTopicGroup?
 
     var body: some View {
-        List {
-            statusSection
-            masterToggleSection
-
-            ForEach(NotificationTopicRegistry.grouped, id: \.group) { entry in
-                topicGroupSection(entry.group, entry.topics)
+        LKPage(title: "Notifications", subtitle: "Choose exactly what Lumisound may tell you about.",
+               icon: "bell.badge.fill", tint: .orange, showsHero: false) {
+            statusCard
+            if let error = service.lastAuthorizationError {
+                LKBanner(icon: "exclamationmark.triangle.fill", text: error, tint: AppTheme.warning)
+            }
+            groupChips
+            ForEach(visibleGroups, id: \.group) { entry in
+                groupCard(entry.group, entry.topics)
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
-        .navigationTitle("Notifications")
-        .navigationBarTitleDisplayMode(.large)
         .task {
-            // Re-checks (never re-prompts once determined) so the status
-            // card is accurate the moment this screen opens, even if the
-            // user just came back from granting access in iOS Settings.
+            // Re-checks (never re-prompts once determined) so the status is
+            // accurate the moment this opens, e.g. after granting access in iOS Settings.
             await service.requestAuthorization()
         }
     }
 
-    // MARK: Status
+    // MARK: Status + master switch
 
-    private var statusSection: some View {
-        Section {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: statusIcon)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(statusColor)
-                    .frame(width: 28)
+    private var statusCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle().fill(statusColor.opacity(0.18)).frame(width: 58, height: 58)
+                    Image(systemName: statusIcon)
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(statusColor)
+                        .symbolEffect(.bounce, value: service.isEnabled)
+                }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(statusTitle)
-                        .font(AppTheme.headlineFont(size: 15))
-                        .foregroundStyle(AppTheme.textPrimary)
-                    Text(statusDetail)
-                        .font(AppTheme.bodyFont(size: 12))
-                        .foregroundStyle(AppTheme.textSecondary)
+                    Text(statusTitle).font(.title3.bold()).foregroundStyle(AppTheme.textPrimary)
+                    Text(statusDetail).font(.caption).foregroundStyle(AppTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.vertical, 4)
-            .animation(.easeInOut(duration: 0.2), value: statusTitle)
-
+            Toggle(isOn: $service.isEnabled) {
+                Text("Allow Lumisound notifications").font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.textPrimary)
+            }
+            .tint(.orange)
             if service.isEnabled && !service.isAuthorized {
-                Button {
-                    openSystemSettings()
-                } label: {
-                    Label("Open iOS Settings", systemImage: "gearshape")
-                        .foregroundStyle(AppTheme.dynamicAccent)
-                }
+                LKPrimaryButton(title: "Open iOS Settings", icon: "gearshape.fill", tint: .orange) { openSystemSettings() }
             }
-
-            if let error = service.lastAuthorizationError {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text("\(enabledCount) of \(NotificationTopicRegistry.grouped.flatMap(\.topics).count) alerts on")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(AppTheme.textSecondary)
         }
-        .listRowBackground(tintedRowBackground(.orange))
+        .padding(16)
+        .background(LKCardBackground(tint: .orange))
+        .animation(.easeInOut(duration: 0.2), value: statusTitle)
+    }
+
+    private var enabledCount: Int {
+        NotificationTopicRegistry.grouped.flatMap(\.topics).filter { service.isTopicEnabled($0.id) }.count
     }
 
     private var statusIcon: String {
@@ -138,17 +129,15 @@ struct NotificationsSettingsView: View {
     }
 
     private var statusTitle: String {
-        guard service.isEnabled else { return "Notifications Off" }
-        return service.isAuthorized ? "Notifications Active" : "Permission Needed"
+        guard service.isEnabled else { return "Notifications off" }
+        return service.isAuthorized ? "You're in the loop" : "iOS is blocking alerts"
     }
 
     private var statusDetail: String {
-        guard service.isEnabled else {
-            return "Turn on Device Notifications below to receive alerts."
-        }
+        guard service.isEnabled else { return "Nothing will be sent. Your choices below are kept for when you turn it back on." }
         return service.isAuthorized
-            ? "Lumisound can alert you in the background and while the app is open."
-            : "Notifications are turned off in iOS Settings for Lumisound. Enable them there to receive any of the alerts below."
+            ? "Alerts arrive in the background and while Lumisound is open."
+            : "Notifications are off for Lumisound in iOS Settings, so none of the alerts below can arrive."
     }
 
     private func openSystemSettings() {
@@ -156,82 +145,63 @@ struct NotificationsSettingsView: View {
         UIApplication.shared.open(url)
     }
 
-    // MARK: Master toggle
+    // MARK: Groups
 
-    private var masterToggleSection: some View {
-        Section {
-            Toggle(isOn: $service.isEnabled) {
-                Label("Device Notifications", systemImage: "bell.badge")
-                    .foregroundStyle(AppTheme.textPrimary)
-            }
-            .tint(.orange)
-        } footer: {
-            Text("Master switch for every notification type below. Turning this off silences all of them, regardless of their individual toggle — turn it back on to restore whatever you had enabled per category.")
-                .font(AppTheme.bodyFont(size: 12))
-                .foregroundStyle(AppTheme.textSecondary)
-        }
-        .listRowBackground(tintedRowBackground(.orange))
+    private var visibleGroups: [(group: NotificationTopicGroup, topics: [NotificationTopic])] {
+        NotificationTopicRegistry.grouped
+            .filter { group == nil || $0.group == group }
+            .map { (group: $0.group, topics: $0.topics) }
     }
 
-    // MARK: Per-topic groups (collapsible)
-
-    @ViewBuilder
-    private func topicGroupSection(_ group: NotificationTopicGroup, _ topics: [NotificationTopic]) -> some View {
-        let isCollapsed = collapsedGroups.contains(group)
-        Section {
-            if !isCollapsed {
-                ForEach(topics) { topic in
-                    topicRow(topic)
+    private var groupChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Button { withAnimation { group = nil } } label: {
+                    LKChip(title: "All", icon: "square.grid.2x2", selected: group == nil, tint: .orange)
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        } header: {
-            Button {
-                withAnimation(.easeInOut(duration: 0.22)) {
-                    if isCollapsed {
-                        collapsedGroups.remove(group)
-                    } else {
-                        collapsedGroups.insert(group)
+                .buttonStyle(.plain)
+                ForEach(NotificationTopicRegistry.grouped, id: \.group) { entry in
+                    Button { withAnimation { group = entry.group } } label: {
+                        LKChip(title: entry.group.displayName, icon: entry.group.icon, selected: group == entry.group, tint: .orange)
                     }
+                    .buttonStyle(.plain)
                 }
-            } label: {
-                HStack {
-                    Label(group.displayName.uppercased(), systemImage: group.icon)
-                        .font(AppTheme.bodyFont(size: 11))
-                        .foregroundStyle(AppTheme.textSecondary)
-                        .kerning(0.8)
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(AppTheme.textSecondary)
-                        .rotationEffect(.degrees(isCollapsed ? -90 : 0))
-                }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
         }
-        .listRowBackground(tintedRowBackground(.orange))
-        .animation(.easeInOut(duration: 0.22), value: isCollapsed)
     }
 
-    private func topicRow(_ topic: NotificationTopic) -> some View {
-        Toggle(isOn: Binding(
-            get: { service.isTopicEnabled(topic.id) },
-            set: { service.setTopicEnabled($0, for: topic.id) }
-        )) {
-            VStack(alignment: .leading, spacing: 3) {
-                Label(topic.displayName, systemImage: topic.icon)
-                    .foregroundStyle(AppTheme.textPrimary)
-                Text(topic.detail)
-                    .font(AppTheme.bodyFont(size: 12))
+    private func groupCard(_ group: NotificationTopicGroup, _ topics: [NotificationTopic]) -> some View {
+        let on = topics.filter { service.isTopicEnabled($0.id) }.count
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(group.displayName, systemImage: group.icon)
+                    .font(.system(size: 11, weight: .bold))
+                    .textCase(.uppercase)
+                    .kerning(1)
                     .foregroundStyle(AppTheme.textSecondary)
-                    .padding(.leading, 28)
-                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button(on == topics.count ? "Mute all" : "Turn all on") {
+                    let target = on != topics.count
+                    for t in topics { service.setTopicEnabled(target, for: t.id) }
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.orange)
+                .disabled(!service.isEnabled)
             }
+            .padding(.horizontal, 6)
+            VStack(spacing: 0) {
+                ForEach(Array(topics.enumerated()), id: \.element.id) { i, topic in
+                    LKToggle(icon: topic.icon, tint: .orange, title: topic.displayName, subtitle: topic.detail, isOn: Binding(
+                        get: { service.isTopicEnabled(topic.id) },
+                        set: { service.setTopicEnabled($0, for: topic.id) }
+                    ))
+                    .disabled(!service.isEnabled)
+                    .opacity(service.isEnabled ? 1 : 0.5)
+                    if i < topics.count - 1 { LKDivider() }
+                }
+            }
+            .padding(14)
+            .background(LKCardBackground())
         }
-        .tint(.orange)
-        .disabled(!service.isEnabled)
-        .opacity(service.isEnabled ? 1 : 0.5)
-        .animation(.easeInOut(duration: 0.18), value: service.isEnabled)
     }
 }

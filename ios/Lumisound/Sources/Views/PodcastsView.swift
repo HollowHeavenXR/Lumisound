@@ -28,8 +28,8 @@ struct PodcastsView: View {
             } else if subscriptions.isEmpty {
                 emptyState
             } else {
-                List {
-                    Section {
+                LKPage(title: "Podcasts", subtitle: "Shows you follow, episodes you're on.", icon: "mic.fill", tint: .purple) {
+                    LKSection {
                         Toggle("Auto-Download New Episodes", isOn: $autoDownloadEnabled)
                     } footer: {
                         Text("Downloads episodes published in the last 2 days, checked every few hours (up to 3 per show per check).")
@@ -38,21 +38,23 @@ struct PodcastsView: View {
                         NavigationLink(destination: PodcastEpisodesView(subscription: sub)) {
                             row(for: sub)
                         }
-                        .swipeActions(edge: .leading) {
+                        .buttonStyle(LKRowLinkStyle())
+                        // Long-press for the actions a list used to offer by swipe.
+                        .contextMenu {
                             Button {
                                 toggleMute(sub)
                             } label: {
-                                Label(
-                                    sub.notificationsMuted ? "Unmute" : "Mute",
-                                    systemImage: sub.notificationsMuted ? "bell" : "bell.slash"
-                                )
+                                Label(sub.notificationsMuted ? "Unmute" : "Mute",
+                                      systemImage: sub.notificationsMuted ? "bell" : "bell.slash")
                             }
-                            .tint(AppTheme.dynamicAccent)
+                            Button(role: .destructive) {
+                                if let i = subscriptions.firstIndex(where: { $0.id == sub.id }) { delete(at: IndexSet(integer: i)) }
+                            } label: {
+                                Label("Unsubscribe", systemImage: "trash")
+                            }
                         }
                     }
-                    .onDelete(perform: delete)
                 }
-                .listStyle(.plain)
             }
         }
         .navigationTitle("Podcasts")
@@ -264,7 +266,7 @@ private struct AddPodcastSheet: View {
     // MARK: Search tab
 
     private var searchBody: some View {
-        List {
+        LKScroll {
             if let errorText {
                 Text(errorText).foregroundStyle(.red)
             }
@@ -281,7 +283,6 @@ private struct AddPodcastSheet: View {
                 .disabled(subscribingFeedURL != nil)
             }
         }
-        .listStyle(.plain)
         .searchable(text: $searchQuery, prompt: "Search podcasts")
         .onChange(of: searchQuery) { newValue in
             searchTask?.cancel()
@@ -296,7 +297,7 @@ private struct AddPodcastSheet: View {
     // MARK: Trending tab
 
     private var trendingBody: some View {
-        List {
+        LKScroll {
             if isLoadingTrending && trendingResults.isEmpty {
                 HStack { Spacer(); ProgressView(); Spacer() }
             } else if trendingResults.isEmpty && hasLoadedTrending {
@@ -310,7 +311,6 @@ private struct AddPodcastSheet: View {
                 .disabled(subscribingFeedURL != nil)
             }
         }
-        .listStyle(.plain)
         .task {
             guard !hasLoadedTrending else { return }
             isLoadingTrending = true
@@ -348,8 +348,8 @@ private struct AddPodcastSheet: View {
     // MARK: Feed URL tab
 
     private var urlBody: some View {
-        Form {
-            Section {
+        LKScroll {
+            LKSection {
                 TextField("https://example.com/feed.xml", text: $feedURLText)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
@@ -361,7 +361,7 @@ private struct AddPodcastSheet: View {
                     Text(errorText).foregroundStyle(.red)
                 }
             }
-            Section {
+            LKSection {
                 if subscribingFeedURL != nil {
                     HStack { Spacer(); ProgressView(); Spacer() }
                 } else {

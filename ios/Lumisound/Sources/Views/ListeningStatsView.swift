@@ -15,34 +15,55 @@ struct ListeningStatsView: View {
     @State private var topArtists: [(artist: String, plays: Int)] = []
 
     var body: some View {
-        List {
-            summarySection
-            topSongsSection
-            topArtistsSection
-        }
-        .scrollContentBackground(.hidden)
-        .background(EditionScreenBackground())
-        .navigationTitle("Listening Stats")
-        .navigationBarTitleDisplayMode(.inline)
-        .onAppear(perform: recompute)
-    }
-
-    @ViewBuilder
-    private var summarySection: some View {
-        Section {
-            HStack {
-                statTile(value: "\(totalPlays)", label: "Total Plays")
-                Divider().frame(height: 36)
-                statTile(value: estimatedTimeText, label: "Est. Listening Time")
+        LKPage(title: "Listening Stats", subtitle: "All-time, from this device only.", icon: "chart.bar.fill", tint: .pink) {
+            HStack(spacing: 10) {
+                LKStat(value: "\(totalPlays)", label: "Plays", icon: "play.fill", tint: .pink)
+                LKStat(value: estimatedTimeText, label: "Listening time", icon: "clock.fill", tint: .purple)
+                LKStat(value: "\(topArtists.count)", label: "Top artists", icon: "music.mic", tint: .orange)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-        } footer: {
-            Text("Counts a play once a track has been playing for at least 5 seconds, so instant skips don't inflate the numbers. Listening time is estimated from play count × track length, not actual seconds heard.")
-                .font(.caption)
-                .foregroundStyle(AppTheme.textSecondary)
+            if topSongs.isEmpty && topArtists.isEmpty {
+                LKEmpty(icon: "chart.bar", title: "No listening yet", message: "Play a few songs and your stats appear here.", tint: .pink)
+            }
+            if !topSongs.isEmpty {
+                podium
+                LKCard(title: "Top songs") {
+                    ForEach(Array(topSongs.enumerated()), id: \.offset) { index, entry in
+                        HStack(spacing: 10) {
+                            Text("\(index + 1)")
+                                .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
+                                .foregroundStyle(index < 3 ? .pink : AppTheme.textSecondary)
+                                .frame(width: 22)
+                            SongRow(song: entry.song, isCurrent: false)
+                            Text("\(entry.plays)×").font(.caption.monospacedDigit()).foregroundStyle(.pink)
+                        }
+                        if index < topSongs.count - 1 { LKDivider(inset: 32) }
+                    }
+                }
+            }
+            if !topArtists.isEmpty {
+                LKCard(title: "Top artists") {
+                    let most = Double(topArtists.first?.plays ?? 1)
+                    ForEach(Array(topArtists.enumerated()), id: \.offset) { index, entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(entry.artist).font(.subheadline).foregroundStyle(AppTheme.textPrimary).lineLimit(1)
+                                Spacer()
+                                Text("\(entry.plays)").font(.caption.monospacedDigit()).foregroundStyle(AppTheme.textSecondary)
+                            }
+                            GeometryReader { geo in
+                                Capsule().fill(Color.purple.opacity(index == 0 ? 0.9 : 0.45))
+                                    .frame(width: max(6, geo.size.width * Double(entry.plays) / max(most, 1)))
+                            }
+                            .frame(height: 5)
+                        }
+                        .padding(.vertical, 6)
+                    }
+                }
+            }
+            Text("A play counts after 5 seconds. Listening time is estimated from plays × track length.")
+                .font(.caption2).foregroundStyle(AppTheme.textSecondary).padding(.horizontal, 6)
         }
-        .listRowBackground(tintedRowBackground(.pink))
+        .onAppear(perform: recompute)
     }
 
     private var estimatedTimeText: String {
@@ -52,73 +73,27 @@ struct ListeningStatsView: View {
         return "\(minutes)m"
     }
 
-    private func statTile(value: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.title2.bold())
-                .foregroundStyle(AppTheme.textPrimary)
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(AppTheme.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    @ViewBuilder
-    private var topSongsSection: some View {
-        if !topSongs.isEmpty {
-            Section {
-                ForEach(Array(topSongs.enumerated()), id: \.offset) { index, entry in
-                    HStack(spacing: 12) {
-                        Text("\(index + 1)")
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(AppTheme.textSecondary)
-                            .frame(width: 20)
-                        SongRow(song: entry.song, isCurrent: false)
-                        Text("\(entry.plays)×")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(AppTheme.dynamicAccent)
-                    }
+    /// The three most-played songs on a podium.
+    private var podium: some View {
+        let top = Array(topSongs.prefix(3))
+        let order = top.count == 3 ? [1, 0, 2] : Array(0..<top.count)
+        return HStack(alignment: .bottom, spacing: 10) {
+            ForEach(order, id: \.self) { i in
+                let entry = top[i]
+                VStack(spacing: 6) {
+                    Text(i == 0 ? "🥇" : i == 1 ? "🥈" : "🥉").font(.title2)
+                    Text(entry.song.displayName).font(.caption.weight(.semibold)).foregroundStyle(AppTheme.textPrimary)
+                        .lineLimit(2).multilineTextAlignment(.center)
+                    Text("\(entry.plays) plays").font(.caption2).foregroundStyle(AppTheme.textSecondary)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.pink.opacity(i == 0 ? 0.85 : 0.45).gradient)
+                        .frame(height: i == 0 ? 70 : i == 1 ? 50 : 36)
                 }
-            } header: {
-                sectionHeader("Top Songs")
+                .frame(maxWidth: .infinity)
             }
-            .listRowBackground(tintedRowBackground(.pink))
         }
-    }
-
-    @ViewBuilder
-    private var topArtistsSection: some View {
-        if !topArtists.isEmpty {
-            Section {
-                ForEach(Array(topArtists.enumerated()), id: \.offset) { index, entry in
-                    HStack(spacing: 12) {
-                        Text("\(index + 1)")
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(AppTheme.textSecondary)
-                            .frame(width: 20)
-                        Text(entry.artist)
-                            .foregroundStyle(AppTheme.textPrimary)
-                        Spacer()
-                        Text("\(entry.plays) plays")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(AppTheme.dynamicAccent)
-                    }
-                }
-            } header: {
-                sectionHeader("Top Artists")
-            }
-            .listRowBackground(tintedRowBackground(.pink))
-        } else if topSongs.isEmpty {
-            Section {
-                EmptyStateView(
-                    icon: "chart.bar",
-                    title: "No listening history yet",
-                    message: "Play a few tracks and your stats will show up here."
-                )
-            }
-            .listRowBackground(Color.clear)
-        }
+        .padding(14)
+        .background(LKCardBackground(tint: .pink))
     }
 
     private func recompute() {

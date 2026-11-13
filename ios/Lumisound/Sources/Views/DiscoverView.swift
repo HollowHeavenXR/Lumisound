@@ -65,36 +65,38 @@ struct DiscoverView: View {
         VStack(spacing: 0) {
             tabSelector
 
-            List {
+            LKPage(title: "Discover", subtitle: "What other listeners are playing and loving.", icon: "sparkles", tint: .purple) {
                 if account.isLoggedIn {
-                    Section {
+                    LKSection {
                         NavigationLink(destination: DiscoverMixView()) {
                             Label("Discover Mix", systemImage: "sparkles")
                                 .foregroundStyle(AppTheme.textPrimary)
                         }
+                        .buttonStyle(LKRowLinkStyle())
                         NavigationLink(destination: OnThisDayView()) {
                             Label("On This Day", systemImage: "clock.arrow.circlepath")
                                 .foregroundStyle(AppTheme.textPrimary)
                         }
+                        .buttonStyle(LKRowLinkStyle())
                         NavigationLink(destination: SubscriptionsView()) {
                             Label("Subscriptions", systemImage: "person.crop.circle.badge.checkmark")
                                 .foregroundStyle(AppTheme.textPrimary)
                         }
+                        .buttonStyle(LKRowLinkStyle())
                         NavigationLink(destination: ListeningTwinView()) {
                             Label("Listening Twin", systemImage: "person.2.wave.2")
                                 .foregroundStyle(AppTheme.textPrimary)
                         }
+                        .buttonStyle(LKRowLinkStyle())
                     }
-                    .listRowBackground(AppTheme.surface)
                 }
 
                 if !(account.currentUser?.shareListeningActivity ?? false) {
-                    Section {
+                    LKSection {
                         Text("Turn on \"Share Listening Activity\" in Account settings to appear here and help power Trending.")
                             .font(AppTheme.bodyFont(size: 12))
                             .foregroundStyle(AppTheme.textSecondary)
                     }
-                    .listRowBackground(AppTheme.surface)
                 }
 
                 switch selectedTab {
@@ -102,7 +104,7 @@ struct DiscoverView: View {
                     if account.trendingTracks.isEmpty {
                         emptyRow("Nothing trending yet. Check back once more listeners opt in.")
                     } else {
-                        Section {
+                        LKSection {
                             ForEach(Array(account.trendingTracks.enumerated()), id: \.element.id) { index, track in
                                 HStack(spacing: 12) {
                                     Text("\(index + 1)")
@@ -135,14 +137,13 @@ struct DiscoverView: View {
                         } header: {
                             sectionHeader("Trending — last 7 days")
                         }
-                        .listRowBackground(AppTheme.surface)
                     }
 
                 case .activity:
                     if account.socialActivity.isEmpty {
                         emptyRow("No recent activity from users sharing their listening.")
                     } else {
-                        Section {
+                        LKSection {
                             ForEach(account.socialActivity) { entry in
                                 HStack(spacing: 12) {
                                     Circle()
@@ -176,14 +177,11 @@ struct DiscoverView: View {
                         } header: {
                             sectionHeader("Recent Activity")
                         }
-                        .listRowBackground(AppTheme.surface)
                     }
                 }
             }
             // Without an explicit style this defaults to a grouped-card look —
             // see FavoritesView's identical fix.
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
         }
         .background(GalleryBackgroundView().ignoresSafeArea())
         .navigationTitle("Discover")
@@ -218,11 +216,10 @@ struct DiscoverView: View {
     }
 
     private func emptyRow(_ text: String) -> some View {
-        Section {
+        LKSection {
             Text(text)
                 .font(AppTheme.bodyFont(size: 13))
                 .foregroundStyle(AppTheme.textSecondary)
         }
-        .listRowBackground(AppTheme.surface)
     }
 }

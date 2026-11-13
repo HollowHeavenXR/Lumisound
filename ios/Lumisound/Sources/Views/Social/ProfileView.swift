@@ -76,6 +76,34 @@ struct ProfileView: View {
     private var mainAccentColor: Color { SocialAccentPalette.color(for: mainAccentHex) ?? AppTheme.dynamicAccent }
     private var subAccentColor: Color { SocialAccentPalette.color(for: subAccentHex) ?? AppTheme.accentSoft }
 
+    /// The editor's four panels.
+    enum Panel: String, CaseIterable, Identifiable {
+        case identity = "Identity", style = "Style", showcase = "Showcase", privacy = "Privacy"
+        var id: String { rawValue }
+        var icon: String {
+            switch self {
+            case .identity: return "person.text.rectangle"
+            case .style: return "paintpalette"
+            case .showcase: return "star.square.on.square"
+            case .privacy: return "eye.slash"
+            }
+        }
+    }
+
+    @AppStorage("profileEditor.panel") private var panelRaw = Panel.identity.rawValue
+    private var panel: Panel { Panel(rawValue: panelRaw) ?? .identity }
+    /// What the server last confirmed, to tell whether there is anything to save.
+    @State private var savedSignature = ""
+
+    private var editSignature: String {
+        [draftBio.trimmingCharacters(in: .whitespacesAndNewlines), mainAccentHex ?? "", subAccentHex ?? "", "\(shareNowPlaying)",
+         pronouns.trimmingCharacters(in: .whitespacesAndNewlines), statusEmoji.trimmingCharacters(in: .whitespacesAndNewlines),
+         statusText.trimmingCharacters(in: .whitespacesAndNewlines), avatarFrame.rawValue, accentGlowIntensity,
+         avatarDecoration.rawValue, profileEffect.rawValue].joined(separator: "\u{1F}")
+    }
+
+    private var hasUnsavedChanges: Bool { hasLoadedProfile && editSignature != savedSignature }
+
     var body: some View {
         ZStack(alignment: .top) {
             Color.clear.ignoresSafeArea()
@@ -86,9 +114,7 @@ struct ProfileView: View {
 
             ScrollView {
                 VStack(spacing: 16) {
-                    // MARK: Header — banner + avatar mirrors how this profile
-                    // renders to others, using the user's own chosen
-                    // main/sub accent colors.
+                    // Live preview: exactly how visitors see the header.
                     ProfileHeaderCard(
                         mainAccent: mainAccentColor,
                         subAccent: subAccentColor,
@@ -110,17 +136,8 @@ struct ProfileView: View {
                                 AnimatedImageView(image: img, contentMode: .scaleAspectFill)
                             } else {
                                 Rectangle()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [mainAccentColor, subAccentColor],
-                                            startPoint: .topLeading, endPoint: .bottomTrailing
-                                        )
-                                    )
-                                    .overlay(
-                                        Text(initials)
-                                            .font(.title.bold())
-                                            .foregroundStyle(.white)
-                                    )
+                                    .fill(LinearGradient(colors: [mainAccentColor, subAccentColor], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                    .overlay(Text(initials).font(.title.bold()).foregroundStyle(.white))
                             }
                             if isUploadingAvatar {
                                 Color.black.opacity(0.45)
@@ -128,454 +145,20 @@ struct ProfileView: View {
                             }
                         }
                     } action: {
-                        VStack(spacing: 8) {
-                            LumiMenu {
-                                Button {
-                                    showAvatarPhotosPicker = true
-                                } label: {
-                                    Label("Photos", systemImage: "photo")
-                                }
-                                Button {
-                                    showAvatarGifPicker = true
-                                } label: {
-                                    Label("GIFs", systemImage: "party.popper")
-                                }
-                            } label: {
-                                HStack {
-                                    Image(systemName: "person.crop.circle")
-                                    Text("Profile Icon")
-                                        .font(AppTheme.bodyFont(size: 13))
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .foregroundStyle(mainAccentColor)
-                                .adaptiveGlass(
-                                    tint: mainAccentColor.opacity(0.14),
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous),
-                                    fallback: AppTheme.surface
-                                )
-                            }
-                            .photosPicker(isPresented: $showAvatarPhotosPicker, selection: $photosPickerItem, matching: .images, photoLibrary: .shared())
-                            .onChange(of: photosPickerItem) { item in
-                                guard let item else { return }
-                                isUploadingAvatar = true
-                                Task {
-                                    defer { isUploadingAvatar = false }
-                                    if let data = try? await item.loadTransferable(type: Data.self) {
-                                        await account.uploadAvatarData(data)
-                                    }
-                                    photosPickerItem = nil
-                                }
-                            }
-
-                            HStack(spacing: 8) {
-                                LumiMenu {
-                                    Button {
-                                        showBannerPhotosPicker = true
-                                    } label: {
-                                        Label("Photos", systemImage: "photo")
-                                    }
-                                    Button {
-                                        showBannerGifPicker = true
-                                    } label: {
-                                        Label("GIFs", systemImage: "party.popper")
-                                    }
-                                } label: {
-                                    HStack {
-                                        if isUploadingBanner {
-                                            ProgressView().tint(subAccentColor)
-                                        } else {
-                                            Image(systemName: "photo.on.rectangle.angled")
-                                        }
-                                        Text("Background Artwork")
-                                            .font(AppTheme.bodyFont(size: 13))
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
-                                    .foregroundStyle(subAccentColor)
-                                    .adaptiveGlass(
-                                        tint: subAccentColor.opacity(0.14),
-                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous),
-                                        fallback: AppTheme.surface
-                                    )
-                                }
-                                .disabled(isUploadingBanner)
-                                .photosPicker(isPresented: $showBannerPhotosPicker, selection: $bannerPickerItem, matching: .images, photoLibrary: .shared())
-                                .onChange(of: bannerPickerItem) { item in
-                                    guard let item else { return }
-                                    isUploadingBanner = true
-                                    // `@MainActor in` is load-bearing, not
-                                    // decoration: this closure isn't itself
-                                    // actor-isolated, so a plain `Task { }`
-                                    // here has no guaranteed home thread —
-                                    // after awaiting `uploadBannerData`/the
-                                    // detached GIF decode below, it can
-                                    // resume on a background thread and
-                                    // mutate `@State bannerImage` from off
-                                    // the main thread. SwiftUI's view-graph
-                                    // isn't thread-safe against that: it
-                                    // doesn't crash, it silently corrupts
-                                    // the *whole* screen's layout (every
-                                    // card rendering as a huge blank
-                                    // rounded rect) — this is what caused
-                                    // the "profile stretches out" bug after
-                                    // setting a banner. Same idiom this
-                                    // codebase already uses everywhere else
-                                    // a Task needs to safely touch UI state
-                                    // from a non-isolated context.
-                                    Task { @MainActor in
-                                        defer { isUploadingBanner = false }
-                                        if let data = try? await item.loadTransferable(type: Data.self) {
-                                            await social.uploadBannerData(data)
-                                            // Optimistic local update, same
-                                            // reasoning as avatar upload —
-                                            // don't make the user wait on a
-                                            // round-trip fetch to see their
-                                            // own change take effect.
-                                            if data.isEmpty == false {
-                                                bannerImage = isGIFData(data) ? await UIImage.gifImageAsync(data: data) : UIImage(data: data)
-                                            }
-                                        }
-                                        bannerPickerItem = nil
-                                    }
-                                }
-
-                                if bannerImage != nil {
-                                    Button {
-                                        Task {
-                                            await social.removeBanner()
-                                            bannerImage = nil
-                                        }
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundStyle(AppTheme.textSecondary)
-                                            .padding(10)
-                                            .adaptiveGlass(
-                                                in: RoundedRectangle(cornerRadius: 12, style: .continuous),
-                                                fallback: AppTheme.surface
-                                            )
-                                    }
-                                }
-                            }
-                        }
+                        EmptyView()
                     }
 
-                    // MARK: Now Playing — live local playback state, not a
-                    // fetch (this is the owner's own device).
-                    if let song = player.currentSong, player.isPlaying {
-                        ProfileInfoCard(title: "Listening To", icon: "waveform", tint: mainAccentColor) {
-                            NowPlayingActivityRow(
-                                title: song.title, artist: song.artist.isEmpty ? nil : song.artist,
-                                tint: mainAccentColor, song: song
-                            )
+                    panelPicker
+
+                    Group {
+                        switch panel {
+                        case .identity: identityPanel
+                        case .style: stylePanel
+                        case .showcase: showcasePanel
+                        case .privacy: privacyPanel
                         }
                     }
-
-                    // MARK: Bio
-                    ProfileInfoCard(title: "Bio / Status", icon: "text.quote", tint: mainAccentColor) {
-                        TextField("Add a short bio or status…", text: $draftBio, axis: .vertical)
-                            .lineLimit(3...6)
-                            .foregroundStyle(AppTheme.textPrimary)
-                            .onChange(of: draftBio) { newValue in
-                                if newValue.count > 280 { draftBio = String(newValue.prefix(280)) }
-                            }
-                        HStack {
-                            Text("**Bold**, *italic*, and [links](url) are supported.")
-                                .font(.caption2)
-                                .foregroundStyle(AppTheme.textSecondary.opacity(0.7))
-                            Spacer()
-                            Text("\(draftBio.count)/280")
-                                .font(AppTheme.monoFont(size: 11))
-                                .foregroundStyle(AppTheme.textSecondary)
-                        }
-                    }
-
-                    // MARK: About You — pronouns + a short Discord-style
-                    // custom status, distinct from the longer Bio card above.
-                    ProfileInfoCard(title: "About You", icon: "person.text.rectangle", tint: mainAccentColor) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            TextField("Pronouns (e.g. she/her)", text: $pronouns)
-                                .font(AppTheme.bodyFont(size: 14))
-                                .foregroundStyle(AppTheme.textPrimary)
-                                .onChange(of: pronouns) { newValue in
-                                    if newValue.count > 30 { pronouns = String(newValue.prefix(30)) }
-                                }
-                            Divider().background(AppTheme.textSecondary.opacity(0.15))
-                            HStack(spacing: 8) {
-                                TextField("🎧", text: $statusEmoji)
-                                    .font(AppTheme.bodyFont(size: 14))
-                                    .frame(width: 40)
-                                    .onChange(of: statusEmoji) { newValue in
-                                        if newValue.count > 8 { statusEmoji = String(newValue.prefix(8)) }
-                                    }
-                                TextField("What are you up to?", text: $statusText)
-                                    .font(AppTheme.bodyFont(size: 14))
-                                    .foregroundStyle(AppTheme.textPrimary)
-                                    .onChange(of: statusText) { newValue in
-                                        if newValue.count > 60 { statusText = String(newValue.prefix(60)) }
-                                    }
-                            }
-                        }
-                    }
-
-                    // MARK: Member Since
-                    ProfileInfoCard(title: "Member Since", icon: "calendar", tint: subAccentColor) {
-                        MemberSinceRow(memberSince: memberSince)
-                    }
-
-                    // MARK: Badges — milestone achievement chips, no privacy
-                    // toggle (public flair, always shown once earned).
-                    if !badges.isEmpty {
-                        ProfileInfoCard(title: "Badges", icon: "rosette", tint: mainAccentColor) {
-                            ProfileBadgeRow(badges: badges)
-                        }
-                    }
-
-                    // MARK: Accent colors — Discord-style two-tone
-                    ProfileInfoCard(title: "Profile Colors", icon: "paintpalette.fill", tint: mainAccentColor) {
-                        AccentColorPickerView(title: "Main Accent", selectedHex: $mainAccentHex)
-                            .padding(.vertical, 6)
-                        AccentColorPickerView(title: "Sub Accent", selectedHex: $subAccentHex)
-                            .padding(.vertical, 6)
-                        Text("Main drives your profile's primary chrome; Sub drives secondary highlights — shown to anyone who visits your profile.")
-                            .font(AppTheme.bodyFont(size: 12))
-                            .foregroundStyle(AppTheme.textSecondary)
-
-                        // MARK: Background glow intensity — how strongly the
-                        // colors above wash across the WHOLE profile
-                        // background (see ProfileAccentBackgroundGlow),
-                        // Discord-style. Separate control from the colors
-                        // themselves so someone who likes their chosen
-                        // colors but finds the ambient wash too strong (or
-                        // too subtle) can dial it independently.
-                        Picker("Background Glow", selection: $accentGlowIntensity) {
-                            ForEach([ProfileGlowIntensity.off, .subtle, .normal, .vivid], id: \.rawValue) { option in
-                                Text(option.label).tag(option.rawValue)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .padding(.top, 10)
-                    }
-
-                    // MARK: Card style — corner radius for every info card
-                    // on the profile (Bio, Badges, Streak, etc. — see
-                    // ProfileInfoCard). A local display preference, not
-                    // synced/saved with the rest of this screen.
-                    ProfileInfoCard(title: "Card Style", icon: "rectangle.roundedtop", tint: mainAccentColor) {
-                        Picker("Card Style", selection: $profileCardCornerRadius) {
-                            Text("Sharp").tag(4.0)
-                            Text("Soft").tag(16.0)
-                            Text("Round").tag(28.0)
-                        }
-                        .pickerStyle(.segmented)
-                    }
-
-                    // MARK: Avatar frame — purely cosmetic, client-rendered.
-                    // Batched into the toolbar's Save button along with
-                    // bio/accents/pronouns/status, not auto-saved per tap —
-                    // same "pick, then Save" flow as the accent color
-                    // pickers right above, so a user who taps through a few
-                    // options before deciding can still back out with the
-                    // system-standard "leave without saving" navigation gesture.
-                    ProfileInfoCard(title: "Avatar Frame", icon: "circle.dashed", tint: subAccentColor) {
-                        AvatarFramePickerView(mainTint: mainAccentColor, subTint: subAccentColor, selected: $avatarFrame)
-                    }
-
-                    // MARK: Avatar decoration — a looping animation overlaid
-                    // ON TOP of the avatar itself, Discord-style, distinct
-                    // from the frame above which sits AROUND it. Same
-                    // "pick, then Save" flow as every other cosmetic picker
-                    // on this screen.
-                    ProfileInfoCard(title: "Avatar Decoration", icon: "sparkles", tint: mainAccentColor) {
-                        AvatarDecorationPickerView(mainTint: mainAccentColor, subTint: subAccentColor, selected: $avatarDecoration)
-                    }
-
-                    // MARK: Profile effect — a looping animation overlaid
-                    // across the whole banner, Discord-style.
-                    ProfileInfoCard(title: "Profile Effect", icon: "wand.and.stars", tint: subAccentColor) {
-                        ProfileEffectPickerView(mainTint: mainAccentColor, subTint: subAccentColor, selected: $profileEffect)
-                    }
-
-                    // MARK: Pinned favorite tracks
-                    ProfileInfoCard(title: "Pinned Favorite Tracks", icon: "pin.fill", tint: subAccentColor) {
-                        VStack(spacing: 10) {
-                            ForEach(0..<5, id: \.self) { slot in
-                                Button {
-                                    editingSlot = slot
-                                } label: {
-                                    HStack {
-                                        if slot < pinnedTracks.count {
-                                            PinnedTrackRow(
-                                                title: pinnedTracks[slot].title,
-                                                artist: pinnedTracks[slot].artist,
-                                                tint: subAccentColor
-                                            )
-                                        } else {
-                                            HStack {
-                                                Image(systemName: "pin.fill")
-                                                    .font(.caption)
-                                                    .foregroundStyle(AppTheme.textSecondary.opacity(0.4))
-                                                Text("Empty slot")
-                                                    .font(AppTheme.bodyFont(size: 14))
-                                                    .foregroundStyle(AppTheme.textSecondary)
-                                                Spacer()
-                                            }
-                                        }
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption2)
-                                            .foregroundStyle(AppTheme.textSecondary)
-                                    }
-                                }
-                                if slot < 4 {
-                                    Divider().background(AppTheme.textSecondary.opacity(0.15))
-                                }
-                            }
-                        }
-                        Text("Pick up to 5 tracks to feature on your public profile.")
-                            .font(AppTheme.bodyFont(size: 12))
-                            .foregroundStyle(AppTheme.textSecondary)
-                            .padding(.top, 4)
-                    }
-
-                    // MARK: Top Music showcase — auto-generated from actual
-                    // listening history (same signal as the Music Match
-                    // score), opt-in like Share Now Playing below. The
-                    // preview always renders from `topGenres`/`topArtists`
-                    // (server sends these for /me regardless of the toggle)
-                    // so the owner can see exactly what turning it on would
-                    // publish before committing to it.
-                    ProfileInfoCard(title: "Top Music Showcase", icon: "chart.bar.fill", tint: mainAccentColor) {
-                        Toggle(isOn: $showTopGenres) {
-                            Label("Show Top Genres & Artists", systemImage: "chart.bar.fill")
-                                .foregroundStyle(AppTheme.textPrimary)
-                        }
-                        .tint(mainAccentColor)
-                        .onChange(of: showTopGenres) { newValue in
-                            Task { await social.updateProfile(showTopGenres: newValue) }
-                        }
-                        if topGenres.isEmpty && topArtists.isEmpty {
-                            Text("Not enough listening history yet to build a showcase.")
-                                .font(AppTheme.bodyFont(size: 12))
-                                .foregroundStyle(AppTheme.textSecondary)
-                        } else {
-                            TopMusicShowcaseRow(topGenres: topGenres, topArtists: topArtists, tint: mainAccentColor)
-                                .opacity(showTopGenres ? 1 : 0.5)
-                        }
-                    }
-
-                    // MARK: Listening Streak — opt-in like Top Music
-                    // Showcase above; the preview always renders your own
-                    // real streak regardless of the toggle, same "preview
-                    // before you publish" reasoning as topGenres/topArtists.
-                    if let listeningStreak {
-                        ProfileInfoCard(title: "Listening Streak", icon: "flame.fill", tint: mainAccentColor) {
-                            Toggle(isOn: $showListeningStats) {
-                                Label("Show Listening Streak", systemImage: "flame.fill")
-                                    .foregroundStyle(AppTheme.textPrimary)
-                            }
-                            .tint(mainAccentColor)
-                            .onChange(of: showListeningStats) { newValue in
-                                Task { await social.updateProfile(showListeningStats: newValue) }
-                            }
-                            ListeningStreakRow(streak: listeningStreak, tint: mainAccentColor)
-                                .opacity(showListeningStats ? 1 : 0.5)
-                        }
-                    }
-
-                    // MARK: Featured Playlist — an owner-chosen spotlight
-                    // from their own server-stored playlists.
-                    ProfileInfoCard(title: "Featured Playlist", icon: "music.note.list", tint: subAccentColor) {
-                        if let featuredPlaylist {
-                            FeaturedPlaylistRow(playlist: featuredPlaylist, tint: subAccentColor)
-                        } else {
-                            Text("No playlist featured yet.")
-                                .font(AppTheme.bodyFont(size: 13))
-                                .foregroundStyle(AppTheme.textSecondary)
-                        }
-                        HStack(spacing: 10) {
-                            Button {
-                                showFeaturedPlaylistPicker = true
-                            } label: {
-                                Text(featuredPlaylist == nil ? "Choose Playlist" : "Change Playlist")
-                                    .font(AppTheme.bodyFont(size: 13))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 8)
-                                    .foregroundStyle(subAccentColor)
-                                    .adaptiveGlass(
-                                        tint: subAccentColor.opacity(0.14),
-                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous),
-                                        fallback: AppTheme.surface
-                                    )
-                            }
-                            if featuredPlaylist != nil {
-                                Button(role: .destructive) {
-                                    featuredPlaylist = nil
-                                    Task { await social.setFeaturedPlaylist(playlistId: nil) }
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(AppTheme.textSecondary)
-                                        .padding(8)
-                                        .adaptiveGlass(
-                                            in: RoundedRectangle(cornerRadius: 10, style: .continuous),
-                                            fallback: AppTheme.surface
-                                        )
-                                }
-                            }
-                        }
-                        .padding(.top, 2)
-                    }
-
-                    // MARK: Profile Visitors — opt-out (default on), unlike
-                    // the opt-in showcase/streak cards above; the preview
-                    // always shows your own real stats regardless of the
-                    // toggle, same "preview before you publish" reasoning.
-                    ProfileInfoCard(title: "Profile Visitors", icon: "eye.fill", tint: mainAccentColor) {
-                        Toggle(isOn: $showVisitorStats) {
-                            Label("Show Visitor Stats", systemImage: "eye.fill")
-                                .foregroundStyle(AppTheme.textPrimary)
-                        }
-                        .tint(mainAccentColor)
-                        .onChange(of: showVisitorStats) { newValue in
-                            Task { await social.updateProfile(showVisitorStats: newValue) }
-                        }
-                        ProfileVisitorStatsRow(visitorCount: visitorCount, recentVisitors: recentVisitors, tint: mainAccentColor)
-                            .opacity(showVisitorStats ? 1 : 0.5)
-                        Text("When off, no one sees your view count or recent visitors, and new visits stop being counted.")
-                            .font(AppTheme.bodyFont(size: 12))
-                            .foregroundStyle(AppTheme.textSecondary)
-                    }
-
-                    // MARK: Guestbook — lets the owner turn off new posts
-                    // without deleting messages already left (see
-                    // post_profile_comment's show_guestbook check).
-                    ProfileInfoCard(title: "Guestbook", icon: "bubble.left.and.bubble.right.fill", tint: subAccentColor) {
-                        Toggle(isOn: $showGuestbook) {
-                            Label("Allow Guestbook Messages", systemImage: "bubble.left.and.bubble.right.fill")
-                                .foregroundStyle(AppTheme.textPrimary)
-                        }
-                        .tint(subAccentColor)
-                        .onChange(of: showGuestbook) { newValue in
-                            Task { await social.updateProfile(showGuestbook: newValue) }
-                        }
-                        Text("When off, friends can no longer leave new messages on your profile. Messages already posted stay visible until you delete them.")
-                            .font(AppTheme.bodyFont(size: 12))
-                            .foregroundStyle(AppTheme.textSecondary)
-                    }
-
-                    // MARK: Privacy — now-playing sharing hook for presence
-                    ProfileInfoCard(title: "Presence Privacy", icon: "eye.slash", tint: mainAccentColor) {
-                        Toggle(isOn: $shareNowPlaying) {
-                            Label("Share Now Playing with Friends", systemImage: "waveform")
-                                .foregroundStyle(AppTheme.textPrimary)
-                        }
-                        .tint(mainAccentColor)
-                        .onChange(of: shareNowPlaying) { newValue in
-                            Task { await social.updateProfile(shareNowPlaying: newValue) }
-                        }
-                        Text("When off, friends only see that you're online — not what you're currently playing. This also hides you from the Friends Activity feed.")
-                            .font(AppTheme.bodyFont(size: 12))
-                            .foregroundStyle(AppTheme.textSecondary)
-                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
 
                     if let err = social.errorMessage {
                         ProfileInfoCard(tint: AppTheme.error) {
@@ -586,9 +169,19 @@ struct ProfileView: View {
                     }
                 }
                 .padding(.top, 4)
-                .padding(.bottom, 40)
+                .padding(.bottom, hasUnsavedChanges ? 110 : 40)
+                .animation(.spring(response: 0.35, dampingFraction: 0.86), value: panelRaw)
             }
         }
+        .overlay(alignment: .bottom) {
+            if hasUnsavedChanges {
+                unsavedBar
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: hasUnsavedChanges)
         .navigationTitle("Edit Profile")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -725,6 +318,357 @@ struct ProfileView: View {
         }
     }
 
+    // MARK: - Panels
+
+    private var panelPicker: some View {
+        HStack(spacing: 4) {
+            ForEach(Panel.allCases) { p in
+                let on = panel == p
+                Button {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    panelRaw = p.rawValue
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: p.icon).font(.system(size: 14, weight: .semibold))
+                        Text(p.rawValue).font(.system(size: 10, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .foregroundStyle(on ? .white : AppTheme.textSecondary)
+                    .background {
+                        if on {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(LinearGradient(colors: [mainAccentColor, subAccentColor], startPoint: .leading, endPoint: .trailing))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .background(LKCardBackground(corner: 16))
+        .padding(.horizontal, 16)
+    }
+
+    private var unsavedBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "pencil.circle.fill").font(.system(size: 22)).foregroundStyle(mainAccentColor)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Unsaved changes").font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.textPrimary)
+                Text("Visitors still see your old profile").font(.caption2).foregroundStyle(AppTheme.textSecondary)
+            }
+            Spacer()
+            Button("Undo") { applyLoadedProfile() }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.textSecondary)
+            Button { saveProfile() } label: {
+                Group {
+                    if isSaving { ProgressView().tint(.white) } else { Text("Save").bold() }
+                }
+                .frame(width: 64, height: 34)
+                .foregroundStyle(.white)
+                .background(LinearGradient(colors: [mainAccentColor, subAccentColor], startPoint: .leading, endPoint: .trailing), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(isSaving)
+        }
+        .padding(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(mainAccentColor.opacity(0.35), lineWidth: 1))
+        .shadow(color: .black.opacity(0.25), radius: 16, x: 0, y: 6)
+    }
+
+    @ViewBuilder
+    private var identityPanel: some View {
+        // Avatar + banner as two big tiles.
+        HStack(spacing: 10) {
+            LumiMenu {
+                Button { showAvatarPhotosPicker = true } label: { Label("Photos", systemImage: "photo") }
+                Button { showAvatarGifPicker = true } label: { Label("GIFs", systemImage: "party.popper") }
+            } label: {
+                mediaTile(icon: "person.crop.circle.fill", title: "Profile icon", tint: mainAccentColor, busy: isUploadingAvatar)
+            }
+            .photosPicker(isPresented: $showAvatarPhotosPicker, selection: $photosPickerItem, matching: .images, photoLibrary: .shared())
+            .onChange(of: photosPickerItem) { item in
+                guard let item else { return }
+                isUploadingAvatar = true
+                Task {
+                    defer { isUploadingAvatar = false }
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        await account.uploadAvatarData(data)
+                    }
+                    photosPickerItem = nil
+                }
+            }
+            LumiMenu {
+                Button { showBannerPhotosPicker = true } label: { Label("Photos", systemImage: "photo") }
+                Button { showBannerGifPicker = true } label: { Label("GIFs", systemImage: "party.popper") }
+                if bannerImage != nil {
+                    Button(role: .destructive) {
+                        Task {
+                            await social.removeBanner()
+                            bannerImage = nil
+                        }
+                    } label: { Label("Remove banner", systemImage: "trash") }
+                }
+            } label: {
+                mediaTile(icon: "photo.on.rectangle.angled", title: "Banner", tint: subAccentColor, busy: isUploadingBanner)
+            }
+            .disabled(isUploadingBanner)
+            .photosPicker(isPresented: $showBannerPhotosPicker, selection: $bannerPickerItem, matching: .images, photoLibrary: .shared())
+            .onChange(of: bannerPickerItem) { item in
+                guard let item else { return }
+                isUploadingBanner = true
+                // @MainActor: `bannerImage` must be set on the main thread
+                // (an off-main write corrupted the whole screen's layout).
+                Task { @MainActor in
+                    defer { isUploadingBanner = false }
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        await social.uploadBannerData(data)
+                        if data.isEmpty == false {
+                            bannerImage = isGIFData(data) ? await UIImage.gifImageAsync(data: data) : UIImage(data: data)
+                        }
+                    }
+                    bannerPickerItem = nil
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+
+        if let song = player.currentSong, player.isPlaying {
+            ProfileInfoCard(title: "Listening To", icon: "waveform", tint: mainAccentColor) {
+                NowPlayingActivityRow(title: song.title, artist: song.artist.isEmpty ? nil : song.artist, tint: mainAccentColor, song: song)
+            }
+        }
+
+        ProfileInfoCard(title: "Status", icon: "bubble.left.fill", tint: mainAccentColor) {
+            HStack(spacing: 10) {
+                TextField("🎧", text: $statusEmoji)
+                    .font(.system(size: 22))
+                    .multilineTextAlignment(.center)
+                    .frame(width: 48, height: 44)
+                    .background(mainAccentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .onChange(of: statusEmoji) { v in if v.count > 8 { statusEmoji = String(v.prefix(8)) } }
+                TextField("What are you up to?", text: $statusText)
+                    .font(AppTheme.bodyFont(size: 15))
+                    .foregroundStyle(AppTheme.textPrimary)
+                    .onChange(of: statusText) { v in if v.count > 60 { statusText = String(v.prefix(60)) } }
+            }
+            TextField("Pronouns (e.g. she/her)", text: $pronouns)
+                .font(AppTheme.bodyFont(size: 14))
+                .foregroundStyle(AppTheme.textPrimary)
+                .padding(10)
+                .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .onChange(of: pronouns) { v in if v.count > 30 { pronouns = String(v.prefix(30)) } }
+        }
+
+        ProfileInfoCard(title: "Bio", icon: "text.quote", tint: mainAccentColor) {
+            TextField("A few lines about you and your music…", text: $draftBio, axis: .vertical)
+                .lineLimit(3...6)
+                .foregroundStyle(AppTheme.textPrimary)
+                .onChange(of: draftBio) { v in if v.count > 280 { draftBio = String(v.prefix(280)) } }
+            HStack {
+                Text("**Bold**, *italic* and [links](url) work.")
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.textSecondary.opacity(0.7))
+                Spacer()
+                ZStack {
+                    Circle().stroke(AppTheme.textSecondary.opacity(0.2), lineWidth: 2.5)
+                    Circle().trim(from: 0, to: Double(draftBio.count) / 280)
+                        .stroke(draftBio.count > 250 ? AppTheme.warning : mainAccentColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: 18, height: 18)
+                Text("\(280 - draftBio.count)")
+                    .font(AppTheme.monoFont(size: 11))
+                    .foregroundStyle(AppTheme.textSecondary)
+            }
+        }
+
+        HStack(spacing: 12) {
+            ProfileInfoCard(title: "Member Since", icon: "calendar", tint: subAccentColor) {
+                MemberSinceRow(memberSince: memberSince)
+            }
+        }
+        if !badges.isEmpty {
+            ProfileInfoCard(title: "Badges", icon: "rosette", tint: mainAccentColor) {
+                ProfileBadgeRow(badges: badges)
+            }
+        }
+    }
+
+    private func mediaTile(icon: String, title: String, tint: Color, busy: Bool) -> some View {
+        VStack(spacing: 8) {
+            ZStack {
+                if busy { ProgressView().tint(tint) } else { Image(systemName: icon).font(.system(size: 24, weight: .semibold)) }
+            }
+            .frame(height: 28)
+            Text(title).font(.caption.weight(.semibold))
+            Text("Photo or GIF").font(.caption2).opacity(0.7)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .foregroundStyle(tint)
+        .adaptiveGlass(tint: tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 16, style: .continuous), fallback: AppTheme.surface)
+    }
+
+    @ViewBuilder
+    private var stylePanel: some View {
+        ProfileInfoCard(title: "Colors", icon: "paintpalette.fill", tint: mainAccentColor) {
+            AccentColorPickerView(title: "Main Accent", selectedHex: $mainAccentHex).padding(.vertical, 6)
+            AccentColorPickerView(title: "Sub Accent", selectedHex: $subAccentHex).padding(.vertical, 6)
+            Text("Background glow").font(.caption.weight(.semibold)).foregroundStyle(AppTheme.textSecondary).padding(.top, 6)
+            Picker("Background Glow", selection: $accentGlowIntensity) {
+                ForEach([ProfileGlowIntensity.off, .subtle, .normal, .vivid], id: \.rawValue) { option in
+                    Text(option.label).tag(option.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        ProfileInfoCard(title: "Card Shape", icon: "rectangle.roundedtop", tint: mainAccentColor) {
+            Picker("Card Style", selection: $profileCardCornerRadius) {
+                Text("Sharp").tag(4.0)
+                Text("Soft").tag(16.0)
+                Text("Round").tag(28.0)
+            }
+            .pickerStyle(.segmented)
+            Text("How cards look on this device.").font(.caption2).foregroundStyle(AppTheme.textSecondary)
+        }
+        ProfileInfoCard(title: "Avatar Frame", icon: "circle.dashed", tint: subAccentColor) {
+            AvatarFramePickerView(mainTint: mainAccentColor, subTint: subAccentColor, selected: $avatarFrame)
+        }
+        ProfileInfoCard(title: "Avatar Decoration", icon: "sparkles", tint: mainAccentColor) {
+            AvatarDecorationPickerView(mainTint: mainAccentColor, subTint: subAccentColor, selected: $avatarDecoration)
+        }
+        ProfileInfoCard(title: "Profile Effect", icon: "wand.and.stars", tint: subAccentColor) {
+            ProfileEffectPickerView(mainTint: mainAccentColor, subTint: subAccentColor, selected: $profileEffect)
+        }
+    }
+
+    @ViewBuilder
+    private var showcasePanel: some View {
+        ProfileInfoCard(title: "Pinned Tracks", icon: "pin.fill", tint: subAccentColor) {
+            VStack(spacing: 8) {
+                ForEach(0..<5, id: \.self) { slot in
+                    Button { editingSlot = slot } label: {
+                        HStack(spacing: 10) {
+                            Text("\(slot + 1)")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundStyle(slot < pinnedTracks.count ? .white : AppTheme.textSecondary)
+                                .frame(width: 26, height: 26)
+                                .background(slot < pinnedTracks.count ? AnyShapeStyle(subAccentColor) : AnyShapeStyle(AppTheme.elevatedSurface), in: Circle())
+                            if slot < pinnedTracks.count {
+                                PinnedTrackRow(title: pinnedTracks[slot].title, artist: pinnedTracks[slot].artist, tint: subAccentColor)
+                            } else {
+                                Text("Pin a track").font(AppTheme.bodyFont(size: 14)).foregroundStyle(AppTheme.textSecondary)
+                                Spacer()
+                            }
+                            Image(systemName: slot < pinnedTracks.count ? "arrow.triangle.2.circlepath" : "plus")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(AppTheme.textSecondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        ProfileInfoCard(title: "Featured Playlist", icon: "music.note.list", tint: subAccentColor) {
+            if let featuredPlaylist {
+                FeaturedPlaylistRow(playlist: featuredPlaylist, tint: subAccentColor)
+            } else {
+                Text("Spotlight one of your playlists at the top of your profile.")
+                    .font(AppTheme.bodyFont(size: 13))
+                    .foregroundStyle(AppTheme.textSecondary)
+            }
+            HStack(spacing: 10) {
+                Button { showFeaturedPlaylistPicker = true } label: {
+                    Text(featuredPlaylist == nil ? "Choose Playlist" : "Change Playlist")
+                        .font(AppTheme.bodyFont(size: 13).weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .foregroundStyle(subAccentColor)
+                        .adaptiveGlass(tint: subAccentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous), fallback: AppTheme.surface)
+                }
+                if featuredPlaylist != nil {
+                    Button(role: .destructive) {
+                        featuredPlaylist = nil
+                        Task { await social.setFeaturedPlaylist(playlistId: nil) }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(AppTheme.textSecondary)
+                            .padding(11)
+                            .adaptiveGlass(in: RoundedRectangle(cornerRadius: 10, style: .continuous), fallback: AppTheme.surface)
+                    }
+                }
+            }
+        }
+        ProfileInfoCard(title: "Top Music", icon: "chart.bar.fill", tint: mainAccentColor) {
+            Toggle(isOn: $showTopGenres) {
+                Text("Show top genres & artists").foregroundStyle(AppTheme.textPrimary)
+            }
+            .tint(mainAccentColor)
+            .onChange(of: showTopGenres) { v in Task { await social.updateProfile(showTopGenres: v) } }
+            if topGenres.isEmpty && topArtists.isEmpty {
+                Text("Listen a little more to build your showcase.").font(.caption).foregroundStyle(AppTheme.textSecondary)
+            } else {
+                TopMusicShowcaseRow(topGenres: topGenres, topArtists: topArtists, tint: mainAccentColor)
+                    .opacity(showTopGenres ? 1 : 0.45)
+            }
+        }
+        if let listeningStreak {
+            ProfileInfoCard(title: "Listening Streak", icon: "flame.fill", tint: mainAccentColor) {
+                Toggle(isOn: $showListeningStats) {
+                    Text("Show my streak").foregroundStyle(AppTheme.textPrimary)
+                }
+                .tint(mainAccentColor)
+                .onChange(of: showListeningStats) { v in Task { await social.updateProfile(showListeningStats: v) } }
+                ListeningStreakRow(streak: listeningStreak, tint: mainAccentColor)
+                    .opacity(showListeningStats ? 1 : 0.45)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var privacyPanel: some View {
+        ProfileInfoCard(title: "Who sees what", icon: "eye.slash", tint: mainAccentColor) {
+            privacyToggle("Share now playing with friends",
+                          detail: "Off: friends only see you're online, and you leave the Friends Activity feed.",
+                          isOn: $shareNowPlaying) { v in Task { await social.updateProfile(shareNowPlaying: v) } }
+            Divider().background(AppTheme.textSecondary.opacity(0.15))
+            privacyToggle("Show visitor stats",
+                          detail: "Off: nobody sees your view count or recent visitors, and visits stop being counted.",
+                          isOn: $showVisitorStats) { v in Task { await social.updateProfile(showVisitorStats: v) } }
+            ProfileVisitorStatsRow(visitorCount: visitorCount, recentVisitors: recentVisitors, tint: mainAccentColor)
+                .opacity(showVisitorStats ? 1 : 0.45)
+            Divider().background(AppTheme.textSecondary.opacity(0.15))
+            privacyToggle("Allow guestbook messages",
+                          detail: "Off: no new messages. Existing ones stay until you delete them.",
+                          isOn: $showGuestbook) { v in Task { await social.updateProfile(showGuestbook: v) } }
+        }
+        Button { showPublicPreview = true } label: {
+            Label("See my profile as a visitor", systemImage: "eye")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .foregroundStyle(mainAccentColor)
+                .adaptiveGlass(tint: mainAccentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 14, style: .continuous), fallback: AppTheme.surface)
+        }
+        .disabled(account.currentUser?.id == nil)
+        .padding(.horizontal, 16)
+    }
+
+    private func privacyToggle(_ title: String, detail: String, isOn: Binding<Bool>, onChange: @escaping (Bool) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: isOn) { Text(title).foregroundStyle(AppTheme.textPrimary) }
+                .tint(mainAccentColor)
+                .onChange(of: isOn.wrappedValue) { onChange($0) }
+            Text(detail).font(.caption).foregroundStyle(AppTheme.textSecondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 4)
+    }
+
     private struct PinnedSlot: Identifiable { let index: Int; var id: Int { index } }
 
     private var initials: String {
@@ -758,6 +702,7 @@ struct ProfileView: View {
         recentVisitors = profile.recentVisitors
         featuredPlaylist = profile.featuredPlaylist
         accentGlowIntensity = profile.accentGlowIntensity
+        savedSignature = editSignature
     }
 
     private func setPinnedSlot(_ slot: Int, track: PinnedTrack) {

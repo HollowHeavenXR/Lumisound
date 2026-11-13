@@ -11,84 +11,75 @@ struct SleepWakeAlarmView: View {
     @State private var selectedPlaylistID: UUID?
 
     var body: some View {
-        List {
-            statusSection
+        LKPage(title: "Wake-Up Alarm", subtitle: "Wake up to music that fades in.", icon: "alarm.fill", tint: .orange, showsHero: false) {
+            clockFace
             if alarm.isScheduled {
-                cancelSection
-            } else {
-                setupSection
-            }
-            limitationSection
-        }
-        .scrollContentBackground(.hidden)
-        .background(EditionScreenBackground())
-        .navigationTitle("Wake-Up Alarm")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            await notifications.requestAuthorization()
-        }
-    }
-
-    @ViewBuilder
-    private var statusSection: some View {
-        if let date = alarm.alarmDate {
-            Section {
-                Label("Set for \(date.formatted(date: .omitted, time: .shortened))", systemImage: "alarm.fill")
-                    .foregroundStyle(AppTheme.dynamicAccent)
-                    .font(.headline)
-            }
-            .listRowBackground(tintedRowBackground(.pink))
-        }
-    }
-
-    @ViewBuilder
-    private var setupSection: some View {
-        Section {
-            DatePicker("Wake Time", selection: $pickerTime, displayedComponents: .hourAndMinute)
-
-            LumiPicker("Play", selection: $selectedPlaylistID) {
-                Text("Favorites").lumiOptionLabel("Favorites").tag(UUID?.none)
-                ForEach(library.playlists) { playlist in
-                    Text(playlist.name).lumiOptionLabel(String(describing: playlist.name)).tag(UUID?.some(playlist.id))
+                LKPrimaryButton(title: "Cancel Alarm", icon: "alarm.waves.left.and.right", tint: AppTheme.error, prominent: false) {
+                    alarm.cancelAlarm()
                 }
+            } else {
+                LKCard(title: "Wake me") {
+                    DatePicker("Wake time", selection: $pickerTime, displayedComponents: .hourAndMinute)
+                        .datePickerStyle(.wheel)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 140)
+                        .clipped()
+                    LKDivider(inset: 0)
+                    HStack(spacing: 12) {
+                        LKIcon(symbol: "music.note.list", tint: .orange)
+                        Text("Play").font(AppTheme.bodyFont(size: 15)).foregroundStyle(AppTheme.textPrimary)
+                        Spacer()
+                        LumiPicker("Play", selection: $selectedPlaylistID) {
+                            Text("Favorites").lumiOptionLabel("Favorites").tag(UUID?.none)
+                            ForEach(library.playlists) { playlist in
+                                Text(playlist.name).lumiOptionLabel(String(describing: playlist.name)).tag(UUID?.some(playlist.id))
+                            }
+                        }
+                        .tint(.orange)
+                    }
+                    .padding(.vertical, 8)
+                }
+                if !notifications.isAuthorized {
+                    LKBanner(icon: "bell.slash.fill", text: "Notifications are off, so the alarm can't ring. Turn them on in Settings → Notifications.", tint: AppTheme.error)
+                }
+                LKPrimaryButton(title: "Set Alarm for \(nextRing.formatted(date: .omitted, time: .shortened))", icon: "alarm", tint: .orange) {
+                    scheduleAlarm()
+                }
+                .disabled(!notifications.isAuthorized)
+                .opacity(notifications.isAuthorized ? 1 : 0.5)
             }
-
-            Button {
-                scheduleAlarm()
-            } label: {
-                Label("Set Alarm", systemImage: "alarm")
-            }
-            .disabled(!notifications.isAuthorized)
-        } footer: {
-            if !notifications.isAuthorized {
-                Text("Notifications are off, so the alarm can't be set — enable them in Settings → Notifications.")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.error)
-            }
+            LKBanner(icon: "info.circle", text: "The alarm notification rings even if Lumisound is closed. Music starts by itself only if the app is still open or in the background; after a force-quit, tap the notification to start it.", tint: .gray)
         }
-        .listRowBackground(tintedRowBackground(.pink))
+        .animation(.easeInOut(duration: 0.25), value: alarm.isScheduled)
+        .task { await notifications.requestAuthorization() }
     }
 
-    @ViewBuilder
-    private var cancelSection: some View {
-        Section {
-            Button(role: .destructive) {
-                alarm.cancelAlarm()
-            } label: {
-                Label("Cancel Alarm", systemImage: "alarm.slash")
-            }
-        }
-        .listRowBackground(tintedRowBackground(.pink))
+    /// When the alarm would ring if set now.
+    private var nextRing: Date {
+        pickerTime <= Date() ? (Calendar.current.date(byAdding: .day, value: 1, to: pickerTime) ?? pickerTime) : pickerTime
     }
 
-    @ViewBuilder
-    private var limitationSection: some View {
-        Section {
-            Text("A notification will sound at the set time even if Lumisound is fully closed. Music will only start playing automatically if the app is still open or backgrounded — if it was force-quit, tap the notification to open the app and start playback yourself.")
-                .font(.caption)
-                .foregroundStyle(AppTheme.textSecondary)
+    private var clockFace: some View {
+        let date = alarm.alarmDate
+        return VStack(spacing: 6) {
+            Image(systemName: date == nil ? "alarm" : "alarm.fill")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(date == nil ? AppTheme.textSecondary : .orange)
+                .symbolEffect(.bounce, value: date)
+            Text(date.map { $0.formatted(date: .omitted, time: .shortened) } ?? "--:--")
+                .font(.system(size: 54, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(AppTheme.textPrimary)
+                .contentTransition(.numericText())
+            if let date {
+                Text("Rings \(date.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(AppTheme.textSecondary)
+            } else {
+                Text("No alarm set").font(.caption).foregroundStyle(AppTheme.textSecondary)
+            }
         }
-        .listRowBackground(Color.clear)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 22)
+        .background(LKCardBackground(tint: date == nil ? nil : .orange))
     }
 
     private func scheduleAlarm() {

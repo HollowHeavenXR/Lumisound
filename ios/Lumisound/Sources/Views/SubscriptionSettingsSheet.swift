@@ -35,69 +35,53 @@ struct SubscriptionSettingsSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Toggle("Auto-download new uploads", isOn: $autoDownload)
-                        .tint(AppTheme.dynamicAccent)
-                    if autoDownload {
-                        HStack {
-                            Text("Save to")
-                                .foregroundStyle(AppTheme.textPrimary)
-                            Spacer()
-                            DownloadFolderPicker(folderName: $destinationFolder)
+            ScrollView {
+                VStack(alignment: .leading, spacing: LK.spacing) {
+                    HStack(spacing: 12) {
+                        LKIcon(symbol: "person.crop.circle.badge.checkmark", tint: .cyan, size: 44)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(subscription.channelName ?? "Channel").font(.headline).foregroundStyle(AppTheme.textPrimary)
+                            Text(subscription.channelUrl).font(.caption2).foregroundStyle(AppTheme.textSecondary).lineLimit(1).truncationMode(.middle)
                         }
                     }
-                } footer: {
-                    Text("New uploads from this channel download straight into your library automatically — same as a tracked playlist with auto-download on. \"Save to\" overrides the global Download Folder setting just for this channel.")
+                    LKCard(title: "New uploads", footer: "Auto-downloaded uploads go straight into your library. \"Save to\" overrides the global download folder for this channel.") {
+                        LKToggle(icon: "arrow.down.circle.fill", tint: .green, title: "Download automatically", isOn: $autoDownload)
+                        if autoDownload {
+                            HStack(spacing: 12) {
+                                LKIcon(symbol: "folder.fill", tint: .brown)
+                                Text("Save to").font(AppTheme.bodyFont(size: 15)).foregroundStyle(AppTheme.textPrimary)
+                                Spacer()
+                                DownloadFolderPicker(folderName: $destinationFolder)
+                            }
+                            .padding(.vertical, 6)
+                        }
+                        LKDivider()
+                        LKToggle(icon: notificationsMuted ? "bell.slash.fill" : "bell.fill", tint: .orange, title: "Mute alerts",
+                                 subtitle: "Still listed in New Releases", isOn: $notificationsMuted)
+                    }
+                    LKCard(title: "Category", footer: "Group channels, e.g. \"Podcasts\" or \"DJs\". Leave blank for none.") {
+                        LKField(placeholder: "Category (optional)", text: $category).padding(.vertical, 4)
+                    }
+                    if let errorText {
+                        LKBanner(icon: "exclamationmark.triangle.fill", text: errorText, tint: AppTheme.error)
+                    }
                 }
-                .listRowBackground(AppTheme.surface)
-
-                Section {
-                    Toggle("Mute new-upload alerts", isOn: $notificationsMuted)
-                        .tint(AppTheme.dynamicAccent)
-                } footer: {
-                    Text("Stops notifications for this channel without unsubscribing. New uploads still appear in the New Releases feed and still count toward the upload-frequency insight.")
-                }
-                .listRowBackground(AppTheme.surface)
-
-                Section {
-                    TextField("Category (optional)", text: $category)
-                        .autocorrectionDisabled()
-                        .foregroundStyle(AppTheme.textPrimary)
-                } header: {
-                    Text("CATEGORY")
-                } footer: {
-                    Text("Group followed channels — e.g. \"Podcasts\" or \"DJs\" — to filter the list. Leave blank for none.")
-                }
-                .listRowBackground(AppTheme.surface)
-
-                if let errorText {
-                    Text(errorText)
-                        .font(.footnote)
-                        .foregroundStyle(AppTheme.error)
-                        .listRowBackground(Color.clear)
-                }
+                .padding(LK.gutter)
+                .animation(.easeInOut(duration: 0.2), value: autoDownload)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.clear.ignoresSafeArea())
-            .navigationTitle(subscription.channelName ?? "Channel Settings")
+            .background(GalleryBackgroundView().ignoresSafeArea())
+            .navigationTitle("Channel Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        save()
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                        } else {
-                            Text("Save")
-                        }
+                    Button { save() } label: {
+                        if isSaving { ProgressView() } else { Text("Save").bold() }
                     }
                     .disabled(isSaving)
-                    .foregroundStyle(AppTheme.dynamicAccent)
+                    .foregroundStyle(.cyan)
                 }
             }
         }

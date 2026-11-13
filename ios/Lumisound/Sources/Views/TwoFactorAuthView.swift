@@ -22,8 +22,26 @@ struct TwoFactorAuthView: View {
     @State private var showDisableConfirm = false
 
     var body: some View {
-        List {
-            Section {
+        LKPage(title: "Two-Factor", subtitle: "A code from your authenticator app, on top of your password.",
+               icon: "lock.shield.fill", tint: account.isTOTPEnabled ? .green : .red) {
+            // Shield status.
+            HStack(spacing: 14) {
+                Image(systemName: account.isTOTPEnabled ? "checkmark.shield.fill" : "shield.slash")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(account.isTOTPEnabled ? AppTheme.success : AppTheme.warning)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(account.isTOTPEnabled ? "Protected" : "Password only").font(.title3.bold()).foregroundStyle(AppTheme.textPrimary)
+                    Text(account.isTOTPEnabled
+                         ? "Signing in needs your password and a 6-digit code."
+                         : "Anyone with your password can sign in. Add a second step.")
+                        .font(.caption).foregroundStyle(AppTheme.textSecondary)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(LKCardBackground(tint: account.isTOTPEnabled ? .green : .orange))
+
+            Group {
                 if account.isTOTPEnabled {
                     enabledContent
                 } else if let setupResponse {
@@ -31,26 +49,16 @@ struct TwoFactorAuthView: View {
                 } else {
                     startContent
                 }
-            } header: {
-                Text("Two-Factor Authentication")
-            } footer: {
-                Text(
-                    account.isTOTPEnabled
-                        ? "Your account requires a code from your authenticator app in addition to your password when signing in."
-                        : "Adds a second step to sign-in using an authenticator app (Google Authenticator, Authy, Apple's built-in one-time codes, etc.), on top of your password."
-                )
             }
+            .padding(16)
+            .background(LKCardBackground())
 
             if let error = account.errorMessage {
-                Section {
-                    Text(error)
-                        .font(AppTheme.bodyFont(size: 13))
-                        .foregroundStyle(AppTheme.error)
-                }
+                LKBanner(icon: "exclamationmark.triangle.fill", text: error, tint: AppTheme.error)
             }
+            Text("Works with Apple Passwords, Google Authenticator, Authy and other TOTP apps.")
+                .font(.caption2).foregroundStyle(AppTheme.textSecondary).padding(.horizontal, 6)
         }
-        .navigationTitle("Security")
-        .navigationBarTitleDisplayMode(.inline)
         .task { await account.refreshTOTPStatus() }
         .confirmationDialog(
             "Turn off two-factor authentication?",
@@ -127,7 +135,7 @@ struct TwoFactorAuthView: View {
                 .font(.title3.monospacedDigit())
                 .foregroundStyle(AppTheme.textPrimary)
                 .padding(10)
-                .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+                .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 12))
                 .onChange(of: setupCode) { newValue in
                     setupCode = String(newValue.filter(\.isNumber).prefix(6))
                 }
@@ -184,7 +192,7 @@ struct TwoFactorAuthView: View {
                 .textContentType(.password)
                 .foregroundStyle(AppTheme.textPrimary)
                 .padding(10)
-                .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+                .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 12))
 
             Button(role: .destructive) {
                 showDisableConfirm = true

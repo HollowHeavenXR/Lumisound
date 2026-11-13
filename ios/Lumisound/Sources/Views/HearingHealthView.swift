@@ -29,6 +29,7 @@ struct HearingHealthView: View {
                 .padding(.top, 60)
             } else {
                 VStack(alignment: .leading, spacing: 20) {
+                    LKHero(title: "Hearing Health", subtitle: "Your headphone levels from Health, next to your Volume Boost use.", icon: "ear.fill", tint: .green)
                     summaryCard
                     weekChart
                     if let summary = service.boostCorrelationSummary {

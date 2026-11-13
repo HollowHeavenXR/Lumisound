@@ -33,8 +33,8 @@ struct ScrobblingView: View {
     }
 
     var body: some View {
-        List {
-            Section {
+        LKPage(title: "Scrobbling", subtitle: "Log every play to Last.fm or Libre.fm.", icon: "waveform.path.ecg", tint: .red) {
+            LKSection {
                 Toggle("Scrobble Plays", isOn: Binding(
                     get: { links?.enabled ?? true },
                     set: { newValue in
@@ -53,9 +53,8 @@ struct ScrobblingView: View {
             } footer: {
                 Text("When enabled, finished tracks are sent to any linked services below.")
             }
-            .listRowBackground(AppTheme.surface)
 
-            Section {
+            LKSection {
                 if links?.lastfmLinked == true {
                     LabeledContent("Last.fm") {
                         Text(links?.lastfmUsername ?? "Linked")
@@ -96,9 +95,8 @@ struct ScrobblingView: View {
             } header: {
                 sectionHeader("Last.fm")
             }
-            .listRowBackground(AppTheme.surface)
 
-            Section {
+            LKSection {
                 if links?.listenbrainzLinked == true {
                     HStack {
                         Label("ListenBrainz", systemImage: "checkmark.circle.fill")
@@ -131,9 +129,8 @@ struct ScrobblingView: View {
             } footer: {
                 Text("Find your user token at listenbrainz.org under Profile \u{2192} Settings.")
             }
-            .listRowBackground(AppTheme.surface)
 
-            Section {
+            LKSection {
                 if links?.librefmLinked == true {
                     LabeledContent("Libre.fm") {
                         Text(links?.librefmUsername ?? "Linked")
@@ -176,30 +173,25 @@ struct ScrobblingView: View {
             } footer: {
                 Text("Libre.fm is a free, open-source alternative to Last.fm using the same Audioscrobbler protocol.")
             }
-            .listRowBackground(AppTheme.surface)
 
             if let errorText {
-                Section {
+                LKSection {
                     Text(errorText)
                         .font(.footnote)
                         .foregroundStyle(AppTheme.error)
                 }
-                .listRowBackground(Color.clear)
             }
 
             if anyServiceLinked {
-                Section {
+                LKSection {
                     Button(role: .destructive) {
                         unlink()
                     } label: {
                         Text("Unlink All Scrobbling Accounts")
                     }
                 }
-                .listRowBackground(AppTheme.surface)
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
         .background(Color.clear.ignoresSafeArea())
         .navigationTitle("Scrobbling")
         .navigationBarTitleDisplayMode(.inline)

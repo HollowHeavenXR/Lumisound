@@ -18,33 +18,30 @@ struct LuaThemePresetsView: View {
     @State private var importName = ""
 
     var body: some View {
-        List {
-            Section {
+        LKPage(title: "Lua Themes", subtitle: "Script-driven colour presets.", icon: "scroll.fill", tint: .orange) {
+            LKSection {
                 Text("Each preset is a small Lua script that sets the app's colors, fonts, panel/glass style, a few behavior flags, and the Library tab's default sort — all in one tap. Applying one overwrites the individual choices in Appearance, Liquid Glass, and the Library sort chips.")
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.textSecondary)
-                    .listRowBackground(Color.clear)
             }
 
             if let error = engine.lastError {
-                Section {
+                LKSection {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(AppTheme.bodyFont(size: 13))
                         .foregroundStyle(AppTheme.error)
                 }
-                .listRowBackground(tintedRowBackground(.purple))
             }
 
-            Section {
+            LKSection {
                 ForEach(LuaPreset.allCases) { preset in
                     presetRow(preset)
                 }
             } header: {
                 sectionHeader("Presets")
             }
-            .listRowBackground(tintedRowBackground(.purple))
 
-            Section {
+            LKSection {
                 if userPresets.isEmpty {
                     Text("No imported presets yet. Tap Import above to paste one someone shared with you.")
                         .font(AppTheme.bodyFont(size: 13))
@@ -57,10 +54,9 @@ struct LuaThemePresetsView: View {
             } header: {
                 sectionHeader("Imported (Community)")
             }
-            .listRowBackground(tintedRowBackground(.purple))
 
             if engine.activePresetID != nil {
-                Section {
+                LKSection {
                     Button(role: .destructive) {
                         engine.clearPreset()
                         refreshToken = UUID()
@@ -73,18 +69,14 @@ struct LuaThemePresetsView: View {
                     }
                     .foregroundStyle(AppTheme.dynamicAccent)
                 }
-                .listRowBackground(tintedRowBackground(.purple))
-                .listRowSeparator(.hidden)
-                Section {
+                LKSection {
                     Text("Clearing only removes the preset marker and the custom background/layout scale it set — individual colors, fonts, and styles stay as the preset left them. Use Appearance → Reset to Default to restore everything.")
                         .font(AppTheme.bodyFont(size: 12))
                         .foregroundStyle(AppTheme.textSecondary)
-                        .listRowBackground(Color.clear)
                 }
             }
         }
         .id(refreshToken)
-        .scrollContentBackground(.hidden)
         .background(Color.clear.ignoresSafeArea())
         .navigationTitle("Lua Theme Presets")
         .navigationBarTitleDisplayMode(.inline)
@@ -133,7 +125,7 @@ struct LuaThemePresetsView: View {
             }
         }
         .buttonStyle(.plain)
-        .swipeActions {
+        .contextMenu {
             Button(role: .destructive) {
                 engine.deleteUserPreset(at: url)
                 userPresets = engine.userPresetScripts()
@@ -146,18 +138,18 @@ struct LuaThemePresetsView: View {
 
     private var importSheet: some View {
         NavigationStack {
-            Form {
-                Section("Preset Name") {
+            LKScroll {
+                LKSection("Preset Name") {
                     TextField("e.g. my_theme", text: $importName)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
-                Section("Lua Source") {
+                LKSection("Lua Source") {
                     TextEditor(text: $importText)
                         .font(.system(.footnote, design: .monospaced))
                         .frame(minHeight: 220)
                 }
-                Section {
+                LKSection {
                     Text("Paste a preset script someone shared with you — it must set a global `theme` table (see any bundled preset for the exact shape).")
                         .font(.caption)
                         .foregroundStyle(AppTheme.textSecondary)

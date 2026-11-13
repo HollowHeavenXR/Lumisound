@@ -71,192 +71,133 @@ struct AppearanceView: View {
             .onDisappear { Appearance.shared.commitPalette() }
     }
 
+    enum Shelf: String, CaseIterable { case colour = "Colour", surfaces = "Surfaces", player = "Player", motion = "Motion" }
+    @AppStorage("appearance.shelf") private var shelfRaw = Shelf.colour.rawValue
+    private var shelf: Shelf { Shelf(rawValue: shelfRaw) ?? .colour }
+
     private var content: some View {
-        List {
-
-            // MARK: — Interface Style
-            Section {
-                AppearanceStylePicker()
-            } header: {
-                sectionHeader("Interface Style")
-            } footer: {
-                Text("How cards, panels and the player chrome are drawn. Synced to your account.")
+        LKPage(title: "Appearance", subtitle: "Colour, surfaces, the player and motion.", icon: "paintbrush.fill", tint: AppTheme.dynamicAccent) {
+            accentPreviewRow
+                .padding(14)
+                .background(LKCardBackground(tint: AppTheme.dynamicAccent))
+            LKSegmented(options: Shelf.allCases.map { ($0, $0.rawValue) }, selection: Binding(
+                get: { shelf }, set: { shelfRaw = $0.rawValue }))
+            Group {
+                switch shelf {
+                case .colour: colourShelf
+                case .surfaces: surfacesShelf
+                case .player: playerShelf
+                case .motion: motionShelf
+                }
             }
+            .transition(.opacity)
+            resetButton
+        }
+        .id(refreshToken)
+        .animation(.easeInOut(duration: 0.2), value: shelfRaw)
+        .onAppear {
+            customColor = AppTheme.dynamicAccent
+            customSecondaryColor = AppTheme.dynamicAccentSecondary
+        }
+    }
 
-            // MARK: — Preview
-            Section {
-                accentPreviewRow
-            } header: {
-                sectionHeader("Preview")
-            }
-
-            // MARK: — Quick-Pick Presets
-            Section {
-                presetSwatchGrid
-            } header: {
-                sectionHeader("Quick Picks")
-            }
-
-            // MARK: — Custom Color Picker
-            Section {
-                ColorPicker("Custom Color", selection: $customColor, supportsOpacity: false)
+    @ViewBuilder
+    private var colourShelf: some View {
+        LKCard(title: "Quick picks") { presetSwatchGrid.padding(.vertical, 4) }
+        LKCard(title: "Your own", footer: "The second colour pairs with your accent wherever a gradient is shown — the mini player and launch screen.") {
+            HStack(spacing: 12) {
+                LKIcon(symbol: "eyedropper.halffull", tint: customColor)
+                ColorPicker("Accent", selection: $customColor, supportsOpacity: false)
                     .foregroundStyle(AppTheme.textPrimary)
                     .onChange(of: customColor) { newColor in
                         AppTheme.saveAccentColor(newColor)
                         refreshToken = UUID()
                         account.schedulePush(library: library)
                     }
-                    .listRowBackground(tintedRowBackground(.purple))
-
-                ColorPicker("Gradient Secondary Color", selection: $customSecondaryColor, supportsOpacity: false)
+            }
+            .padding(.vertical, 6)
+            LKDivider()
+            HStack(spacing: 12) {
+                LKIcon(symbol: "circle.lefthalf.filled", tint: customSecondaryColor)
+                ColorPicker("Gradient partner", selection: $customSecondaryColor, supportsOpacity: false)
                     .foregroundStyle(AppTheme.textPrimary)
                     .onChange(of: customSecondaryColor) { newColor in
                         AppTheme.saveAccentSecondaryColor(newColor)
                         refreshToken = UUID()
                     }
-                    .listRowBackground(tintedRowBackground(.purple))
-            } header: {
-                sectionHeader("Custom")
-            } footer: {
-                Text("The secondary color pairs with your accent color wherever it's shown as a gradient — the mini player and launch screen.")
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.textSecondary)
             }
+            .padding(.vertical, 6)
+        }
+        LKCard(title: "Background theme", footer: "Background and surface colours everywhere.") { backgroundThemePicker }
+        LKCard(title: "Font") { fontStylePicker }
+    }
 
-            // MARK: — Background Theme
-            Section {
-                backgroundThemePicker
-            } header: {
-                sectionHeader("Background Theme")
-            } footer: {
-                Text("Changes the app's background and surface colors everywhere.")
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
-
-            // MARK: — Launch Screen
-            Section {
-                Picker("Style", selection: $launchScreenStyleRaw) {
-                    ForEach(LaunchScreenStyle.allCases) { style in
-                        Text(style.displayName).tag(style.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .tint(AppTheme.dynamicAccent)
-            } header: {
-                sectionHeader("Launch Screen")
-            } footer: {
-                Text("Minimalist skips the animated background/halo — also used automatically when Reduce Motion is on.")
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
-
-            // MARK: — Tab Switch Transition
-            Section {
-                Picker("Style", selection: $tabTransitionStyleRaw) {
-                    ForEach(TabTransitionStyle.allCases) { style in
-                        Text(style.displayName).tag(style.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .tint(AppTheme.dynamicAccent)
-            } header: {
-                sectionHeader("Tab Switch Transition")
-            }
-
-            // MARK: — Font Style
-            Section {
-                fontStylePicker
-            } header: {
-                sectionHeader("Font Style")
-            }
-
-            // MARK: — Player Style Defaults
-            Section {
-                artworkStylePicker
-                seekerStylePicker
-            } header: {
-                sectionHeader("Player Style Defaults")
-            } footer: {
-                Text("These set the starting style for new sessions. You can also switch styles live in the Now Playing screen.")
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
-
-            // MARK: — Song Card Style
-            Section {
-                cardStylePicker
-            } header: {
-                sectionHeader("Song Cards")
-            } footer: {
-                Text("Changes how song rows look across Library, Queue, Favorites, Playlists, and Artist screens.")
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
-
-            // MARK: — Interface
-            Section {
-                panelOpacityRow
-
+    @ViewBuilder
+    private var surfacesShelf: some View {
+        LKCard(title: "Interface style", footer: "How cards, panels and the player chrome are drawn. Synced to your account.") {
+            AppearanceStylePicker()
+        }
+        LKCard(title: "Panels") {
+            panelOpacityRow
+            LKDivider()
+            HStack(spacing: 12) {
+                LKIcon(symbol: "square.on.square", tint: .purple)
                 LumiPicker(selection: $panelMaterialRaw) {
                     ForEach(PanelMaterialStyle.allCases) { style in
                         Text(style.displayName).lumiOptionLabel(String(describing: style.displayName)).tag(style.rawValue)
                     }
                 } label: {
-                    Label("Panel Style", systemImage: "square.on.square")
-                        .foregroundStyle(AppTheme.textPrimary)
+                    Text("Panel material").foregroundStyle(AppTheme.textPrimary)
                 }
-
-                Toggle(isOn: $reduceMotion) {
-                    Label("Reduce Motion", systemImage: "figure.walk.motion")
-                        .foregroundStyle(AppTheme.textPrimary)
-                }
-                .tint(AppTheme.dynamicAccent)
-            } header: {
-                sectionHeader("Interface")
-            } footer: {
-                Text("Reduce Motion simplifies the launch screen and background photo transitions for anyone sensitive to on-screen motion.")
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.textSecondary)
             }
-
-            // MARK: — Reset
-            Section {
-                Button(role: .destructive) {
-                    AppTheme.resetAccentColor()
-                    AppTheme.resetAccentSecondaryColor()
-                    AppTheme.resetBackgroundTheme()
-                    AppTheme.resetFontStyle()
-                    customColor = AppTheme.accent
-                    customSecondaryColor = AppTheme.accentSoft
-                    backgroundThemeRaw = AppBackgroundTheme.default.rawValue
-                    fontStyleRaw = AppFontStyle.system.rawValue
-                    panelMaterialRaw = PanelMaterialStyle.solid.rawValue
-                    launchScreenStyleRaw = LaunchScreenStyle.aurora.rawValue
-                    tabTransitionStyleRaw = TabTransitionStyle.scalePop.rawValue
-                    reduceMotion = false
-                    panelOpacity = 1.0
-                    refreshToken = UUID()
-                    account.schedulePush(library: library)
-                    ToastCenter.shared.show("Appearance reset to default", category: .info, icon: "arrow.counterclockwise")
-                } label: {
-                    HStack {
-                        Image(systemName: "arrow.counterclockwise")
-                        Text("Reset to Default")
-                    }
-                }
-                .foregroundStyle(AppTheme.dynamicAccent)
-                .listRowBackground(tintedRowBackground(.purple))
-            }
+            .padding(.vertical, 6)
         }
-        .id(refreshToken)
-        .scrollContentBackground(.hidden)
-        .background(Color.clear.ignoresSafeArea())
-        .navigationTitle("Appearance")
-        .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            customColor = AppTheme.dynamicAccent
-            customSecondaryColor = AppTheme.dynamicAccentSecondary
+        LKCard(title: "Song cards", footer: "How song rows look in Library, Queue, Favorites, Playlists and Artists.") { cardStylePicker }
+    }
+
+    @ViewBuilder
+    private var playerShelf: some View {
+        LKCard(title: "Now Playing defaults", footer: "The starting style for new sessions. You can still switch live in Now Playing.") {
+            artworkStylePicker
+            LKDivider(inset: 0)
+            seekerStylePicker
+        }
+    }
+
+    @ViewBuilder
+    private var motionShelf: some View {
+        LKCard {
+            LKToggle(icon: "figure.walk.motion", tint: .green, title: "Reduce Motion",
+                     subtitle: "Simpler launch screen and background transitions", isOn: $reduceMotion)
+        }
+        LKCard(title: "Launch screen", footer: "Minimalist skips the animated halo — also used when Reduce Motion is on.") {
+            LKSegmented(options: LaunchScreenStyle.allCases.map { ($0.rawValue, $0.displayName) }, selection: $launchScreenStyleRaw)
+                .padding(.vertical, 4)
+        }
+        LKCard(title: "Switching tabs") {
+            LKSegmented(options: TabTransitionStyle.allCases.map { ($0.rawValue, $0.displayName) }, selection: $tabTransitionStyleRaw)
+                .padding(.vertical, 4)
+        }
+    }
+
+    private var resetButton: some View {
+        LKPrimaryButton(title: "Reset Appearance", icon: "arrow.counterclockwise", tint: .gray, prominent: false) {
+            AppTheme.resetAccentColor()
+            AppTheme.resetAccentSecondaryColor()
+            AppTheme.resetBackgroundTheme()
+            AppTheme.resetFontStyle()
+            customColor = AppTheme.accent
+            customSecondaryColor = AppTheme.accentSoft
+            backgroundThemeRaw = AppBackgroundTheme.default.rawValue
+            fontStyleRaw = AppFontStyle.system.rawValue
+            panelMaterialRaw = PanelMaterialStyle.solid.rawValue
+            launchScreenStyleRaw = LaunchScreenStyle.aurora.rawValue
+            tabTransitionStyleRaw = TabTransitionStyle.scalePop.rawValue
+            reduceMotion = false
+            panelOpacity = 1.0
+            refreshToken = UUID()
+            account.schedulePush(library: library)
+            ToastCenter.shared.show("Appearance reset to default", category: .info, icon: "arrow.counterclockwise")
         }
     }
 
@@ -309,7 +250,6 @@ struct AppearanceView: View {
             }
         }
         .padding(.vertical, 6)
-        .listRowBackground(tintedRowBackground(.purple))
     }
 
     private var presetSwatchGrid: some View {
@@ -350,7 +290,6 @@ struct AppearanceView: View {
             }
         }
         .padding(.vertical, 8)
-        .listRowBackground(tintedRowBackground(.purple))
     }
 
     private var backgroundThemePicker: some View {
@@ -392,7 +331,6 @@ struct AppearanceView: View {
             }
             .padding(.vertical, 4)
         }
-        .listRowBackground(tintedRowBackground(.purple))
     }
 
     private var fontStylePicker: some View {
@@ -416,7 +354,6 @@ struct AppearanceView: View {
                 .buttonStyle(.plain)
             }
         }
-        .listRowBackground(tintedRowBackground(.purple))
     }
 
     private var artworkStylePicker: some View {
@@ -453,7 +390,6 @@ struct AppearanceView: View {
             }
         }
         .padding(.vertical, 6)
-        .listRowBackground(tintedRowBackground(.purple))
     }
 
     private var cardStylePicker: some View {
@@ -530,7 +466,6 @@ struct AppearanceView: View {
             .padding(.top, 4)
         }
         .padding(.vertical, 6)
-        .listRowBackground(tintedRowBackground(.purple))
         .sheet(item: $editingCustomLibraryStyle) { style in
             LibraryStyleEditorView(style: style, previewSong: library.allSongs.first) { saved in
                 customLibraryStyleStore.update(saved)
@@ -598,7 +533,6 @@ struct AppearanceView: View {
             }
         }
         .padding(.vertical, 6)
-        .listRowBackground(tintedRowBackground(.purple))
     }
 
     private var panelOpacityRow: some View {
@@ -632,7 +566,6 @@ struct AppearanceView: View {
             )
         }
         .padding(.vertical, 6)
-        .listRowBackground(tintedRowBackground(.purple))
     }
 
     // MARK: Helpers

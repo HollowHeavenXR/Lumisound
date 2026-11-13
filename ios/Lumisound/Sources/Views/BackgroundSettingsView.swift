@@ -16,7 +16,7 @@ struct BackgroundSettingsView: View {
     @AppStorage(GalleryBackgroundSource.storageKey) private var backgroundSource = GalleryBackgroundSource.photos.rawValue
 
     var body: some View {
-        List {
+        LKPage(title: "Gallery Background", subtitle: "Photos, Sonic Wallpaper or a live aura behind every screen.", icon: "photo.on.rectangle.angled", tint: .blue, showsMiniPlayer: false) {
             // MARK: Background Source
             //
             // Everything below this section (photo picker, cloud sync, shuffle
@@ -26,13 +26,29 @@ struct BackgroundSettingsView: View {
             // `SonicWallpaperView`) and has nothing to configure, so it isn't
             // gated behind hiding/disabling the rest of this screen, just
             // called out with a note.
-            Section {
-                Picker("Background Source", selection: $backgroundSource) {
+            LKCard(spacing: 10) {
+                // Each source as a card with its own symbol.
+                HStack(spacing: 8) {
                     ForEach(GalleryBackgroundSource.allCases) { source in
-                        Text(source.title).tag(source.rawValue)
+                        let on = backgroundSource == source.rawValue
+                        Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            withAnimation(.easeInOut(duration: 0.2)) { backgroundSource = source.rawValue }
+                        } label: {
+                            VStack(spacing: 6) {
+                                Image(systemName: source == .photos ? "photo.stack" : source == .sonic ? "waveform.circle" : "sparkles")
+                                    .font(.system(size: 20, weight: .semibold))
+                                Text(source.title).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .foregroundStyle(on ? .white : AppTheme.textPrimary)
+                            .background(on ? AnyShapeStyle(Color.blue.gradient) : AnyShapeStyle(AppTheme.elevatedSurface),
+                                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .pickerStyle(.segmented)
 
                 if backgroundSource == GalleryBackgroundSource.sonic.rawValue {
                     Text("Sonic Wallpaper is generated automatically from your own most-played and favorited tracks' artwork — nothing to add or configure. The photo settings below are ignored while it's selected.")
@@ -46,7 +62,7 @@ struct BackgroundSettingsView: View {
             }
 
             // MARK: Status + Start/Stop button
-            Section {
+            LKCard(spacing: 10) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(bg.isEnabled && bg.isActive ? "Gallery Running" : !bg.hasImages ? "No images added" : "Gallery Paused")
@@ -94,7 +110,7 @@ struct BackgroundSettingsView: View {
             }
 
             // MARK: Image Picker Section
-            Section("Images (\(bg.imageCount) saved)") {
+            LKCard(title: "Images (\(bg.imageCount) saved)", spacing: 10) {
                 PhotosPicker(
                     selection: $selectedItems,
                     maxSelectionCount: 150,
@@ -221,7 +237,7 @@ struct BackgroundSettingsView: View {
             }
 
             // MARK: Cloud Backup Section
-            Section("Cloud Backup") {
+            LKCard(title: "Cloud Backup", spacing: 10) {
                 if account.isLoggedIn, let token = account.token {
                     if let error = cloudError {
                         HStack(spacing: 8) {
@@ -299,7 +315,7 @@ struct BackgroundSettingsView: View {
             if bg.hasImages {
 
                 // MARK: Shuffle Interval Section
-                Section("Shuffle Interval") {
+                LKCard(title: "Shuffle Interval", spacing: 10) {
                     Picker("Interval", selection: $bg.shuffleIntervalSeconds) {
                         ForEach(BackgroundService.intervalPresets, id: \.seconds) { p in
                             Text(p.label).tag(p.seconds)
@@ -314,7 +330,7 @@ struct BackgroundSettingsView: View {
                 }
 
                 // MARK: Animation Section
-                Section("Transition Animation") {
+                LKCard(title: "Transition Animation", spacing: 10) {
                     LazyVGrid(
                         columns: Array(repeating: .init(.flexible()), count: 4),
                         spacing: 12
@@ -340,11 +356,10 @@ struct BackgroundSettingsView: View {
                             }
                         }
                     }
-                    .listRowBackground(Color.clear)
                 }
 
                 // MARK: Preview Section
-                Section {
+                LKCard(spacing: 10) {
                     Button {
                         bg.nextImage()
                     } label: {
@@ -355,7 +370,7 @@ struct BackgroundSettingsView: View {
                 }
 
                 // MARK: Appearance Section
-                Section("Appearance") {
+                LKCard(title: "Appearance", spacing: 10) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("Opacity")
@@ -395,8 +410,6 @@ struct BackgroundSettingsView: View {
         // failed to draw. Rows that deliberately opt out (the full-bleed photo
         // strip below) still override this with their own `Color.clear`.
         // `.purple` matches the Appearance section that pushes this screen.
-        .listRowBackground(tintedRowBackground(.purple))
-        .scrollContentBackground(.hidden)
         .background(Color.clear.ignoresSafeArea())
         .safeAreaInset(edge: .bottom) {
             MiniPlayerBar()

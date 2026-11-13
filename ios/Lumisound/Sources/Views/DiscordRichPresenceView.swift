@@ -47,21 +47,18 @@ struct DiscordRichPresenceView: View {
     @State private var didSaveAdvanced = false
 
     var body: some View {
-        List {
+        LKPage(title: "Rich Presence", subtitle: "Show what you're playing on your Discord profile.", icon: "key.viewfinder", tint: Color(red: 0.345, green: 0.396, blue: 0.949)) {
             discordAccountSection
             richPresenceSection
             if let errorText {
-                Section {
+                LKSection {
                     Text(errorText)
                         .font(.footnote)
                         .foregroundStyle(AppTheme.error)
                 }
-                .listRowBackground(Color.clear)
             }
             advancedSection
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
         .background(Color.clear.ignoresSafeArea())
         .navigationTitle("Discord Rich Presence")
         .navigationBarTitleDisplayMode(.inline)
@@ -71,7 +68,7 @@ struct DiscordRichPresenceView: View {
     // MARK: - Discord Account
 
     private var discordAccountSection: some View {
-        Section {
+        LKSection {
             if discordVerification.isVerified {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.seal.fill")
@@ -109,13 +106,12 @@ struct DiscordRichPresenceView: View {
                 .font(AppTheme.bodyFont(size: 12))
                 .foregroundStyle(AppTheme.textSecondary)
         }
-        .listRowBackground(AppTheme.surface)
     }
 
     // MARK: - Rich Presence (the simplified, main flow)
 
     private var richPresenceSection: some View {
-        Section {
+        LKSection {
             Toggle(isOn: Binding(
                 get: { enabled },
                 set: { newValue in Task { await toggleEnabled(newValue) } }
@@ -168,7 +164,6 @@ struct DiscordRichPresenceView: View {
                     .foregroundStyle(AppTheme.textSecondary)
             }
         }
-        .listRowBackground(AppTheme.surface)
     }
 
     /// First-ever enable (no registration exists yet): generates a fresh RPC
@@ -206,7 +201,7 @@ struct DiscordRichPresenceView: View {
     // MARK: - Advanced: custom Discord Application override
 
     private var advancedSection: some View {
-        Section {
+        LKSection {
             DisclosureGroup(isExpanded: $showAdvanced) {
                 TextField("Discord Application Client ID", text: $clientIdText)
                     .keyboardType(.numberPad)
@@ -280,7 +275,6 @@ struct DiscordRichPresenceView: View {
                 .font(AppTheme.bodyFont(size: 12))
                 .foregroundStyle(AppTheme.textSecondary)
         }
-        .listRowBackground(AppTheme.surface)
     }
 
     private func saveAdvanced() {

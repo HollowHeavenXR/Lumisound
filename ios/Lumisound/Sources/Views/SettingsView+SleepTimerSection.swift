@@ -43,7 +43,7 @@ extension SettingsView {
 /// Settings screen. See `SleepTimerProgress`'s doc comment: without this,
 /// every `Picker(.menu)` dropdown elsewhere in Settings (EQ preset, reverb
 /// preset, etc.) rebuilt right along with it, every second.
-private struct SleepTimerActiveRow: View {
+struct SleepTimerActiveRow: View {
     @EnvironmentObject private var sleepProgress: SleepTimerProgress
     let onCancel: () -> Void
 

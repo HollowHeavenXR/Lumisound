@@ -19,8 +19,8 @@ struct AchievementsView: View {
     @State private var showConfetti = false
 
     var body: some View {
-        List {
-            Section {
+        LKPage(title: "Achievements", subtitle: "Milestones from how you listen.", icon: "trophy.fill", tint: .yellow) {
+            LKSection {
                 if let data = account.achievements {
                     LabeledContent("Current Streak") {
                         Text(streakLabel(data.currentStreakDays))
@@ -59,10 +59,9 @@ struct AchievementsView: View {
             } header: {
                 sectionHeader("Streaks")
             }
-            .listRowBackground(AppTheme.surface)
 
             if let data = account.achievements {
-                Section {
+                LKSection {
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(Self.allBadges, id: \.id) { badge in
                             Button {
@@ -81,13 +80,10 @@ struct AchievementsView: View {
                         .font(AppTheme.bodyFont(size: 12))
                         .foregroundStyle(AppTheme.textSecondary)
                 }
-                .listRowBackground(AppTheme.surface)
             }
         }
         // Without an explicit style this defaults to a grouped-card look —
         // see FavoritesView's identical fix.
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(GalleryBackgroundView().ignoresSafeArea())
         .overlay(ConfettiOverlay(isActive: showConfetti).ignoresSafeArea())
         .navigationTitle("Achievements")

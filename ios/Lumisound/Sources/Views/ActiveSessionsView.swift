@@ -11,62 +11,70 @@ struct ActiveSessionsView: View {
 
     @State private var pendingRevoke: AccountSession?
 
-    var body: some View {
-        List {
-            if account.sessions.isEmpty {
-                Text("No active sessions found.")
-                    .font(AppTheme.bodyFont(size: 13))
-                    .foregroundStyle(AppTheme.textSecondary)
-                    .listRowBackground(AppTheme.surface)
-            } else {
-                Section {
-                    ForEach(account.sessions) { session in
-                        Button {
-                            pendingRevoke = session
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    HStack(spacing: 6) {
-                                        Text(session.deviceName ?? "Unknown device")
-                                            .font(AppTheme.bodyFont(size: 14))
-                                            .foregroundStyle(AppTheme.textPrimary)
-                                        if session.isCurrent {
-                                            Text("This Device")
-                                                .font(.caption2.weight(.semibold))
-                                                .foregroundStyle(AppTheme.dynamicAccent)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(AppTheme.dynamicAccent.opacity(0.15), in: Capsule())
-                                        }
-                                    }
-                                    if let date = session.createdDate {
-                                        Text("Signed in \(date.formatted(.relative(presentation: .named)))")
-                                            .font(AppTheme.bodyFont(size: 12))
-                                            .foregroundStyle(AppTheme.textSecondary)
-                                    }
-                                }
-                                Spacer()
-                                Image(systemName: "rectangle.portrait.and.arrow.right")
-                                    .foregroundStyle(AppTheme.error)
-                            }
-                        }
-                        .disabled(account.isSyncing)
-                    }
-                } footer: {
-                    Text("Tap a session to sign it out. Signing out the current device signs you out of Lumisound on this phone.")
-                        .font(AppTheme.bodyFont(size: 12))
-                        .foregroundStyle(AppTheme.textSecondary)
+    private func deviceIcon(_ name: String?) -> String {
+        let n = (name ?? "").lowercased()
+        if n.contains("ipad") { return "ipad" }
+        if n.contains("tv") { return "appletv" }
+        if n.contains("watch") { return "applewatch" }
+        if n.contains("mac") || n.contains("web") || n.contains("browser") { return "laptopcomputer" }
+        return "iphone"
+    }
+
+    private func sessionCard(_ session: AccountSession) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: deviceIcon(session.deviceName))
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(session.isCurrent ? .white : Color.blue)
+                .frame(width: 46, height: 46)
+                .background(session.isCurrent ? AnyShapeStyle(Color.blue.gradient) : AnyShapeStyle(Color.blue.opacity(0.14)),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(session.deviceName ?? "Unknown device").font(.headline).foregroundStyle(AppTheme.textPrimary).lineLimit(1)
+                    if session.isCurrent { LKPill(text: "You", tint: .blue) }
                 }
-                .listRowBackground(AppTheme.surface)
+                if let date = session.createdDate {
+                    Text("Signed in \(date.formatted(.relative(presentation: .named)))")
+                        .font(.caption).foregroundStyle(AppTheme.textSecondary)
+                }
+            }
+            Spacer(minLength: 4)
+            Button { pendingRevoke = session } label: {
+                Text("Sign out")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .foregroundStyle(AppTheme.error)
+                    .background(AppTheme.error.opacity(0.12), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(account.isSyncing)
+        }
+        .padding(14)
+        .background(LKCardBackground(tint: session.isCurrent ? .blue : nil))
+    }
+
+    var body: some View {
+        LKPage(title: "Active Sessions", subtitle: "Every device signed in to your Lumisound account.",
+               icon: "laptopcomputer.and.iphone", tint: .blue) {
+            if account.sessions.isEmpty {
+                LKEmpty(icon: "iphone.slash", title: "No sessions found", message: "Pull down to refresh.", tint: .blue)
+            } else {
+                let current = account.sessions.filter(\.isCurrent)
+                let others = account.sessions.filter { !$0.isCurrent }
+                if !current.isEmpty {
+                    LKSectionTitle("This device")
+                    ForEach(current) { sessionCard($0) }
+                }
+                if !others.isEmpty {
+                    LKSectionTitle("Other devices · \(others.count)")
+                    ForEach(others) { sessionCard($0) }
+                    if others.count > 1 {
+                        Text("Don't recognise one? Sign it out, then change your password in Privacy & Security.")
+                            .font(.caption2).foregroundStyle(AppTheme.textSecondary).padding(.horizontal, 6)
+                    }
+                }
             }
         }
-        // Without an explicit style this defaults to a grouped-card look —
-        // see FavoritesView's identical fix.
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(GalleryBackgroundView().ignoresSafeArea())
-        .navigationTitle("Active Sessions")
-        .navigationBarTitleDisplayMode(.inline)
         .task { await account.fetchSessions() }
         .refreshable { await account.fetchSessions() }
         .confirmationDialog(

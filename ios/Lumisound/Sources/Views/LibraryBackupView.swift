@@ -26,15 +26,32 @@ struct LibraryBackupView: View {
     }
 
     var body: some View {
-        List {
-            exportSection
-            importSection
-            infoSection
+        LKPage(title: "Backup & Restore", subtitle: "Your playlists and favorites in one file — no account needed.",
+               icon: "arrow.triangle.2.circlepath", tint: .green) {
+            HStack(spacing: 10) {
+                LKStat(value: "\(library.playlists.count)", label: "Playlists", icon: "music.note.list", tint: .green)
+                LKStat(value: "\(library.favoriteSongIDs.count)", label: "Favorites", icon: "heart.fill", tint: .pink)
+            }
+            HStack(spacing: 12) {
+                actionTile(icon: "square.and.arrow.up.fill", title: "Export", detail: "Save or AirDrop a backup file", tint: .green) {
+                    exportBackup()
+                }
+                .disabled(library.playlists.isEmpty && library.favoriteSongIDs.isEmpty)
+                actionTile(icon: "square.and.arrow.down.fill", title: "Import", detail: "Add from a backup file", tint: .blue) {
+                    showImporter = true
+                }
+            }
+            LKCard(title: "Good to know") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Importing adds — nothing you have now is replaced or removed.", systemImage: "plus.square.on.square")
+                    Label("Songs a backup mentions that aren't on this device are skipped.", systemImage: "forward")
+                    Label("Audio files aren't included: move downloads separately; Apple Music songs need iCloud Music Library on both devices.", systemImage: "music.note")
+                }
+                .font(.caption)
+                .foregroundStyle(AppTheme.textSecondary)
+                .padding(.vertical, 4)
+            }
         }
-        .scrollContentBackground(.hidden)
-        .background(EditionScreenBackground())
-        .navigationTitle("Backup & Restore")
-        .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showShareSheet) {
             if let exportURL {
                 RewindShareSheet(items: [exportURL])
@@ -50,57 +67,20 @@ struct LibraryBackupView: View {
         }
     }
 
-    @ViewBuilder
-    private var exportSection: some View {
-        Section {
-            Button {
-                exportBackup()
-            } label: {
-                Label("Export Backup", systemImage: "square.and.arrow.up")
-                    .foregroundStyle(AppTheme.textPrimary)
+    private func actionTile(icon: String, title: String, detail: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                Image(systemName: icon).font(.system(size: 26, weight: .semibold))
+                Spacer(minLength: 0)
+                Text(title).font(.headline)
+                Text(detail).font(.caption2).opacity(0.85).lineLimit(2)
             }
-            .disabled(library.playlists.isEmpty && library.favoriteSongIDs.isEmpty)
-        } header: {
-            sectionHeader("Export")
-        } footer: {
-            Text(exportFooterText)
-                .font(.caption)
-                .foregroundStyle(AppTheme.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: 130, alignment: .leading)
+            .padding(14)
+            .foregroundStyle(.white)
+            .background(tint.gradient, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
-        .listRowBackground(tintedRowBackground(.pink))
-    }
-
-    @ViewBuilder
-    private var importSection: some View {
-        Section {
-            Button {
-                showImporter = true
-            } label: {
-                Label("Import Backup", systemImage: "square.and.arrow.down")
-                    .foregroundStyle(AppTheme.textPrimary)
-            }
-        } header: {
-            sectionHeader("Import")
-        } footer: {
-            Text("Adds the playlists and favorites from a backup file to what you already have here — nothing existing is replaced or removed. Songs the backup references that aren't in your library on this device are skipped.")
-                .font(.caption)
-                .foregroundStyle(AppTheme.textSecondary)
-        }
-        .listRowBackground(tintedRowBackground(.pink))
-    }
-
-    @ViewBuilder
-    private var infoSection: some View {
-        Section {
-            Label("Doesn't include audio files", systemImage: "info.circle")
-                .foregroundStyle(AppTheme.textSecondary)
-                .font(.caption)
-        } footer: {
-            Text("This backs up playlist structure and favorites only — not the actual song files. Apple Music library songs need iCloud Music Library on both devices; imported/downloaded files need to be transferred separately.")
-                .font(.caption)
-                .foregroundStyle(AppTheme.textSecondary)
-        }
-        .listRowBackground(Color.clear)
+        .buttonStyle(.plain)
     }
 
     private func exportBackup() {

@@ -471,7 +471,7 @@ extension SettingsView {
 /// otherwise have this picker open. Taking only `player` (an `@ObservedObject`,
 /// not inherited through the parent's wider environment) means this row now
 /// only re-renders on `player`'s own — much less frequent — publishes.
-private struct FadeCurvePickerRow: View {
+struct FadeCurvePickerRow: View {
     @ObservedObject var player: AudioPlayerManager
 
     var body: some View {
@@ -566,7 +566,7 @@ struct LumiSpaceRoomPicker: View {
 }
 
 /// Same isolation as `FadeCurvePickerRow` above, for the EQ Preset picker.
-private struct EQPresetPickerRow: View {
+struct EQPresetPickerRow: View {
     @ObservedObject var player: AudioPlayerManager
 
     var body: some View {
@@ -589,7 +589,7 @@ private struct EQPresetPickerRow: View {
 }
 
 /// Same isolation as `FadeCurvePickerRow` above, for the Reverb Room picker.
-private struct ReverbPresetPickerRow: View {
+struct ReverbPresetPickerRow: View {
     @ObservedObject var player: AudioPlayerManager
 
     var body: some View {
@@ -615,7 +615,7 @@ private struct ReverbPresetPickerRow: View {
 /// (`player.rotationHz`/`set8DSpeed`) never actually depended on 8D being
 /// the picker's "active effect" in the first place, so it needed no changes
 /// beyond relocating.
-private struct EightDSpeedControl: View {
+struct EightDSpeedControl: View {
     @ObservedObject var player: AudioPlayerManager
 
     // Preset speeds: label, hz value
@@ -681,7 +681,7 @@ private struct EightDSpeedControl: View {
 }
 
 /// Lumisound's own audio engine (Rust), on by default; off = Apple's engine.
-private struct RustEngineToggleRow: View {
+struct RustEngineToggleRow: View {
     @ObservedObject var player: AudioPlayerManager
     @AppStorage(AudioPlayerManager.rustEngineKey) private var enabled = true
 
@@ -707,7 +707,7 @@ private struct RustEngineToggleRow: View {
 }
 
 /// Smart Shuffle (rust/core/src/shuffle.rs), on by default; off = plain random.
-private struct SmartShuffleToggleRow: View {
+struct SmartShuffleToggleRow: View {
     @ObservedObject var player: AudioPlayerManager
     @AppStorage(SmartShuffle.settingKey) private var enabled = true
 
@@ -731,7 +731,7 @@ private struct SmartShuffleToggleRow: View {
 }
 
 /// Music Haptics feel: Subtle / Balanced / Intense.
-private struct MusicHapticsStrengthRow: View {
+struct MusicHapticsStrengthRow: View {
     @AppStorage(MusicHapticsService.strengthKey) private var raw = MusicHapticsService.Strength.balanced.rawValue
 
     var body: some View {
