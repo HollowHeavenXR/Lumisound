@@ -176,7 +176,7 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 
 ## Task list (requested 2026-11-12 22:26) — auto-continue armed for 01:25
 - [x] 1. Auto EQ fully on LumiEQ (catalogue presets, eqAutoPreset, spectral matcher + analyzer correction).
-- [ ] 2. New app identity: original icon/logo (replace the "S" mark) for iOS, widget, tvOS, watch.
+- [x] 2. New app identity: "sound eclipse" icon (waveform corona round a dark disc, pulse line, spark) for iOS, in-app display, tvOS parallax layers + Top Shelf, and a new watch AppIcon catalogue. Source: ios/Branding (make_icon.py + render.sh regenerate every size). Widgets use the host app icon.
 - [x] 3. README: only what users need (what it is, install via AltStore/SideStore source, features). No build internals.
 - [x] 4. Fix the same track appearing twice in Favorites.
 - [ ] 5. Subscriptions: smaller channel cards; revamp the tracked-playlist detail screen (downloaded vs missing).
