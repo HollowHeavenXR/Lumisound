@@ -4,7 +4,7 @@ import UIKit
 /// Plays a looping motion (a spin, or a vertical drift) on SwiftUI content
 /// using a Core Animation layer animation instead of a `TimelineView`.
 ///
-/// A `TimelineView(.animation)` re-runs its closure on the main thread every
+/// A `TimelineView(.animation(minimumInterval: LumiMotion.frame))` re-runs its closure on the main thread every
 /// frame. That is the wrong tool for a loading screen: the screen is up
 /// precisely while the main thread is busiest (the snapshot restore, the first
 /// scan, the account sync), so every main-thread stall froze the animation and

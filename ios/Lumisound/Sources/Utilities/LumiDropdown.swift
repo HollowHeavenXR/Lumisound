@@ -289,7 +289,7 @@ private struct LumiDropdownOverlay: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .ignoresSafeArea()
-        .animation(.spring(response: 0.26, dampingFraction: 0.88), value: p.isPresented)
+        .animation(LumiMotion.snap, value: p.isPresented)
     }
 }
 

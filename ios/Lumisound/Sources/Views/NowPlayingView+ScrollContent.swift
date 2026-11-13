@@ -33,7 +33,7 @@ extension NowPlayingView {
                     // starting below it always did.
                     heroSection
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                        .animation(.easeInOut(duration: 0.25), value: displayMode)
+                        .animation(LumiMotion.fade(0.25), value: displayMode)
 
                     VStack(spacing: 14) {
                         trackInfoSection
@@ -70,7 +70,7 @@ extension NowPlayingView {
             }
             .scrollIndicators(.hidden)
             .onChange(of: panelScrollRequest) { _ in
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                withAnimation(LumiMotion.settle) {
                     proxy.scrollTo(Self.panelsAnchor, anchor: .top)
                 }
             }
@@ -90,7 +90,7 @@ extension NowPlayingView {
             panelPicker
             selectedPanelContent
                 .transition(.opacity)
-                .animation(.easeInOut(duration: 0.18), value: selectedPanel)
+                .animation(LumiMotion.fade(0.18), value: selectedPanel)
         }
         .padding(12)
         .adaptiveGlass(
@@ -126,7 +126,7 @@ extension NowPlayingView {
                 let isSelected = selectedPanel == panel
                 Button {
                     selectHaptic.selectionChanged()
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.settle) {
                         selectedPanel = panel
                     }
                 } label: {

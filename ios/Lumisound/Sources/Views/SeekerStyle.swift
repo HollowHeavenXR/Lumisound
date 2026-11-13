@@ -22,17 +22,17 @@ enum SeekerStyle: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .waveform:  return "Waveform"
-        case .classic:   return "Classic"
-        case .ring:      return "Ring"
-        case .bars:      return "Bars"
-        case .digital:   return "Digital"
-        case .pill:      return "Pill"
-        case .neonLine:  return "Neon Line"
-        case .dotTrack:  return "Dot Track"
-        case .segmented: return "Segmented"
-        case .minimal:   return "Minimal"
-        case .ruler:     return "Ruler"
+        case .waveform:  return "Mirror Wave"
+        case .classic:   return "Glide"
+        case .ring:      return "Orbit Dial"
+        case .bars:      return "Skyline"
+        case .digital:   return "Flip Clock"
+        case .pill:      return "Capsule Meter"
+        case .neonLine:  return "Neon Tube"
+        case .dotTrack:  return "Beads"
+        case .segmented: return "Chapters"
+        case .minimal:   return "Hairline"
+        case .ruler:     return "Tape Measure"
         case .custom:    return "Custom"
         }
     }

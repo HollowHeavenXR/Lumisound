@@ -370,7 +370,7 @@ struct FavoritesView: View {
         let isSelected = selectedArtist == name
         return Button {
             UISelectionFeedbackGenerator().selectionChanged()
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            withAnimation(LumiMotion.snap) {
                 selectedArtist = isSelected ? nil : name
             }
         } label: {
@@ -438,7 +438,7 @@ struct FavoritesView: View {
 
     private func layoutButton(columns target: Int, icon: String, label: String) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.2)) { columns = target }
+            withAnimation(LumiMotion.fade(0.2)) { columns = target }
         } label: {
             Image(systemName: icon)
                 .font(.caption.weight(.semibold))
@@ -553,7 +553,7 @@ private struct FavoriteRow: View {
 
             Button {
                 heartHaptic.impactOccurred()
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                withAnimation(LumiMotion.snap) {
                     library.toggleFavorite(songID: song.id)
                 }
             } label: {

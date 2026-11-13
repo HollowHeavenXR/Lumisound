@@ -51,7 +51,7 @@ struct SonicWallpaperView: View {
 
     private var frameInterval: Double {
         guard visible, governor.policy.backgroundMotion else { return 2.0 }
-        return 1.0 / max(governor.policy.motionFps, 1)
+        return 1.0 / min(max(governor.policy.motionFps, 1), LumiMotion.fps)
     }
 
     var body: some View {

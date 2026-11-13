@@ -25,7 +25,7 @@ struct ReactiveAuraBackgroundView: View {
     /// Frame rate the heat governor allows (1 fps "breathing" when it doesn't).
     private var frameInterval: Double {
         guard !reduceMotion, visible, governor.policy.backgroundMotion else { return 1.0 }
-        return 1.0 / max(governor.policy.motionFps, 1)
+        return 1.0 / min(max(governor.policy.motionFps, 1), LumiMotion.fps)
     }
 
     @State private var palette: ArtworkPalette?
@@ -104,7 +104,7 @@ struct ReactiveAuraBackgroundView: View {
             .scaleEffect(scale)
             .position(x: containerSize.width * center.x, y: containerSize.height * center.y)
             .blur(radius: 40)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: level)
+            .animation(reduceMotion ? nil : LumiMotion.glide(0.12), value: level)
     }
 
     private func loadPaletteIfNeeded() {
@@ -117,7 +117,7 @@ struct ReactiveAuraBackgroundView: View {
             guard let image = await ArtworkService.shared.loadArtwork(for: song),
                   let extracted = ArtworkColorExtractor.palette(from: image) else { return }
             guard player.currentSong?.id == song.id else { return }
-            withAnimation(.easeInOut(duration: 0.6)) {
+            withAnimation(LumiMotion.fade(0.6)) {
                 palette = extracted
             }
         }

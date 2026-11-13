@@ -115,6 +115,6 @@ extension SettingsView {
                 .listRowBackground(tintedRowBackground(.red))
             }
         }
-        .animation(.easeInOut(duration: 0.22), value: ytdlpUseAria2)
+        .animation(LumiMotion.fade(0.22), value: ytdlpUseAria2)
     }
 }

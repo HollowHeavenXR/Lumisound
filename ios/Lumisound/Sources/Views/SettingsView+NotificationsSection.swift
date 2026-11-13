@@ -21,8 +21,8 @@ extension SettingsView {
             sectionHeader("Notifications", icon: "bell.badge.fill", tint: .orange)
         }
         .listRowBackground(tintedRowBackground(.orange))
-        .animation(.easeInOut(duration: 0.2), value: notificationService.isEnabled)
-        .animation(.easeInOut(duration: 0.2), value: notificationService.isAuthorized)
+        .animation(LumiMotion.fade(0.2), value: notificationService.isEnabled)
+        .animation(LumiMotion.fade(0.2), value: notificationService.isAuthorized)
     }
 
     @ViewBuilder
@@ -111,7 +111,7 @@ struct NotificationsSettingsView: View {
         }
         .padding(16)
         .background(LKCardBackground(tint: .orange))
-        .animation(.easeInOut(duration: 0.2), value: statusTitle)
+        .animation(LumiMotion.fade(0.2), value: statusTitle)
     }
 
     private var enabledCount: Int {
@@ -156,12 +156,12 @@ struct NotificationsSettingsView: View {
     private var groupChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                Button { withAnimation { group = nil } } label: {
+                Button { withAnimation(LumiMotion.glide) { group = nil } } label: {
                     LKChip(title: "All", icon: "square.grid.2x2", selected: group == nil, tint: .orange)
                 }
                 .buttonStyle(.plain)
                 ForEach(NotificationTopicRegistry.grouped, id: \.group) { entry in
-                    Button { withAnimation { group = entry.group } } label: {
+                    Button { withAnimation(LumiMotion.glide) { group = entry.group } } label: {
                         LKChip(title: entry.group.displayName, icon: entry.group.icon, selected: group == entry.group, tint: .orange)
                     }
                     .buttonStyle(.plain)

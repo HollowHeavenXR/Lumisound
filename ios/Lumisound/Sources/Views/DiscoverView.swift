@@ -27,7 +27,7 @@ struct DiscoverView: View {
         HStack(spacing: 8) {
             ForEach(Tab.allCases) { tab in
                 Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.settle) {
                         selectedTab = tab
                     }
                 } label: {

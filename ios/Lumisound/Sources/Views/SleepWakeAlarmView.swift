@@ -51,7 +51,7 @@ struct SleepWakeAlarmView: View {
             }
             LKBanner(icon: "info.circle", text: "The alarm notification rings even if Lumisound is closed. Music starts by itself only if the app is still open or in the background; after a force-quit, tap the notification to start it.", tint: .gray)
         }
-        .animation(.easeInOut(duration: 0.25), value: alarm.isScheduled)
+        .animation(LumiMotion.fade(0.25), value: alarm.isScheduled)
         .task { await notifications.requestAuthorization() }
     }
 

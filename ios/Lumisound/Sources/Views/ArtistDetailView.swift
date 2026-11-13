@@ -244,7 +244,7 @@ private struct ArtistBioCard: View {
 
             HStack(spacing: 16) {
                 Button(isExpanded ? "Show Less" : "Read More") {
-                    withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
+                    withAnimation(LumiMotion.fade(0.2)) { isExpanded.toggle() }
                 }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AppTheme.dynamicAccent)

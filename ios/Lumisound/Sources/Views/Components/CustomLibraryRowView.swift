@@ -47,7 +47,7 @@ struct CustomLibraryRowView: View {
     @ViewBuilder private var songContent: some View {
         layoutBody
             .contentShape(Rectangle())
-            .animation(.easeInOut(duration: 0.25), value: isCurrent)
+            .animation(LumiMotion.fade(0.25), value: isCurrent)
             .contextMenu {
                 SongContextMenuContent(song: song)
             }
@@ -272,7 +272,7 @@ struct CustomLibraryGridCellView: View {
             }
         }
         .padding(.horizontal, config.horizontalInset)
-        .animation(.easeInOut(duration: 0.25), value: isCurrent)
+        .animation(LumiMotion.fade(0.25), value: isCurrent)
         .contextMenu {
             SongContextMenuContent(song: song)
         }

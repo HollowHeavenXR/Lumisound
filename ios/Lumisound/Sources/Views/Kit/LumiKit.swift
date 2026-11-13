@@ -496,7 +496,7 @@ struct LKSegmented<Value: Hashable>: View {
                 let on = value == selection
                 Button {
                     UISelectionFeedbackGenerator().selectionChanged()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { selection = value }
+                    withAnimation(LumiMotion.snap) { selection = value }
                 } label: {
                     Text(label)
                         .font(.caption.weight(.semibold))

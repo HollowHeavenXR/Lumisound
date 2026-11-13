@@ -193,7 +193,7 @@ struct TrackedPlaylistDetailView: View {
                 .trim(from: 0, to: progressFraction)
                 .stroke(AppTheme.dynamicAccent, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .animation(.easeInOut(duration: 0.4), value: progressFraction)
+                .animation(LumiMotion.fade(0.4), value: progressFraction)
             Text(tracks.isEmpty ? "–" : "\(Int(progressFraction * 100))%")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(AppTheme.textPrimary)

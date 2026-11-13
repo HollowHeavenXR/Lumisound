@@ -80,7 +80,7 @@ struct PracticeModeView: View {
     private var metronome: some View {
         if let effectiveBPM, effectiveBPM > 0 {
             VStack(spacing: 8) {
-                TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
+                TimelineView(.periodic(from: .now, by: LumiMotion.frame)) { timeline in
                     let phase = beatPhase(at: timeline.date, bpm: effectiveBPM)
                     Circle()
                         .fill(AppTheme.dynamicAccent)

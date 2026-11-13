@@ -98,6 +98,6 @@ extension NowPlayingView {
             .background(isSet ? AppTheme.dynamicAccent : AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.2), value: isSet)
+        .animation(LumiMotion.fade(0.2), value: isSet)
     }
 }

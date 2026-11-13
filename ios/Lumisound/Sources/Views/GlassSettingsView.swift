@@ -69,7 +69,7 @@ struct GlassSettingsView: View {
                 glass.resetToDefaults()
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: glass.useAccentTint)
+        .animation(LumiMotion.fade(0.2), value: glass.useAccentTint)
     }
 
     private var previewCard: some View {

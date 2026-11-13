@@ -166,7 +166,7 @@ private struct DiscoverMixRow: View {
             // repeat the same caption a dozen times.
             if track.seedArtist != nil {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { showReason.toggle() }
+                    withAnimation(LumiMotion.fade(0.15)) { showReason.toggle() }
                 } label: {
                     Image(systemName: "info.circle")
                         .font(.system(size: 13))

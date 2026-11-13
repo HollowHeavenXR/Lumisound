@@ -49,7 +49,7 @@ extension StreamSearchView {
                         .buttonStyle(PressableButtonStyle())
                     }
                     Button {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        withAnimation(LumiMotion.glide(0.2)) {
                             streaming.errorMessage = nil
                         }
                     } label: {
@@ -76,7 +76,7 @@ extension StreamSearchView {
                 streamResultsBody
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: streaming.errorMessage != nil)
+        .animation(LumiMotion.settle, value: streaming.errorMessage != nil)
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),
@@ -220,7 +220,7 @@ extension StreamSearchView {
         HStack(spacing: 6) {
             ForEach(sources, id: \.self) { src in
                 Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.settle) {
                         selectedSource = src
                     }
                 } label: {

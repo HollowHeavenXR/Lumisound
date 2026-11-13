@@ -128,8 +128,8 @@ struct LibraryHubView: View {
             // Extra clearance below the last row — see SongsTab's identical
             // fix (clears MiniPlayerBar + tab bar).
             .padding(.bottom, 190)
-            .animation(.easeInOut(duration: 0.35), value: hasLoadedOnce)
-            .animation(.easeInOut(duration: 0.25), value: player.isPlaying)
+            .animation(LumiMotion.fade(0.35), value: hasLoadedOnce)
+            .animation(LumiMotion.fade(0.25), value: player.isPlaying)
         }
         .background(Color.clear.ignoresSafeArea())
         .task(id: library.allSongs.count) {
@@ -608,7 +608,7 @@ struct LibraryHubView: View {
                     ForEach(Array(moodBucketsWithSongs.enumerated()), id: \.offset) { _, entry in
                         HubParallaxCard {
                             Button {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                withAnimation(LumiMotion.settle) {
                                     selectedTab = .moods
                                 }
                             } label: {
@@ -693,7 +693,7 @@ struct LibraryHubView: View {
         weeklyRecap = snapshot.weeklyRecap
         songsPlayedToday = library.songsPlayedTodayCount()
         if !hasLoadedOnce {
-            withAnimation(.easeInOut(duration: 0.35)) { hasLoadedOnce = true }
+            withAnimation(LumiMotion.fade(0.35)) { hasLoadedOnce = true }
         }
     }
 
@@ -816,7 +816,7 @@ private struct HubSpeedDialSection: View {
                             .frame(width: i == page ? 16 : 6, height: 6)
                     }
                 }
-                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: page)
+                .animation(LumiMotion.snap, value: page)
                 .frame(maxWidth: .infinity)
             }
         }
@@ -1018,7 +1018,7 @@ private struct HubSectionHeader: View {
             Spacer()
             if let seeAllTab, let selectedTab {
                 Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.settle) {
                         selectedTab.wrappedValue = seeAllTab
                     }
                 } label: {
@@ -1196,12 +1196,12 @@ private struct HubZoneFilterBar: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 2)
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: activeZone)
+        .animation(LumiMotion.snap, value: activeZone)
     }
 
     private func chip(title: String, icon: String?, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.25)) { action() }
+            withAnimation(LumiMotion.fade(0.25)) { action() }
         } label: {
             HStack(spacing: 5) {
                 if let icon { Image(systemName: icon) }
@@ -2284,7 +2284,7 @@ private struct HubEmptyState: View {
         .padding(.top, 80)
         .opacity(animateIn ? 1 : 0)
         .onAppear {
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.65).delay(0.05)) {
+            withAnimation(LumiMotion.settle.delay(0.05)) {
                 animateIn = true
             }
         }

@@ -33,7 +33,7 @@ extension NowPlayingView {
     func cyclePlaytimeCounterStyle() {
         let formats = PlaytimeCounterStyle.allCases.filter { $0 != .hidden }
         guard let idx = formats.firstIndex(of: playtimeCounterStyle) else { return }
-        withAnimation(.snappy) {
+        withAnimation(LumiMotion.snap) {
             playtimeCounterStyle = formats[(idx + 1) % formats.count]
         }
     }
@@ -168,6 +168,6 @@ private struct NowPlayingPlaytimeCounter: View {
             .font(AppTheme.monoFont(size: 13))
             .foregroundStyle(AppTheme.textSecondary)
             .contentTransition(.numericText())
-            .animation(.snappy, value: progress.position)
+            .animation(LumiMotion.snap, value: progress.position)
     }
 }

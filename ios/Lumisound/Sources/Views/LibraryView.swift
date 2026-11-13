@@ -138,7 +138,7 @@ struct LibraryView: View {
                 tabContent
                     .id(selectedTab)
                     .transition(.opacity)
-                    .animation(.easeInOut(duration: 0.18), value: selectedTab)
+                    .animation(LumiMotion.fade(0.18), value: selectedTab)
             }
             .background(GalleryBackgroundView().ignoresSafeArea())
             .navigationTitle("Library")
@@ -317,7 +317,7 @@ struct LibraryView: View {
                 // layout (see SongsTab) — grid-cell taps still just play.
                 if songColumns == 1 {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.18)) {
+                        withAnimation(LumiMotion.fade(0.18)) {
                             isSelecting.toggle()
                             if !isSelecting { selectedSongIDs.removeAll() }
                         }

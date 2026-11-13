@@ -159,8 +159,8 @@ struct TabTransitionOverlay: View {
         }
         .onAppear {
             tipIndex = Int.random(in: 0..<context.tips.count)
-            withAnimation(.easeIn(duration: 0.3)) { contentOpacity = 1.0 }
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { iconScale = 1.0 }
+            withAnimation(LumiMotion.fade(0.3)) { contentOpacity = 1.0 }
+            withAnimation(LumiMotion.settle) { iconScale = 1.0 }
 
             // Cycles to a second tip partway through the hold, for contexts
             // whose window is long enough that showing only one the whole
@@ -170,14 +170,14 @@ struct TabTransitionOverlay: View {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: UInt64(holdSeconds * 0.5 * 1_000_000_000))
                 guard context.tips.count > 1 else { return }
-                withAnimation(.easeInOut(duration: 0.4)) {
+                withAnimation(LumiMotion.fade(0.4)) {
                     tipIndex = (tipIndex + 1) % context.tips.count
                 }
             }
 
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: UInt64(holdSeconds * 1_000_000_000))
-                withAnimation(.easeOut(duration: 0.4)) { contentOpacity = 0 }
+                withAnimation(LumiMotion.glide(0.4)) { contentOpacity = 0 }
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 onFinished()
             }

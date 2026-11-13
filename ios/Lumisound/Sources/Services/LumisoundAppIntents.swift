@@ -623,7 +623,7 @@ struct DownloadSavedPlaylistsIntent: AppIntent {
         // Unstructured so the pass keeps going after the intent returns.
         Task { @MainActor in
             await streaming.reconcilePendingDownloads()
-            await store.runAutoDownloads(streaming: streaming, library: library, minInterval: 0)
+            await store.runPass(streaming: streaming, library: library, reason: "Shortcut")
         }
         return .result(dialog: "Checking \(count) saved playlist\(count == 1 ? "" : "s") for new tracks.")
     }

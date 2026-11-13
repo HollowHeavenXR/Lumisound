@@ -12,7 +12,7 @@ struct LibraryTabBar: View {
             HStack(spacing: 8) {
                 ForEach(LibraryTab.allCases, id: \.self) { tab in
                     Button {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                        withAnimation(LumiMotion.settle) {
                             selectedTab = tab
                         }
                     } label: {

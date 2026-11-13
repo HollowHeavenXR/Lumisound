@@ -55,7 +55,7 @@ struct FoldersTab: View {
                             // own taps instead of the link swallowing them —
                             // see `expandedFolderIDs`'s doc comment.
                             Button {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                withAnimation(LumiMotion.snap) {
                                     if expandedFolderIDs.contains(folder.id) {
                                         expandedFolderIDs.remove(folder.id)
                                     } else {

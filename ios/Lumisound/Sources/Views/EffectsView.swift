@@ -13,28 +13,39 @@ struct EffectsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Active indicator row
-            HStack(spacing: 6) {
-                Text("Active:")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.textSecondary)
-                let activeName = AudioEffectsService.effect(id: player.audioSettings.activeEffectID)?.name ?? "None"
-                Text(activeName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AppTheme.dynamicAccent)
+            // Active effect and what it does.
+            let active = AudioEffectsService.effect(id: player.audioSettings.activeEffectID)
+            HStack(spacing: 8) {
+                Image(systemName: active?.icon ?? "waveform")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 26, height: 26)
+                    .background(AppTheme.dynamicAccent.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(active?.name ?? "Clean").font(.caption.weight(.semibold)).foregroundStyle(AppTheme.textPrimary)
+                    Text(active?.story ?? "The engine, nothing added.").font(.caption2).foregroundStyle(AppTheme.textSecondary).lineLimit(1)
+                }
+                Spacer()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .animation(LumiMotion.fade, value: player.audioSettings.activeEffectID)
 
-            // Effect grid
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(AudioEffectsService.allEffects) { effect in
-                    EffectCell(
-                        effect: effect,
-                        isActive: player.audioSettings.activeEffectID == effect.id
-                    ) {
-                        selectHaptic.selectionChanged()
-                        player.applyEffect(effect)
-                        successHaptic.notificationOccurred(.success)
+            // Effects by what they change.
+            ForEach(AudioEffectsService.grouped, id: \.category) { group in
+                Text(group.category.uppercased())
+                    .font(.system(size: 10, weight: .bold))
+                    .kerning(1)
+                    .foregroundStyle(AppTheme.textSecondary)
+                    .padding(.top, 2)
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(group.effects) { effect in
+                        EffectCell(
+                            effect: effect,
+                            isActive: player.audioSettings.activeEffectID == effect.id
+                        ) {
+                            selectHaptic.selectionChanged()
+                            player.applyEffect(effect)
+                            successHaptic.notificationOccurred(.success)
+                        }
                     }
                 }
             }
@@ -100,6 +111,6 @@ private struct EffectCell: View {
             )
         }
         .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.18), value: isActive)
+        .animation(LumiMotion.fade(0.18), value: isActive)
     }
 }

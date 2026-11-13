@@ -81,7 +81,7 @@ extension StreamSearchView {
                                         .buttonStyle(PressableButtonStyle())
                                     }
                                 }
-                                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: downloadedTrackIDs.contains(item.id))
+                                .animation(LumiMotion.snap, value: downloadedTrackIDs.contains(item.id))
                                 .padding(.vertical, 4)
                                 .listRowBackground(AppTheme.surface)
                                 .listRowSeparatorTint(AppTheme.background)

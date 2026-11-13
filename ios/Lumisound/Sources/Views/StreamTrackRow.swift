@@ -109,7 +109,7 @@ struct StreamTrackRow: View {
             }
             .buttonStyle(PressableButtonStyle())
             .disabled(isDownloading || isDownloaded)
-            .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isDownloaded)
+            .animation(LumiMotion.settle, value: isDownloaded)
 
             // Queue button
             Button(action: onAddToQueue) {

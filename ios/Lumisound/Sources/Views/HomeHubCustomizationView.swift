@@ -341,7 +341,7 @@ struct HomeHubCustomizationView: View {
                         .padding(.vertical, 6)
                     if accentHex != nil {
                         Button(role: .destructive) {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            withAnimation(LumiMotion.snap) {
                                 accentHex = nil
                             }
                         } label: {
@@ -383,7 +383,7 @@ struct HomeHubCustomizationView: View {
 
                 Section {
                     Button("Reset Layout") {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        withAnimation(LumiMotion.snap) {
                             order = HomeHubLayoutStore.defaultOrder(forHour: currentHour)
                             hidden = []
                         }

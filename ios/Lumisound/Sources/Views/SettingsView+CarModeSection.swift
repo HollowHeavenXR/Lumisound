@@ -31,6 +31,6 @@ extension SettingsView {
             sectionHeader("Car Mode", icon: "car.fill", tint: .green)
         }
         .listRowBackground(tintedRowBackground(.green))
-        .animation(.easeInOut(duration: 0.22), value: carModeEnabled)
+        .animation(LumiMotion.fade(0.22), value: carModeEnabled)
     }
 }

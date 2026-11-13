@@ -31,7 +31,7 @@ struct FolderDuplicatesSheet: View {
                             confirmGroup = group
                         } onIgnore: {
                             dupeIgnore(songIds: group.copies.map(\.id))
-                            withAnimation { groups.removeAll { $0.id == group.id } }
+                            withAnimation(LumiMotion.glide) { groups.removeAll { $0.id == group.id } }
                         }
                     }
                     if hasScanned && !isScanning && groups.isEmpty {
@@ -62,7 +62,7 @@ struct FolderDuplicatesSheet: View {
                 if let g = confirmGroup {
                     Button("Move \(g.removeIds.count) Cop\(g.removeIds.count == 1 ? "y" : "ies") to Recently Deleted", role: .destructive) {
                         if library.resolveDuplicates(keeperID: g.keeperId, removeIDs: g.removeIds) != nil {
-                            withAnimation { groups.removeAll { $0.id == g.id } }
+                            withAnimation(LumiMotion.glide) { groups.removeAll { $0.id == g.id } }
                         }
                         confirmGroup = nil
                     }

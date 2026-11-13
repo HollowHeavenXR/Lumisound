@@ -294,7 +294,7 @@ struct AlbumsTab: View {
                 let letters = sections.compactMap(\.title)
                 if sortOrder.usesIndexRail, letters.count >= 4 {
                     AlphabetIndexRail(letters: letters) { letter in
-                        withAnimation(.easeInOut(duration: 0.25)) {
+                        withAnimation(LumiMotion.fade(0.25)) {
                             proxy.scrollTo(AlbumSection.anchor(for: letter), anchor: .top)
                         }
                     }
@@ -327,7 +327,7 @@ struct AlbumsTab: View {
         }
         .onChange(of: searchText) { _ in rebuildSections() }
         .onChange(of: sortRaw) { _ in
-            withAnimation(.easeInOut(duration: 0.25)) { rebuildSections() }
+            withAnimation(LumiMotion.fade(0.25)) { rebuildSections() }
         }
     }
 
@@ -454,7 +454,7 @@ struct AlbumsTab: View {
 
     private func layoutButton(columns target: Int, icon: String, label: String) -> some View {
         Button {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { albumColumns = target }
+            withAnimation(LumiMotion.settle) { albumColumns = target }
         } label: {
             Image(systemName: icon)
                 .font(.caption.weight(.semibold))

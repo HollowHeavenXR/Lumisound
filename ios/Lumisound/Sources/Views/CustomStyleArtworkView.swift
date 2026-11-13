@@ -30,7 +30,7 @@ struct CustomStyleArtworkView: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { timeline in
+        TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !isPlaying)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             ZStack {
                 backgroundView
@@ -48,7 +48,7 @@ struct CustomStyleArtworkView: View {
             if playing { visualizer.start() } else { visualizer.stop() }
         }
         .task(id: song?.id) { palette = await ArtworkPaletteLoader.palette(for: song) }
-        .animation(.easeInOut(duration: 1.0), value: palette)
+        .animation(LumiMotion.fade(1.0), value: palette)
     }
 
     private func startWaveformIfNeeded() {

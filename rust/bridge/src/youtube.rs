@@ -8,6 +8,15 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const QUOTA_COOLDOWN: Duration = Duration::from_secs(3600);
+/// Google's default daily allowance per key (units, resets at Pacific midnight).
+pub const DAILY_UNITS: u64 = 10_000;
+/// Interactive `search` (100 units each) only while today's usage is below
+/// this; past it, searches go through yt-dlp so playlist resolves (1 unit a
+/// page) keep working for the rest of the day.
+pub const SEARCH_BUDGET: u64 = 6_000;
+/// A cached playlist whose item count hasn't changed is reused this long.
+const PLAYLIST_CACHE_MAX_AGE: Duration = Duration::from_secs(6 * 3600);
+const DURATION_CACHE_MAX: usize = 200_000;
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -33,6 +42,14 @@ pub struct YouTube {
     /// A user's own key in here is skipped for the server key for a day.
     bad_keys: DashMap<String, Instant>,
     spotify_token: Mutex<Option<(String, Instant)>>,
+    /// Video durations never change: fetched once (videos.list) and kept.
+    durations: DashMap<String, i64>,
+    /// playlist id -> (item count when fetched, items, when).
+    playlists: DashMap<String, (u64, Vec<Value>, Instant)>,
+    /// channel id -> (uploads playlist id, title): saves a channels.list per check.
+    channel_uploads_ids: DashMap<String, (Option<String>, String)>,
+    /// api key -> (pacific date, endpoint -> units) for the usage breakdown.
+    breakdown: DashMap<String, (String, std::collections::HashMap<String, u64>)>,
 }
 
 fn pacific_date() -> String {
@@ -189,6 +206,24 @@ impl YouTube {
             key_cache: TtlCache::new(Duration::from_secs(300), 10_000),
             bad_keys: DashMap::new(),
             spotify_token: Mutex::new(None),
+            durations: DashMap::new(),
+            playlists: DashMap::new(),
+            channel_uploads_ids: DashMap::new(),
+            breakdown: DashMap::new(),
+        }
+    }
+
+    /// Whether an interactive search may spend 100 units of this key now.
+    pub fn search_allowed(&self, key: &str) -> bool {
+        !key.is_empty() && !self.cooling_down(key) && self.usage_today(key) + cost("search") <= SEARCH_BUDGET
+    }
+
+    /// Today's units for this key by endpoint (estimate; this server's own calls).
+    pub fn usage_breakdown(&self, key: &str) -> serde_json::Value {
+        let today = pacific_date();
+        match self.breakdown.get(key).filter(|e| e.0 == today) {
+            Some(e) => json!(e.1),
+            None => json!({}),
         }
     }
 
@@ -209,9 +244,22 @@ impl YouTube {
         let today = pacific_date();
         let mut e = self.units.entry(key.to_string()).or_insert((today.clone(), 0));
         if e.0 != today {
-            *e = (today, 0);
+            *e = (today.clone(), 0);
         }
         e.1 += cost(path);
+        let used = e.1;
+        drop(e);
+        let mut b = self.breakdown.entry(key.to_string()).or_insert((today.clone(), Default::default()));
+        if b.0 != today {
+            *b = (today, Default::default());
+        }
+        *b.1.entry(path.to_string()).or_insert(0) += cost(path);
+        drop(b);
+        // A line at each 10 % of the daily allowance, so a burn is visible in the logs.
+        let step = DAILY_UNITS / 10;
+        if used % step < cost(path) && used >= step {
+            tracing::warn!("YouTube Data API key …{} at ~{used}/{DAILY_UNITS} units today: {:?}", &key[key.len().saturating_sub(4)..], self.usage_breakdown(key));
+        }
     }
 
     /// Raw call: (status, body). Never errors on HTTP status.
@@ -277,16 +325,41 @@ impl YouTube {
         self.key_cache.remove(&user_id.to_string());
     }
 
+    /// Durations for `ids`, from the cache where known; one videos.list per 50 missing.
     async fn durations(&self, ids: &[String], key: &str) -> anyhow::Result<std::collections::HashMap<String, i64>> {
-        let data = self.get("videos", &[("part", "contentDetails".into()), ("id", ids.join(","))], key).await?;
-        Ok(data["items"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| Some((v["id"].as_str()?.to_string(), parse_iso8601_duration(v["contentDetails"]["duration"].as_str().unwrap_or("")))))
-                    .collect()
-            })
-            .unwrap_or_default())
+        let mut out: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let mut missing: Vec<String> = Vec::new();
+        for id in ids {
+            match self.durations.get(id) {
+                Some(d) => {
+                    out.insert(id.clone(), *d);
+                }
+                None => missing.push(id.clone()),
+            }
+        }
+        for chunk in missing.chunks(50) {
+            let data = self.get("videos", &[("part", "contentDetails".into()), ("id", chunk.join(","))], key).await?;
+            for v in data["items"].as_array().into_iter().flatten() {
+                let Some(id) = v["id"].as_str() else { continue };
+                let d = parse_iso8601_duration(v["contentDetails"]["duration"].as_str().unwrap_or(""));
+                if d > 0 {
+                    self.remember_duration(id, d);
+                }
+                out.insert(id.to_string(), d);
+            }
+        }
+        Ok(out)
+    }
+
+    fn remember_duration(&self, id: &str, d: i64) {
+        if self.durations.len() >= DURATION_CACHE_MAX {
+            // Crude bound: drop an arbitrary tenth (durations are cheap to refetch).
+            let drop: Vec<String> = self.durations.iter().take(DURATION_CACHE_MAX / 10).map(|e| e.key().clone()).collect();
+            for k in drop {
+                self.durations.remove(&k);
+            }
+        }
+        self.durations.insert(id.to_string(), d);
     }
 
     /// `_youtube_search_via_api_sync`. None = fall back to yt-dlp.
@@ -347,23 +420,28 @@ impl YouTube {
     }
 
     async fn durations_raw(&self, ids: &[String], key: &str) -> std::collections::HashMap<String, i64> {
-        match self.get_raw("videos", &[("part", "contentDetails".into()), ("id", ids.join(","))], key).await {
-            Ok((200, b)) => b["items"]
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| Some((v["id"].as_str()?.to_string(), parse_iso8601_duration(v["contentDetails"]["duration"].as_str().unwrap_or("")))))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            _ => Default::default(),
-        }
+        self.durations(ids, key).await.unwrap_or_default()
     }
 
     /// `_resolve_youtube_playlist_via_api`: items shaped for parse_track.
     pub async fn playlist_items(&self, playlist_id: &str, limit: usize, key: &str) -> anyhow::Result<Vec<Value>> {
         if self.cooling_down(key) {
             anyhow::bail!("YouTube Data API key is in quota-exceeded cooldown");
+        }
+        // One unit for the item count; if it matches a fresh-enough cached
+        // copy, reuse that instead of paging the whole playlist (1 unit per
+        // 50 items, plus durations) again. Tracked playlists are re-resolved
+        // on every auto-download pass, which is where most units went.
+        let count = self
+            .get("playlists", &[("part", "contentDetails".into()), ("id", playlist_id.to_string())], key)
+            .await
+            .ok()
+            .and_then(|d| d["items"].as_array().and_then(|a| a.first()).and_then(|p| p["contentDetails"]["itemCount"].as_u64()));
+        if let (Some(c), Some(hit)) = (count, self.playlists.get(playlist_id)) {
+            if hit.0 == c && hit.2.elapsed() < PLAYLIST_CACHE_MAX_AGE && hit.1.len() >= limit.min(c as usize).saturating_sub(5) {
+                tracing::info!("playlist {playlist_id}: unchanged ({c} items), served from cache");
+                return Ok(hit.1.iter().take(limit).cloned().collect());
+            }
         }
         let mut items: Vec<Value> = Vec::new();
         let mut page: Option<String> = None;
@@ -399,6 +477,9 @@ impl YouTube {
                 let id = i["id"].as_str().unwrap_or("").to_string();
                 i["duration"] = json!(d.get(&id).copied().unwrap_or(0));
             }
+        }
+        if let Some(c) = count {
+            self.playlists.insert(playlist_id.to_string(), (c, items.clone(), Instant::now()));
         }
         Ok(items)
     }
@@ -457,12 +538,20 @@ impl YouTube {
 
     /// `_channel_uploads_via_api`: client tracks.
     pub async fn channel_uploads(&self, channel_id: &str, max: usize, key: &str) -> anyhow::Result<Vec<Value>> {
-        let data = self.get("channels", &[("part", "contentDetails,snippet".into()), ("id", channel_id.into())], key).await?;
-        let Some(ch) = data["items"].as_array().and_then(|a| a.first()).cloned() else {
-            anyhow::bail!("Channel {channel_id} not found");
+        // The uploads playlist id and title don't change: one channels.list per channel, ever (per process).
+        let (uploads, raw_title) = match self.channel_uploads_ids.get(channel_id).map(|e| e.clone()) {
+            Some(hit) => hit,
+            None => {
+                let data = self.get("channels", &[("part", "contentDetails,snippet".into()), ("id", channel_id.into())], key).await?;
+                let Some(ch) = data["items"].as_array().and_then(|a| a.first()).cloned() else {
+                    anyhow::bail!("Channel {channel_id} not found");
+                };
+                let uploads = ch["contentDetails"]["relatedPlaylists"]["uploads"].as_str().map(str::to_string);
+                let title = ch["snippet"]["title"].as_str().filter(|s| !s.is_empty()).unwrap_or("Unknown Artist").to_string();
+                self.channel_uploads_ids.insert(channel_id.to_string(), (uploads.clone(), title.clone()));
+                (uploads, title)
+            }
         };
-        let uploads = ch["contentDetails"]["relatedPlaylists"]["uploads"].as_str().map(str::to_string);
-        let raw_title = ch["snippet"]["title"].as_str().filter(|s| !s.is_empty()).unwrap_or("Unknown Artist").to_string();
         let is_topic = raw_title.trim().ends_with(" - Topic");
         let channel_title = if is_topic { strip_topic_suffix(&raw_title) } else { raw_title.clone() };
         let Some(uploads) = uploads else { return Ok(vec![]) };

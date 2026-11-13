@@ -284,7 +284,7 @@ struct EngineConvertingOverlay: ViewModifier {
                 }
             }
             .allowsHitTesting(!busy)
-            .animation(.easeInOut(duration: 0.2), value: busy)
+            .animation(LumiMotion.fade(0.2), value: busy)
     }
 }
 

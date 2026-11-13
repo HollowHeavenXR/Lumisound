@@ -141,10 +141,10 @@ private struct ShareModeView: View {
                         // — easier to read aloud or retype than the full link below.
                         Button {
                             UIPasteboard.general.string = code
-                            withAnimation { didCopyCode = true }
+                            withAnimation(LumiMotion.glide) { didCopyCode = true }
                             Task {
                                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                                withAnimation { didCopyCode = false }
+                                withAnimation(LumiMotion.glide) { didCopyCode = false }
                             }
                         } label: {
                             HStack {
@@ -199,10 +199,10 @@ private struct ShareModeView: View {
                             // Copy Link
                             Button {
                                 UIPasteboard.general.string = link
-                                withAnimation { didCopy = true }
+                                withAnimation(LumiMotion.glide) { didCopy = true }
                                 Task {
                                     try? await Task.sleep(nanoseconds: 2_000_000_000)
-                                    withAnimation { didCopy = false }
+                                    withAnimation(LumiMotion.glide) { didCopy = false }
                                 }
                             } label: {
                                 Label(

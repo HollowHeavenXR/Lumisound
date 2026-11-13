@@ -20,7 +20,7 @@ extension AudioPlayerManager {
         // would both double the audible rotation speed and double the
         // per-effect CPU/battery cost for no benefit (this drives an audio
         // parameter, not a visual). Pin it to 60 so the math stays correct.
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+        link.preferredFrameRateRange = LumiMotion.displayRange
         link.add(to: .main, forMode: .common)
         rotationLink = link
     }
@@ -72,7 +72,7 @@ extension AudioPlayerManager {
         // Same 60Hz assumption as update8DRotation — pin the rate so the LFO
         // speed stays correct (and the callback doesn't run twice as often)
         // on 120Hz ProMotion displays.
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+        link.preferredFrameRateRange = LumiMotion.displayRange
         link.add(to: .main, forMode: .common)
         tremoloLink = link
     }
@@ -118,7 +118,7 @@ extension AudioPlayerManager {
         // Same 60Hz assumption as update8DRotation — pin the rate so the
         // pitch-modulation speed stays correct (and the callback doesn't run
         // twice as often) on 120Hz ProMotion displays.
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+        link.preferredFrameRateRange = LumiMotion.displayRange
         link.add(to: .main, forMode: .common)
         vibratoLink = link
     }

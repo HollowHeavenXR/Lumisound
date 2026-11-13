@@ -6,6 +6,7 @@ use super::deck::Deck;
 use super::boost::{BoostRoute, LumiBoost};
 use super::dsp::{Biquad, Compressor, Limiter, Ramp, Reverb, Shape};
 use super::eq::LumiEq;
+use super::fx::{Character, FxCharacter};
 use super::space::{LumiSpace, SpatialMode};
 use super::health::{EngineIncident, Health, IncidentKind, PlaybackPhase, SLOW_START_MS, atomic_max};
 use std::sync::Arc;
@@ -18,6 +19,8 @@ pub enum Cmd {
     /// Per-track gain (ReplayGain / normalization) for the playing deck, linear.
     TrackGain(f32),
     Eq { gains: [f32; 10], enabled: bool, loudness_match: bool },
+    /// LumiFX character stage (band limits, drive, crush, width).
+    Character(FxCharacter),
     /// LumiBoost amount (dB, 0 = off) and output route profile.
     Boost { db: f32, route: BoostRoute },
     Effects { reverb_wet: f32, reverb_preset: String, mono: bool, night: bool },
@@ -156,6 +159,7 @@ pub struct Mixer {
     playing: bool,
     pausing: bool,
     eq: LumiEq,
+    character: Character,
     boost: LumiBoost,
     reverb: Reverb,
     /// Last settings, to rebuild the rate-dependent processors (`set_rate`).
@@ -203,7 +207,7 @@ struct Monitor {
 
 impl Mixer {
     pub fn new(rate: u32, cmds: rtrb::Consumer<Cmd>, events: rtrb::Producer<Event>, tele: Arc<Telemetry>) -> Self {
-        Self { rate, cur: None, next: None, fading: None, retune: None, blend: None, swap: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: LumiEq::new(rate as f32), boost: LumiBoost::new(rate as f32), reverb: Reverb::new(rate as f32), reverb_preset: String::new(), spatial_yaw: 0.0, comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: LumiSpace::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_coef: 1.0 - (-1.0 / (0.03 * rate as f32)).exp(), vib_target: 0.0, vib_wet: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
+        Self { rate, cur: None, next: None, fading: None, retune: None, blend: None, swap: None, fade_in: Ramp::new(1.0), equal_power: true, master: Ramp::new(0.0), volume: 1.0, playing: false, pausing: false, eq: LumiEq::new(rate as f32), character: Character::new(rate as f32), boost: LumiBoost::new(rate as f32), reverb: Reverb::new(rate as f32), reverb_preset: String::new(), spatial_yaw: 0.0, comp: Compressor::new(rate as f32), limiter: Limiter::new(rate as f32), mono: false, spatial: LumiSpace::new(rate as f32), pan_hz: 0.0, pan_phase: 0.0, trem_hz: 0.0, trem_depth: 0.0, trem_phase: 0.0, vib_hz: 0.0, vib_amp: 0.0, vib_coef: 1.0 - (-1.0 / (0.03 * rate as f32)).exp(), vib_target: 0.0, vib_wet: 0.0, vib_phase: 0.0, vib_buf: vec![[0.0; 2]; 4096], vib_w: 0, cmds, events, tele, mon: Monitor::default() }
     }
 
     fn retire(&mut self, d: Box<Deck>) {
@@ -262,6 +266,9 @@ impl Mixer {
                 self.eq.enabled = enabled;
                 self.eq.loudness_match = loudness_match;
                 self.eq.set_gains(&gains);
+            }
+            Cmd::Character(c) => {
+                self.character.set(c);
             }
             Cmd::Boost { db, route } => {
                 self.boost.set_route(route);
@@ -418,6 +425,9 @@ impl Mixer {
         self.eq.enabled = eq_on;
         self.eq.loudness_match = lm;
         self.eq.set_gains(&gains);
+        let character = self.character.settings();
+        self.character = Character::new(r);
+        self.character.set(character);
         let (amount, route) = (self.boost.amount_target(), self.boost.route());
         self.boost = LumiBoost::new(r);
         self.boost.set_route(route);
@@ -700,6 +710,7 @@ impl Mixer {
                 self.retire(d);
             }
             (l, r) = self.eq.process(l, r);
+            (l, r) = self.character.process(l, r);
             (l, r) = self.reverb.process(l, r);
             (l, r) = self.comp.process(l, r);
             if self.mono {

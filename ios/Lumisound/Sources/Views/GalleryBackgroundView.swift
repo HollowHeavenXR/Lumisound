@@ -164,7 +164,7 @@ private struct KenBurnsModifier: ViewModifier {
             // (see `legDuration` below), so a much lower update rate is
             // visually indistinguishable while cutting the redundant-instance
             // cost by roughly an order of magnitude.
-            TimelineView(.periodic(from: .now, by: 1.0 / max(governor.policy.motionFps, 1))) { timeline in
+            TimelineView(.periodic(from: .now, by: 1.0 / min(max(governor.policy.motionFps, 1), LumiMotion.fps))) { timeline in
                 let phase = CGFloat(ArtworkClock.pingPong(timeline.date, legDuration: 30))
                 let scale: CGFloat = 1.08 + 0.05 * phase
                 let dx: CGFloat = 14 * (phase - 0.5)

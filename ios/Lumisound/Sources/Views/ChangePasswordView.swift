@@ -57,7 +57,7 @@ struct ChangePasswordView: View {
                                 .frame(height: 5)
                         }
                     }
-                    .animation(.easeInOut(duration: 0.2), value: strength)
+                    .animation(LumiMotion.fade(0.2), value: strength)
                     LKField(placeholder: "Confirm new password", text: $confirmPassword, secure: true)
                         .textContentType(.newPassword)
                     VStack(alignment: .leading, spacing: 4) {

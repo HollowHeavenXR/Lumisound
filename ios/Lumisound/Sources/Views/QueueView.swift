@@ -61,7 +61,7 @@ struct QueueView: View {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     if !player.queue.isEmpty {
                         Button {
-                            withAnimation {
+                            withAnimation(LumiMotion.glide) {
                                 editMode = editMode == .active ? .inactive : .active
                             }
                         } label: {
@@ -171,7 +171,7 @@ struct QueueView: View {
         // mutation (add/remove/reorder/skip) behind one implicit animation
         // keyed to the queue's identity order, instead of needing every
         // single call site to remember to wrap itself in `withAnimation`.
-        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: player.queue.map(\.id))
+        .animation(LumiMotion.settle, value: player.queue.map(\.id))
     }
 
     /// The Now Playing card: blurred backdrop, big cover, title, live
@@ -262,14 +262,14 @@ struct QueueView: View {
                     label: "Shuffle",
                     isOn: player.shuffleEnabled
                 ) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { player.toggleShuffle() }
+                    withAnimation(LumiMotion.snap) { player.toggleShuffle() }
                 }
                 queueToggle(
                     icon: repeatIcon,
                     label: repeatLabel,
                     isOn: player.repeatMode != .off
                 ) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { player.cycleRepeatMode() }
+                    withAnimation(LumiMotion.snap) { player.cycleRepeatMode() }
                 }
                 queueToggle(icon: "square.and.arrow.down", label: "Save", isOn: false) {
                     saveQueueName = defaultQueueName()
@@ -424,7 +424,7 @@ struct QueueView: View {
         let voted = item.voterDeviceIDs.contains(sharePlay.localDeviceID)
         return HStack(spacing: 10) {
             Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                withAnimation(LumiMotion.snap) {
                     sharePlay.toggleVote(for: item.id)
                 }
             } label: {
@@ -475,7 +475,7 @@ struct QueueView: View {
                     queueRow(song: song, leadingIcon: nil, position: index + 1)
                 }
                 .onMove { source, destination in
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.snap) {
                         player.moveManualQueueItem(from: source, to: destination)
                     }
                 }
@@ -497,7 +497,7 @@ struct QueueView: View {
                     queueRow(song: song, leadingIcon: nil, position: manualCount + index + 1)
                 }
                 .onMove { source, destination in
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.snap) {
                         player.moveAutoQueueItem(from: source, to: destination)
                     }
                 }
@@ -565,7 +565,7 @@ struct QueueView: View {
         .listRowSeparator(.hidden)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
-                withAnimation(.easeInOut(duration: 0.22)) {
+                withAnimation(LumiMotion.fade(0.22)) {
                     player.removeSong(id: song.id)
                 }
             } label: {
@@ -660,7 +660,7 @@ struct QueueView: View {
         // Remove all items from the queue
         let allIndices = IndexSet(player.queue.indices)
         if !allIndices.isEmpty {
-            withAnimation(.easeInOut(duration: 0.25)) {
+            withAnimation(LumiMotion.fade(0.25)) {
                 player.removeFromQueue(at: allIndices)
             }
             ToastCenter.shared.show("Queue cleared", category: .info, icon: "trash")
@@ -740,7 +740,7 @@ private struct QueueHeroProgress: View {
 /// Three small bouncing bars next to "NOW PLAYING". 30fps.
 private struct QueuePlayingBars: View {
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+        TimelineView(.animation(minimumInterval: LumiMotion.frame)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             HStack(alignment: .bottom, spacing: 2) {
                 ForEach(0..<3, id: \.self) { i in

@@ -6,7 +6,7 @@ extension NowPlayingView {
     // MARK: - Artwork display (switches on style)
 
     /// What every artwork style should treat as "playing" for purposes of
-    /// its own `TimelineView(.animation(paused: !isPlaying))` redraw loop —
+    /// its own `TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !isPlaying))` redraw loop —
     /// real playback state AND this screen actually being the front-most
     /// tab (`isVisibleOnScreen`, toggled in NowPlayingView's onAppear/
     /// onDisappear). See `isVisibleOnScreen`'s doc comment for why the

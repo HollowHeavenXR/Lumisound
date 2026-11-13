@@ -291,7 +291,7 @@ struct SongsTab: View {
                     HStack(spacing: 8) {
                         ForEach(SongSortOrder.allCases, id: \.self) { order in
                             Button {
-                                withAnimation(.easeInOut(duration: 0.2)) { sortOrderRaw = order.rawValue }
+                                withAnimation(LumiMotion.fade(0.2)) { sortOrderRaw = order.rawValue }
                             } label: {
                                 Label(order.label, systemImage: order.icon)
                                     .font(.caption.weight(.semibold))
@@ -374,11 +374,11 @@ struct SongsTab: View {
                                 : AppTheme.textSecondary
                         )
                         .transition(.scale.combined(with: .opacity))
-                        .animation(.spring(response: 0.25, dampingFraction: 0.6), value: selectedSongIDs)
+                        .animation(LumiMotion.snap, value: selectedSongIDs)
                 }
                 SongRow(song: song, isCurrent: player.currentSong?.id == song.id)
             }
-            .animation(.easeInOut(duration: 0.15), value: isSelecting)
+            .animation(LumiMotion.fade(0.15), value: isSelecting)
         }
         .buttonStyle(.plain)
         .listRowBackground(AppTheme.surface.opacity(0.5))
@@ -486,7 +486,7 @@ struct SongsTab: View {
                             .overlay(alignment: .trailing) {
                                 if showsIndexRail {
                                     AlphabetIndexRail(letters: alphaSections.map(\.letter)) { letter in
-                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                        withAnimation(LumiMotion.fade(0.15)) {
                                             proxy.scrollTo(letter, anchor: .top)
                                         }
                                     }
@@ -663,7 +663,7 @@ private struct StaggeredSlideInModifier: ViewModifier {
             .offset(x: didAnimate ? 0 : -30)
             .animation(
                 didAnimate
-                    ? .spring(response: 0.38, dampingFraction: 0.78).delay(delay)
+                    ? LumiMotion.settle.delay(delay)
                     : .none,
                 value: didAnimate
             )

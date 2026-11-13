@@ -442,18 +442,18 @@ extension SettingsView {
             sectionHeader("Playback & Audio", icon: "waveform", tint: .teal)
         }
         .listRowBackground(tintedRowBackground(.teal))
-        .animation(.easeInOut(duration: 0.22), value: player.audioSettings.crossfadeEnabled)
-        .animation(.easeInOut(duration: 0.22), value: player.audioSettings.gaplessEnabled)
-        .animation(.easeInOut(duration: 0.22), value: player.audioSettings.replayGainEnabled)
-        .animation(.easeInOut(duration: 0.22), value: player.audioSettings.bassBoostEnabled)
-        .animation(.easeInOut(duration: 0.22), value: player.audioSettings.reverbEnabled)
-        .animation(.easeInOut(duration: 0.22), value: player.audioSettings.spatialAudioEnabled)
-        .animation(.easeInOut(duration: 0.22), value: player.audioSettings.smartCrossfadeEnabled)
-        .animation(.easeInOut(duration: 0.22), value: player.audioSettings.nightModeEnabled)
-        .animation(.easeInOut(duration: 0.22), value: player.audioSettings.musicHapticsEnabled)
-        .animation(.easeInOut(duration: 0.22), value: silenceTrim.isEnabled)
-        .animation(.easeInOut(duration: 0.22), value: player.audioSettings.monoAudioEnabled)
-        .animation(.easeInOut(duration: 0.22), value: bluetoothBattery.isEnabled)
+        .animation(LumiMotion.fade(0.22), value: player.audioSettings.crossfadeEnabled)
+        .animation(LumiMotion.fade(0.22), value: player.audioSettings.gaplessEnabled)
+        .animation(LumiMotion.fade(0.22), value: player.audioSettings.replayGainEnabled)
+        .animation(LumiMotion.fade(0.22), value: player.audioSettings.bassBoostEnabled)
+        .animation(LumiMotion.fade(0.22), value: player.audioSettings.reverbEnabled)
+        .animation(LumiMotion.fade(0.22), value: player.audioSettings.spatialAudioEnabled)
+        .animation(LumiMotion.fade(0.22), value: player.audioSettings.smartCrossfadeEnabled)
+        .animation(LumiMotion.fade(0.22), value: player.audioSettings.nightModeEnabled)
+        .animation(LumiMotion.fade(0.22), value: player.audioSettings.musicHapticsEnabled)
+        .animation(LumiMotion.fade(0.22), value: silenceTrim.isEnabled)
+        .animation(LumiMotion.fade(0.22), value: player.audioSettings.monoAudioEnabled)
+        .animation(LumiMotion.fade(0.22), value: bluetoothBattery.isEnabled)
     }
 }
 
@@ -561,7 +561,7 @@ struct LumiSpaceRoomPicker: View {
                 .foregroundStyle(AppTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .animation(.easeInOut(duration: 0.18), value: player.audioSettings.lumiSpaceMode)
+        .animation(LumiMotion.fade(0.18), value: player.audioSettings.lumiSpaceMode)
     }
 }
 
@@ -661,7 +661,7 @@ struct EightDSpeedControl: View {
                                 )
                         }
                         .buttonStyle(.plain)
-                        .animation(.easeInOut(duration: 0.15), value: player.rotationHz)
+                        .animation(LumiMotion.fade(0.15), value: player.rotationHz)
                     }
                 }
             }

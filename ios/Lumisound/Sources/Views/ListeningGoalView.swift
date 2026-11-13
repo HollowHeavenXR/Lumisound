@@ -60,7 +60,7 @@ struct ListeningGoalView: View {
                         style: StrokeStyle(lineWidth: 12, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
-                    .animation(.easeOut(duration: 0.5), value: goal.progressFraction)
+                    .animation(LumiMotion.glide(0.5), value: goal.progressFraction)
                 VStack(spacing: 2) {
                     Text(formatted(goal.progressMinutes))
                         .font(.title2.bold())

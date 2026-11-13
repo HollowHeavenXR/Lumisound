@@ -158,3 +158,13 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
   there became long-press context menus (no List to swipe in).
 - Kept as-is (already bespoke): Interface picker, Rewind, Needle Drop; Heatmap and Hearing Health got the hero.
 - Open: verify on device (dark/light, Liquid Glass on/off, Dynamic Type), Lumen settings pages still old style.
+
+## Queued batch (requested 2026-11-12, start after the redesign IPA is released)
+1. Background downloader: no run on every launch/foreground. Manual "Start" button in Settings (one pass),
+   still runs on the iOS daily background task, plus an in-app timer every 15 h. Resume only an interrupted pass.
+2. Find out why YouTube API key quotas run out so fast (bridge usage, per-call unit costs, repeat resolves) and
+   optimize (caching, fewer list calls, ETag/If-None-Match, batching, skip unchanged playlists).
+3. Audio effects remade for the Lumisound engine (custom catalogue in Rust).
+4. Now Playing artwork styles and seeker styles: redesign every one with its own idea.
+5. All app animations remade as custom Lumisound motion, every animation capped at 60 fps.
+6. Loading (launch) screen remade.

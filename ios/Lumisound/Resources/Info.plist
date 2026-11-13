@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<false/>
     <!-- Explicit icon declarations so sideloading services (Signulous, AltStore)
          preserve the app icon after re-signing. Xcode normally injects these from
          xcassets at build time; having them in the source plist is the robust fallback. -->

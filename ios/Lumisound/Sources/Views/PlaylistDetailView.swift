@@ -145,7 +145,7 @@ struct PlaylistDetailView: View {
             if isEditing {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
-                        withAnimation { isEditing = false }
+                        withAnimation(LumiMotion.glide) { isEditing = false }
                     } label: {
                         Text("Done").fontWeight(.semibold)
                     }
@@ -191,7 +191,7 @@ struct PlaylistDetailView: View {
                 }
 
                 Button {
-                    withAnimation { isEditing.toggle() }
+                    withAnimation(LumiMotion.glide) { isEditing.toggle() }
                 } label: {
                     Text(isEditing ? "Done" : "Edit")
                         .fontWeight(isEditing ? .semibold : .regular)
@@ -411,7 +411,7 @@ private struct AddSongsSheet: View {
                             Image(systemName: isInPlaylist(song) ? "checkmark.circle.fill" : "circle")
                                 .foregroundStyle(isInPlaylist(song) ? AppTheme.dynamicAccent : AppTheme.textSecondary)
                                 .font(.system(size: 22))
-                                .animation(.easeInOut(duration: 0.15), value: isInPlaylist(song))
+                                .animation(LumiMotion.fade(0.15), value: isInPlaylist(song))
                         }
                     }
                     .buttonStyle(.plain)

@@ -73,7 +73,7 @@ struct CacheManagerView: View {
             }
             LKBanner(icon: "server.rack", text: "The bridge server's streaming cache is managed on the server automatically.", tint: .gray)
         }
-        .animation(.easeInOut(duration: 0.25), value: showSavedBanner)
+        .animation(LumiMotion.fade(0.25), value: showSavedBanner)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 if cacheManager.isScanning {
@@ -292,10 +292,10 @@ struct CacheManagerView: View {
     private func flashSavedBanner(bytes: Int64) {
         guard bytes > 0 else { return }
         savedBytes = bytes
-        withAnimation { showSavedBanner = true }
+        withAnimation(LumiMotion.glide) { showSavedBanner = true }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
-            withAnimation { showSavedBanner = false }
+            withAnimation(LumiMotion.glide) { showSavedBanner = false }
         }
     }
 }

@@ -28,6 +28,12 @@ extension AudioPlayerManager {
         // even then, only if the independent toggle isn't already running
         // it (avoids stopping and immediately restarting the same
         // CADisplayLink, which would reset its phase for no reason).
+        // Built-in LumiFX effects can run tremolo and vibrato together (Rotary).
+        if let fx = AudioEffectsService.fx(effect.id) {
+            if fx.tremoloHz > 0 { startTremolo(frequency: Double(fx.tremoloHz), depth: fx.tremoloDepth) }
+            if fx.vibratoHz > 0 { startVibrato(frequency: Double(fx.vibratoHz), depth: Double(fx.vibratoSemitones)) }
+            return
+        }
         switch effect.specialMode.type {
         case .rotation:
             if !is8DActive { start8DRotation(hz: effect.specialMode.hz) }
@@ -60,6 +66,11 @@ extension AudioPlayerManager {
             effect = AudioEffectsService.allEffects.first(where: { $0.id == effectID })
         }
         guard let effect else { return }
+        if let fx = AudioEffectsService.fx(effect.id) {
+            if fx.tremoloHz > 0, !isTremoloActive { startTremolo(frequency: Double(fx.tremoloHz), depth: fx.tremoloDepth) }
+            if fx.vibratoHz > 0, !isVibratoActive { startVibrato(frequency: Double(fx.vibratoHz), depth: Double(fx.vibratoSemitones)) }
+            return
+        }
         switch effect.specialMode.type {
         case .rotation:
             if !is8DActive { start8DRotation(hz: effect.specialMode.hz) }

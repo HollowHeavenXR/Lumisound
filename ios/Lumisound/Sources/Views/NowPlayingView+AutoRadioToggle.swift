@@ -46,6 +46,6 @@ extension NowPlayingView {
                 }
             }
         }
-        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: player.autoRadioEnabled)
+        .animation(LumiMotion.snap, value: player.autoRadioEnabled)
     }
 }

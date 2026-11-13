@@ -31,7 +31,7 @@ struct AmbientArtworkBackground: View {
         // 4pt a second under that blur, under half a point per frame even at
         // 10fps, so the lower rate is not visible; it was 30fps, and before
         // that 60.
-        TimelineView(.animation(minimumInterval: 1.0 / 10.0, paused: !isPlaying)) { timeline in
+        TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !isPlaying)) { timeline in
             let drift = ArtworkClock.pingPong(timeline.date, legDuration: 9) * 36
             let pulse = 1.0 + ArtworkClock.pingPong(timeline.date, legDuration: 7) * 0.18
 
@@ -63,7 +63,7 @@ struct AmbientArtworkBackground: View {
             .drawingGroup()
             .opacity(0.55)
             .allowsHitTesting(false)
-            .animation(.easeInOut(duration: 1.2), value: palette)
+            .animation(LumiMotion.fade(1.2), value: palette)
         }
         .frame(width: Self.canvasSide, height: Self.canvasSide)
         .task(id: song?.id) {

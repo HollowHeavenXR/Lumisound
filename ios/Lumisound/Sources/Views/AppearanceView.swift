@@ -94,7 +94,7 @@ struct AppearanceView: View {
             resetButton
         }
         .id(refreshToken)
-        .animation(.easeInOut(duration: 0.2), value: shelfRaw)
+        .animation(LumiMotion.fade(0.2), value: shelfRaw)
         .onAppear {
             customColor = AppTheme.dynamicAccent
             customSecondaryColor = AppTheme.dynamicAccentSecondary
@@ -383,7 +383,7 @@ struct AppearanceView: View {
                             )
                         }
                         .buttonStyle(.plain)
-                        .animation(.easeInOut(duration: 0.15), value: artworkStyleRaw)
+                        .animation(LumiMotion.fade(0.15), value: artworkStyleRaw)
                     }
                 }
                 .padding(.bottom, 2)
@@ -498,7 +498,7 @@ struct AppearanceView: View {
             )
         }
         .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.15), value: isSelected)
+        .animation(LumiMotion.fade(0.15), value: isSelected)
     }
 
     private var seekerStylePicker: some View {
@@ -527,7 +527,7 @@ struct AppearanceView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .animation(.easeInOut(duration: 0.15), value: seekerStyleRaw)
+                    .animation(LumiMotion.fade(0.15), value: seekerStyleRaw)
                 }
                 Spacer()
             }

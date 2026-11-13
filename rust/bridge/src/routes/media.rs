@@ -254,7 +254,7 @@ async fn search(State(st): State<AppState>, _k: ApiKey, headers: HeaderMap, Q(p)
     if source == "youtube" {
         if let Some(u) = &user {
             let api_key = st.yt.key_for_user(&st.db, u, st.cfg.youtube_api_key.as_deref()).await;
-            if !api_key.is_empty() && !st.yt.cooling_down(&api_key) {
+            if st.yt.search_allowed(&api_key) {
                 if let Some(tracks) = st.yt.search(&q, limit as usize, &api_key).await {
                     tracing::info!("Search via YouTube Data API: {} result(s) for {q:?}", tracks.len());
                     let v = Value::Array(tracks);
@@ -1301,25 +1301,19 @@ async fn spotify_resolve(State(st): State<AppState>, _k: ApiKey, headers: Header
 
 async fn match_spotify(st: &AppState, t: &Value, api_key: &str, user: Option<&str>) -> Option<Value> {
     let query = format!("{} {}", t["artist"].as_str().unwrap_or(""), t["title"].as_str().unwrap_or("")).trim().to_string();
-    if !api_key.is_empty() {
-        let key = format!("youtube:1:{}", query.to_lowercase());
-        if let Some(c) = st.search_cache.get(&key) {
-            if let Some(first) = c.as_array().and_then(|a| a.first()) {
-                return Some(first.clone());
-            }
-        } else if !st.yt.cooling_down(api_key) {
-            if let Some(r) = st.yt.search(&query, 1, api_key).await {
-                let first = r.first().cloned();
-                st.search_cache.set(key, Value::Array(r));
-                if first.is_some() {
-                    return first;
-                }
-            }
-        }
+    // No Data API search here: at 100 units a track, one 100-song Spotify
+    // playlist used a key's entire daily quota. yt-dlp's search is free; a
+    // previous interactive API result is still reused when cached.
+    let _ = api_key;
+    let key = format!("youtube:1:{}", query.to_lowercase());
+    if let Some(first) = st.search_cache.get(&key).and_then(|c| c.as_array().and_then(|a| a.first()).cloned()) {
+        return Some(first);
     }
     let args = st.ytdlp.listing_args(&format!("ytsearch1:{query}"), "youtube", user).await;
     let entries = st.ytdlp.run_json(&args, Duration::from_secs(20)).await.ok()?;
-    entries.first().map(|e| parse_track(e, "youtube"))
+    let first = entries.first().map(|e| parse_track(e, "youtube"))?;
+    st.search_cache.set(key, Value::Array(vec![first.clone()]));
+    Some(first)
 }
 
 async fn extract_playlist_items(st: &AppState, headers: &HeaderMap, url: &str, limit: usize) -> ApiResult<(String, Vec<Value>)> {

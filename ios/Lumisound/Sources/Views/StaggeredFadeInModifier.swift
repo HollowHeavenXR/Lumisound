@@ -20,7 +20,7 @@ struct StaggeredFadeInModifier: ViewModifier {
             // cost.
             .offset(y: visible ? 0 : 6)
             .animation(
-                .easeOut(duration: 0.3).delay(delay),
+                LumiMotion.glide(0.3).delay(delay),
                 value: visible
             )
             .onAppear { visible = true }

@@ -141,7 +141,7 @@ struct LibraryHealthView: View {
         }
         .padding(18)
         .background(LKCardBackground(tint: scoreColor))
-        .animation(.easeOut(duration: 0.5), value: healthScore)
+        .animation(LumiMotion.glide(0.5), value: healthScore)
     }
 
     private func issueTile(icon: String, title: String, detail: String, count: Int, scored: Bool = true) -> some View {

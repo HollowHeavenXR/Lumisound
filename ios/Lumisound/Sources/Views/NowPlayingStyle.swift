@@ -74,31 +74,31 @@ enum NowPlayingArtworkStyle: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .kaleidoscopeBloom: return "Kaleidoscope Bloom"
-        case .synthwaveHorizon:  return "Synthwave Horizon"
-        case .equalizerCutout:   return "Equalizer Cutout"
-        case .liquidBlobFrame:   return "Liquid Blob Frame"
-        case .origamiFoldReveal: return "Origami Fold"
-        case .mosaicShatter:     return "Mosaic Shatter"
-        case .circuitPulse:      return "Circuit Pulse"
-        case .radarSweep:        return "Radar Sweep"
-        case .discoMirrorBall:   return "Disco Mirror Ball"
-        case .frostedIceCrystal: return "Frosted Ice Crystal"
-        case .bioluminescentTide: return "Bioluminescent Tide"
-        case .cometOrbit:        return "Comet Orbit"
-        case .paperLayersParallax:   return "Paper Layers"
-        case .chalkboardSketch:      return "Chalkboard Sketch"
-        case .vinylCrateStack:       return "Vinyl Crate Stack"
-        case .moltenGlassDrip:       return "Molten Glass Drip"
-        case .confettiBurstLoop:     return "Confetti Burst"
-        case .shadowPuppetSilhouette: return "Shadow Puppet"
-        case .liveSpectrum:           return "Live Spectrum"
-        case .vinylGrooveSpiral:      return "Vinyl Groove Spiral"
-        case .cassetteReelSpin:       return "Cassette Reel Spin"
-        case .auroraVeil:             return "Aurora Veil"
-        case .rippleReflection:       return "Ripple Reflection"
-        case .neonSignFlicker:        return "Neon Sign Flicker"
-        case .vhsScanGlitch:          return "VHS Scan Glitch"
+        case .kaleidoscopeBloom: return "Prism Bloom"
+        case .synthwaveHorizon:  return "Night Drive"
+        case .equalizerCutout:   return "Bar Window"
+        case .liquidBlobFrame:   return "Lava Lens"
+        case .origamiFoldReveal: return "Paper Crane"
+        case .mosaicShatter:     return "Tile Pulse"
+        case .circuitPulse:      return "Signal Board"
+        case .radarSweep:        return "Sonar"
+        case .discoMirrorBall:   return "Glitter Ball"
+        case .frostedIceCrystal: return "Frost Bloom"
+        case .bioluminescentTide: return "Glow Tide"
+        case .cometOrbit:        return "Orbit Rings"
+        case .paperLayersParallax:   return "Cut Paper"
+        case .chalkboardSketch:      return "Sketchbook"
+        case .vinylCrateStack:       return "Record Shelf"
+        case .moltenGlassDrip:       return "Honey Drip"
+        case .confettiBurstLoop:     return "Streamers"
+        case .shadowPuppetSilhouette: return "Lantern"
+        case .liveSpectrum:           return "Halo Spectrum"
+        case .vinylGrooveSpiral:      return "Turntable"
+        case .cassetteReelSpin:       return "Mixtape"
+        case .auroraVeil:             return "Northern Lights"
+        case .rippleReflection:       return "Still Water"
+        case .neonSignFlicker:        return "Neon Frame"
+        case .vhsScanGlitch:          return "Tape Glitch"
         case .trueMotion:             return "True Motion"
         }
     }
@@ -381,7 +381,7 @@ struct NowPlayingMeshGradientBackground: View {
     let style: CustomNowPlayingStyle
     let extractedPalette: ArtworkPalette?
     // See NowPlayingView.isVisibleOnScreen's doc comment — without this,
-    // this wash kept redrawing via TimelineView(.animation) at up to 120Hz
+    // this wash kept redrawing via TimelineView(.animation(minimumInterval: LumiMotion.frame)) at up to 120Hz
     // for as long as the app ran, even while the user was on a totally
     // different tab (the root TabView never deinits this one).
     let isVisible: Bool
@@ -401,7 +401,7 @@ struct NowPlayingMeshGradientBackground: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isVisible)) { timeline in
+        TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !isVisible)) { timeline in
             let t = Float(ArtworkClock.pingPong(timeline.date, legDuration: 10))
             if #available(iOS 18.0, *) {
                 MeshGradient(

@@ -72,7 +72,7 @@ enum BackgroundRefreshService {
         // far less often than requested (see this file's top-level doc
         // comment) — a 5-minute request does not produce 5-minute cadence,
         // it just removes the 4-hour floor that used to be here.
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 5 * 60)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60)
         do {
             try BGTaskScheduler.shared.submit(request)
         } catch {
@@ -96,7 +96,11 @@ enum BackgroundRefreshService {
         // Further out than the refresh task's 5 minutes: a processing task is a
         // bigger favour to ask, and asking too eagerly gets it deprioritised.
         // Still only a floor, never a promise — see this file's top doc comment.
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        // Next due pass of the 15-hour schedule (read from defaults: this isn't
+        // main-actor code). Interrupted passes resume from the refresh task.
+        let last = UserDefaults.standard.object(forKey: "autoDownloads.lastFullRun") as? Date ?? .distantPast
+        let due = last.addingTimeInterval(15 * 3600)
+        request.earliestBeginDate = due > Date() ? due : Date(timeIntervalSinceNow: 15 * 60)
         do {
             try BGTaskScheduler.shared.submit(request)
         } catch {
@@ -136,8 +140,12 @@ enum BackgroundRefreshService {
         // importing a finished download triggers is allowed to run — see
         // BackgroundExecutionContext.
         await BackgroundExecutionContext.shared.withGrantedBackgroundTime {
-            await streaming.reconcilePendingDownloads()
-            await TrackedPlaylistStore.shared.runAutoDownloads(streaming: streaming, library: library)
+            let store = TrackedPlaylistStore.shared
+            // iOS's daily slot: a full pass when 15 h have passed or a pass
+            // was interrupted; otherwise there is nothing to do.
+            if store.hasInterruptedPass || Date() >= store.nextScheduledRun {
+                await store.runPass(streaming: streaming, library: library, reason: "iOS background task")
+            }
         }
     }
 
@@ -179,8 +187,12 @@ enum BackgroundRefreshService {
         // Same reasoning as runDownloadCatchUp: this is OS-granted background
         // time, so the scan behind an import is legitimate here.
         await BackgroundExecutionContext.shared.withGrantedBackgroundTime {
-            await streaming.reconcilePendingDownloads()
-            await TrackedPlaylistStore.shared.runAutoDownloads(streaming: streaming, library: library)
+            let store = TrackedPlaylistStore.shared
+            if store.hasInterruptedPass || Date() >= store.nextScheduledRun {
+                await store.runPass(streaming: streaming, library: library, reason: "iOS background refresh")
+            } else if StreamingService.hasRecentDownloadActivity {
+                await streaming.reconcilePendingDownloads()
+            }
         }
     }
 }

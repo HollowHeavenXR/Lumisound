@@ -75,7 +75,7 @@ struct AvatarFrameOverlay: View {
                 .frame(width: diameter + 10, height: diameter + 10)
                 .scaleEffect(isPulsing ? 1.18 : 1.0)
                 .opacity(isPulsing ? 0 : 0.8)
-                .animation(.easeOut(duration: 1.6).repeatForever(autoreverses: false), value: isPulsing)
+                .animation(LumiMotion.glide(1.6).repeatForever(autoreverses: false), value: isPulsing)
                 .onAppear { isPulsing = true }
         case .gradient:
             Circle()
@@ -113,7 +113,7 @@ struct AvatarFrameOverlay: View {
             // rather than a repeating `.animation`, matching how the decoration
             // and effect overlays animate — the angle is a pure function of the
             // clock, so nothing has to be started, stopped, or kept in sync.
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            TimelineView(.animation(minimumInterval: LumiMotion.frame)) { timeline in
                 let angle = timeline.date.timeIntervalSinceReferenceDate
                     .truncatingRemainder(dividingBy: 3) / 3 * 360
                 Circle()
@@ -128,7 +128,7 @@ struct AvatarFrameOverlay: View {
 
         case .orbit:
             // A faint track with a single dot travelling around it.
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            TimelineView(.animation(minimumInterval: LumiMotion.frame)) { timeline in
                 let t = timeline.date.timeIntervalSinceReferenceDate
                 let angle = t.truncatingRemainder(dividingBy: 4) / 4 * 2 * .pi
                 let radius = (diameter + 14) / 2
@@ -188,7 +188,7 @@ struct AvatarFramePickerView: View {
         LazyVGrid(columns: columns, spacing: 16) {
             ForEach(AvatarFrameStyle.allCases) { style in
                 Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.snap) {
                         selected = style
                     }
                 } label: {

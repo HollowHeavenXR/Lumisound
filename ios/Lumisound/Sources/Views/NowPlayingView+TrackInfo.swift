@@ -70,7 +70,7 @@ extension NowPlayingView {
             .padding(.vertical, 6)
             .background(AppTheme.elevatedSurface, in: Capsule())
             .transition(.opacity.combined(with: .move(edge: .top)))
-            .animation(.easeInOut(duration: 0.25), value: aiDJ.isSpeaking)
+            .animation(LumiMotion.fade(0.25), value: aiDJ.isSpeaking)
         }
     }
 
@@ -107,13 +107,13 @@ extension NowPlayingView {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
-            .animation(.easeInOut(duration: 0.25), value: player.currentSong?.id)
+            .animation(LumiMotion.fade(0.25), value: player.currentSong?.id)
 
             if let song = player.currentSong {
                 let isFavorite = library.isFavorite(songID: song.id)
                 Button {
                     heartHaptic.impactOccurred()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                    withAnimation(LumiMotion.snap) {
                         library.toggleFavorite(songID: song.id)
                     }
                 } label: {
@@ -131,7 +131,7 @@ extension NowPlayingView {
         // Slide-up + fade-in on track change
         .opacity(trackInfoVisible ? 1 : 0)
         .offset(y: trackInfoVisible ? 0 : 14)
-        .animation(.spring(response: 0.42, dampingFraction: 0.72), value: trackInfoVisible)
+        .animation(LumiMotion.settle, value: trackInfoVisible)
     }
 
     /// Format / BPM chips under the artist — nothing at all when neither

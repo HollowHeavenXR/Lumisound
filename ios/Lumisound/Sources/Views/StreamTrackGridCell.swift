@@ -110,7 +110,7 @@ struct StreamTrackGridCell: View {
                 }
                 .buttonStyle(PressableButtonStyle())
                 .disabled(isDownloading || isDownloaded)
-                .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isDownloaded)
+                .animation(LumiMotion.settle, value: isDownloaded)
 
                 Button(action: onAddToQueue) {
                     Image(systemName: "text.line.last.and.arrowtriangle.forward")

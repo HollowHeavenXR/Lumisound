@@ -159,7 +159,7 @@ struct ArtistsTab: View {
                 let letters = sections.compactMap(\.title)
                 if letters.count >= 4 {
                     AlphabetIndexRail(letters: letters) { letter in
-                        withAnimation(.easeInOut(duration: 0.25)) {
+                        withAnimation(LumiMotion.fade(0.25)) {
                             proxy.scrollTo(ArtistSection.anchor(for: letter), anchor: .top)
                         }
                     }
@@ -192,7 +192,7 @@ struct ArtistsTab: View {
         }
         .onChange(of: searchText) { _ in rebuildSections() }
         .onChange(of: sortRaw) { _ in
-            withAnimation(.easeInOut(duration: 0.25)) { rebuildSections() }
+            withAnimation(LumiMotion.fade(0.25)) { rebuildSections() }
         }
     }
 
@@ -311,7 +311,7 @@ struct ArtistsTab: View {
 
     private func layoutButton(columns target: Int, icon: String, label: String) -> some View {
         Button {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { columns = target }
+            withAnimation(LumiMotion.settle) { columns = target }
         } label: {
             Image(systemName: icon)
                 .font(.caption.weight(.semibold))

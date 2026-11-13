@@ -6,6 +6,7 @@
 
 pub mod boost;
 pub mod eq;
+pub mod fx;
 pub mod space;
 pub mod health;
 pub mod deck;
@@ -290,6 +291,11 @@ impl AudioEngine {
             g[i] = *v;
         }
         self.send(Cmd::Eq { gains: g, enabled, loudness_match });
+    }
+
+    /// LumiFX character stage for the active effect (neutral = off).
+    pub fn set_character(&self, character: fx::FxCharacter) {
+        self.send(Cmd::Character(character));
     }
 
     /// LumiBoost: extra loudness in dB (0 = off, up to 12) for this output route.

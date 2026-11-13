@@ -33,7 +33,7 @@ enum ArtworkPaletteLoader {
 /// `TimelineView`'s `context.date` on every redraw sidesteps the whole
 /// problem: there's no in-flight animation to interrupt, just a value
 /// recomputed from elapsed time. Every artwork style's `body` should be
-/// wrapped in `TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: ...))`
+/// wrapped in `TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: ...))`
 /// and read phases via these helpers instead of animating `@State` directly.
 /// The `minimumInterval` caps every style at 60fps regardless of the
 /// device's native refresh rate — these are ambient background motion, not
@@ -69,11 +69,11 @@ struct FloatModifier: ViewModifier {
     let speed: Double
 
     func body(content: Content) -> some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { timeline in
+        TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !isPlaying)) { timeline in
             let phase = ArtworkClock.pingPong(timeline.date, legDuration: speed)
             content
                 .offset(y: isPlaying ? -amount * phase : 0)
-                .animation(.easeOut(duration: 0.4), value: isPlaying)
+                .animation(LumiMotion.glide(0.4), value: isPlaying)
         }
     }
 }
@@ -88,7 +88,7 @@ struct PressableButtonStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.9 : 1.0)
             .opacity(configuration.isPressed ? 0.8 : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
+            .animation(LumiMotion.snap, value: configuration.isPressed)
     }
 }
 
@@ -113,7 +113,7 @@ struct ShimmerOverlay: View {
         // sweep is visually indistinguishable at 15fps from 60fps; this cuts
         // the redraw count (and therefore cost, multiplied by however many
         // are on screen at once) by 4x.
-        TimelineView(.animation(minimumInterval: 1.0 / 15.0)) { timeline in
+        TimelineView(.animation(minimumInterval: LumiMotion.frame)) { timeline in
             let t = ArtworkClock.loop(timeline.date, cycleDuration: 1.4)
             GeometryReader { geo in
                 LinearGradient(

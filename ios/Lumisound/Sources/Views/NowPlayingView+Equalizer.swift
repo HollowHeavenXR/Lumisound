@@ -62,7 +62,7 @@ private struct LumiEQPanel: View {
                         accent: AppTheme.dynamicAccent)
                 .frame(height: 92)
                 .opacity(settings.equalizerEnabled ? 1 : 0.45)
-                .animation(.easeInOut(duration: 0.25), value: settings.eqBands)
+                .animation(LumiMotion.fade(0.25), value: settings.eqBands)
 
             if settings.equalizerEnabled {
                 presetLibrary

@@ -128,7 +128,7 @@ final class StrataStore: ObservableObject {
     private func retheme(for song: Song?) {
         let accent = Self.accentHex()
         guard let song else {
-            withAnimation(.easeInOut(duration: 0.6)) { theme = strataTheme(accentHex: accent, artworkRgb: nil) }
+            withAnimation(LumiMotion.fade(0.6)) { theme = strataTheme(accentHex: accent, artworkRgb: nil) }
             return
         }
         Task { [weak self] in
@@ -136,7 +136,7 @@ final class StrataStore: ObservableObject {
             let rgb = image.flatMap { ArtworkColorExtractor.palette(from: $0) }.map { UIColor($0.primary).strataRGB }
             let t = strataTheme(accentHex: accent, artworkRgb: rgb)
             await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.8)) { self?.theme = t }
+                withAnimation(LumiMotion.fade(0.8)) { self?.theme = t }
             }
         }
     }
@@ -351,7 +351,7 @@ final class StrataStore: ObservableObject {
 
     func selectLayer(_ l: StrataLayer) {
         if l == layer {
-            withAnimation(.easeInOut(duration: 0.3)) { path.removeAll() }
+            withAnimation(LumiMotion.fade(0.3)) { path.removeAll() }
         } else {
             UISelectionFeedbackGenerator().selectionChanged()
             path.removeAll()

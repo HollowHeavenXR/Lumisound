@@ -116,7 +116,7 @@ struct FriendsListView: View {
 
     private func segmentButton(_ seg: Segment) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.2)) { segment = seg }
+            withAnimation(LumiMotion.fade(0.2)) { segment = seg }
         } label: {
             HStack(spacing: 4) {
                 Text(seg.rawValue)

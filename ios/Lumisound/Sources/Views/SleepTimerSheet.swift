@@ -189,7 +189,7 @@ struct SleepTimerSheet: View {
                 )
         }
         .buttonStyle(.plain)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
+        .animation(LumiMotion.snap, value: isSelected)
     }
 
     private var customDurationRow: some View {

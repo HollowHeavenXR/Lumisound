@@ -168,16 +168,19 @@ final class TrackedPlaylistStore: ObservableObject {
     /// still missing IS the remaining work. That is self-healing across a crash,
     /// a force-quit, and an app update, none of which a queue file would survive
     /// as reliably.
+    /// Returns true when every due playlist finished (false: interrupted —
+    /// cancelled, bridge down — so the next trigger should resume).
+    @discardableResult
     func runAutoDownloads(streaming: StreamingService,
                           library: LibraryManager,
-                          minInterval: TimeInterval = 5 * 60) async {
-        guard !isRunningAutoDownloads else { return }
+                          minInterval: TimeInterval = 5 * 60) async -> Bool {
+        guard !isRunningAutoDownloads else { return false }
         isRunningAutoDownloads = true
         defer { isRunningAutoDownloads = false }
 
         let dueIDs = Set(trackedDue(minIntervalSecs: minInterval).map(\.id))
         let due = playlists.filter { dueIDs.contains($0.id) }
-        guard !due.isEmpty else { return }
+        guard !due.isEmpty else { return true }
 
         // Scanned ONCE up front rather than once per playlist.
         //
@@ -208,7 +211,7 @@ final class TrackedPlaylistStore: ObservableObject {
             // `markAutoChecked` call at the end of this loop.
             if Task.isCancelled {
                 appLog("runAutoDownloads: cancelled before \"\(pl.name)\" — leaving it due so the next trigger resumes it", category: "network")
-                return
+                return false
             }
             let tracks = await streaming.fetchPlaylistTracks(url: pl.url, existingSongs: [])
 
@@ -229,7 +232,7 @@ final class TrackedPlaylistStore: ObservableObject {
                     // playlist: every remaining one resolves against the same
                     // bridge, and marching through them to fail identically
                     // would mark each of them checked in turn.
-                    return
+                    return false
                 }
             }
             // One Rust-core index per playlist (O(1) per track): source id
@@ -374,58 +377,75 @@ final class TrackedPlaylistStore: ObservableObject {
             }
             if verdict == .stayDueAndStop {
                 appLog("runAutoDownloads: \"\(pl.name)\" interrupted after \(got)/\(toGet.count) (\(failed) failed) — staying due so the next trigger picks up where this left off", category: "network")
-                return
+                return false
             }
             markAutoChecked(id: pl.id)
         }
+        return true
     }
 
-    // MARK: Foreground resume loop
+    // MARK: Schedule — manual, iOS daily, in-app every 15 h
 
-    /// How often a resume attempt runs while the app is actually open.
-    private static let foregroundResumeInterval: UInt64 = 5 * 60 * 1_000_000_000
-    /// An instance property rather than a `static var` (which is how
-    /// `LumisoundTrackVaultService` holds its equivalent loop) because this type
-    /// is a `@MainActor` class: statics on it are NOT implicitly actor-isolated,
-    /// so a mutable one would be exactly the kind of unprotected global state
-    /// strict concurrency checking objects to. The store is a singleton, so
-    /// per-instance is per-app regardless.
-    private var foregroundResumeLoop: Task<Void, Never>?
+    /// The background downloader runs a full pass at most this often on its own.
+    static let autoRunInterval: TimeInterval = 15 * 3600
+    private static let lastRunKey = "autoDownloads.lastFullRun"
+    private static let interruptedKey = "autoDownloads.interruptedPass"
 
-    /// Keeps auto-downloads moving for as long as the app is open.
-    ///
-    /// Before this, `runAutoDownloads` had exactly two triggers: the root view's
-    /// launch `.task`, and `BackgroundRefreshService`'s `BGAppRefreshTask`. Both
-    /// are unreliable for the thing users actually notice — a big playlist
-    /// getting partway and stopping:
-    ///
-    ///   * The launch `.task` fires on a COLD launch only. Returning to an app
-    ///     iOS merely suspended does not re-run it, so the single most common
-    ///     way a pass gets interrupted was also the one case that never
-    ///     retriggered it. (`reconcilePendingDownloads` was already wired to
-    ///     foreground for precisely this reason — that recovers downloads the
-    ///     bridge already FINISHED, and there was no equivalent for the ones it
-    ///     was never asked to start.)
-    ///   * `BGAppRefreshTask` runs entirely at iOS's discretion — no cadence
-    ///     guarantee, and often not for long stretches (see
-    ///     BackgroundRefreshService's own doc comment). Its ~30s budget also
-    ///     means it is usually an INTERRUPTED pass rather than a complete one.
-    ///
-    /// So a user who left a 300-track playlist downloading, locked their phone,
-    /// and came back to it had no trigger at all until they force-quit and
-    /// relaunched. This loop is the dependable driver; the background task stays
-    /// as opportunistic extra progress.
-    ///
-    /// Idempotent — safe to call from a `.task` that re-fires.
-    func startForegroundResumeLoop(streaming: StreamingService, library: LibraryManager) {
-        guard foregroundResumeLoop == nil else { return }
-        foregroundResumeLoop = Task { [weak self] in
+    /// When the last pass finished (manual, background or timer).
+    @Published private(set) var lastFullRun: Date? = UserDefaults.standard.object(forKey: "autoDownloads.lastFullRun") as? Date
+    @Published private(set) var isPassRunning = false
+    private var scheduleTimer: Task<Void, Never>?
+
+    var nextScheduledRun: Date {
+        (lastFullRun ?? .distantPast).addingTimeInterval(Self.autoRunInterval)
+    }
+
+    /// A pass stopped part-way (suspended, out of background time, bridge down).
+    var hasInterruptedPass: Bool { UserDefaults.standard.bool(forKey: Self.interruptedKey) }
+
+    /// One full downloader pass now: collect finished jobs, then every
+    /// auto-download playlist regardless of throttle. Used by the Settings
+    /// button, the iOS background tasks and the 15-hour timer.
+    @discardableResult
+    func runPass(streaming: StreamingService, library: LibraryManager, reason: String) async -> Bool {
+        guard !isPassRunning else { return false }
+        isPassRunning = true
+        defer { isPassRunning = false }
+        appLog("Background downloader: pass started (\(reason))", category: "network")
+        await streaming.reconcilePendingDownloads()
+        let completed = await runAutoDownloads(streaming: streaming, library: library, minInterval: 0)
+        UserDefaults.standard.set(!completed, forKey: Self.interruptedKey)
+        if completed {
+            let now = Date()
+            lastFullRun = now
+            UserDefaults.standard.set(now, forKey: Self.lastRunKey)
+        }
+        appLog("Background downloader: pass \(completed ? "finished" : "interrupted — will resume once") (\(reason))", category: "network")
+        return completed
+    }
+
+    /// Cheap check for launch / foreground: no network unless a pass is due
+    /// (15 h since the last) or the last one was interrupted.
+    func runIfDue(streaming: StreamingService, library: LibraryManager) {
+        guard !isPassRunning, !playlists.filter(\.isAutoDownload).isEmpty else { return }
+        if hasInterruptedPass {
+            Task { await runPass(streaming: streaming, library: library, reason: "resume interrupted pass") }
+        } else if Date() >= nextScheduledRun {
+            Task { await runPass(streaming: streaming, library: library, reason: "15 h timer") }
+        }
+    }
+
+    /// The in-app 15-hour timer: sleeps until the next scheduled pass while
+    /// the app stays open (iOS's own background task runs it otherwise).
+    func startScheduleTimer(streaming: StreamingService, library: LibraryManager) {
+        scheduleTimer?.cancel()
+        scheduleTimer = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: Self.foregroundResumeInterval)
-                guard !Task.isCancelled, let self else { break }
-                // Cheap when there is nothing to do: everything still within
-                // its throttle window is filtered out before any request.
-                await self.runAutoDownloads(streaming: streaming, library: library)
+                guard let self else { return }
+                let wait = max(60, self.nextScheduledRun.timeIntervalSinceNow)
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                self.runIfDue(streaming: streaming, library: library)
             }
         }
     }

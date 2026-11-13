@@ -156,7 +156,7 @@ struct LumenSongRowContent: View {
         }
         .padding(.vertical, 5)
         .contentShape(Rectangle())
-        .animation(.easeInOut(duration: 0.25), value: isCurrent)
+        .animation(LumiMotion.fade(0.25), value: isCurrent)
     }
 }
 
@@ -245,13 +245,13 @@ struct LumenLaunchMark: View {
         .frame(width: 180, height: 180)
         .onAppear {
             guard animate else { return }
-            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) { breathe = true }
-            withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) { spin = true }
+            withAnimation(LumiMotion.drift(2.2)) { breathe = true }
+            withAnimation(LumiMotion.spin(1.6)) { spin = true }
         }
         .onChange(of: animate) { _, now in
             guard now else { return }
-            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) { breathe = true }
-            withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) { spin = true }
+            withAnimation(LumiMotion.drift(2.2)) { breathe = true }
+            withAnimation(LumiMotion.spin(1.6)) { spin = true }
         }
         .accessibilityHidden(true)
     }

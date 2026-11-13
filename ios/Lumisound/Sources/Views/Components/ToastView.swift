@@ -52,6 +52,6 @@ extension View {
                     }
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: message.wrappedValue)
+        .animation(LumiMotion.settle, value: message.wrappedValue)
     }
 }

@@ -182,7 +182,7 @@ extension SettingsView {
                 .padding(.horizontal, LK.gutter)
                 .padding(.top, 4)
                 .padding(.bottom, 24)
-                .animation(.easeInOut(duration: 0.2), value: settingsQuery.isEmpty)
+                .animation(LumiMotion.fade(0.2), value: settingsQuery.isEmpty)
             }
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom) {
@@ -546,7 +546,7 @@ extension SettingsView {
                     LuaVisualizerScriptsView()
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: s)
+            .animation(LumiMotion.fade(0.2), value: s)
         }
     }
 
@@ -621,6 +621,7 @@ extension SettingsView {
                 LKToggle(icon: "wifi", tint: .cyan, title: "Wi-Fi Only Downloads",
                          subtitle: "Nothing downloads over cellular — including tracked playlists", isOn: $wifiOnlyDownloadsEnabled)
             }
+            BackgroundDownloaderCard(streaming: streaming, library: library)
             LKCard(title: "Automatic") {
                 LKLink(icon: "dot.radiowaves.left.and.right", tint: .cyan, title: "Subscriptions & Tracked Playlists",
                        subtitle: "Channels and playlists Lumisound keeps downloading for you") {
@@ -878,7 +879,7 @@ private struct QuickSwitch: View {
     var body: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isOn.toggle() }
+            withAnimation(LumiMotion.snap) { isOn.toggle() }
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -902,5 +903,51 @@ private struct QuickSwitch: View {
         .accessibilityLabel(title)
         .accessibilityValue(isOn ? "On" : "Off")
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// The background downloader: when it last ran, when it runs next (iOS's
+/// background slot or the in-app 15-hour timer), and a button for one pass now.
+struct BackgroundDownloaderCard: View {
+    @ObservedObject private var store = TrackedPlaylistStore.shared
+    let streaming: StreamingService
+    let library: LibraryManager
+
+    var body: some View {
+        let auto = store.playlists.filter(\.isAutoDownload).count
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                LKIcon(symbol: store.isPassRunning ? "arrow.down.circle.dotted" : "arrow.down.to.line.circle.fill", tint: .cyan, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Background Downloader").font(.headline).foregroundStyle(AppTheme.textPrimary)
+                    Group {
+                        if store.isPassRunning {
+                            Text("Downloading new tracks…")
+                        } else if let last = store.lastFullRun {
+                            Text("Last run \(last, style: .relative) ago")
+                        } else {
+                            Text("Hasn't run yet")
+                        }
+                    }
+                    .font(.caption).foregroundStyle(AppTheme.textSecondary)
+                }
+                Spacer()
+            }
+            HStack(spacing: 8) {
+                LKPill(text: "\(auto) auto playlist\(auto == 1 ? "" : "s")", tint: .cyan)
+                if store.hasInterruptedPass { LKPill(text: "Will resume", tint: .orange) }
+                if store.lastFullRun != nil, !store.isPassRunning {
+                    LKPill(text: "Next ~\(store.nextScheduledRun.formatted(date: .abbreviated, time: .shortened))", tint: .gray)
+                }
+            }
+            LKPrimaryButton(title: store.isPassRunning ? "Running…" : "Start Now", icon: "play.fill", tint: .cyan, busy: store.isPassRunning) {
+                Task { await store.runPass(streaming: streaming, library: library, reason: "manual") }
+            }
+            .disabled(store.isPassRunning)
+            Text("Runs once when you tap Start, in iOS's daily background slot, and every 15 hours while Lumisound is open. Opening the app doesn't start it, so nothing is spent when there's nothing new.")
+                .font(.caption2).foregroundStyle(AppTheme.textSecondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .background(LKCardBackground(tint: .cyan))
     }
 }

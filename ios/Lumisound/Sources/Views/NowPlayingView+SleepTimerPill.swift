@@ -10,7 +10,7 @@ extension NowPlayingView {
         if sleepTimer.isActive {
             SleepTimerPillContent { showSleepTimerSheet = true }
                 .transition(.scale.combined(with: .opacity))
-                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: sleepTimer.isActive)
+                .animation(LumiMotion.settle, value: sleepTimer.isActive)
         }
     }
 }

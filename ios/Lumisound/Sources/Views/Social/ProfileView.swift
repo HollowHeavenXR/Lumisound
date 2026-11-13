@@ -170,7 +170,7 @@ struct ProfileView: View {
                 }
                 .padding(.top, 4)
                 .padding(.bottom, hasUnsavedChanges ? 110 : 40)
-                .animation(.spring(response: 0.35, dampingFraction: 0.86), value: panelRaw)
+                .animation(LumiMotion.settle, value: panelRaw)
             }
         }
         .overlay(alignment: .bottom) {
@@ -181,7 +181,7 @@ struct ProfileView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: hasUnsavedChanges)
+        .animation(LumiMotion.settle, value: hasUnsavedChanges)
         .navigationTitle("Edit Profile")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

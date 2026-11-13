@@ -13,22 +13,12 @@ enum LaunchScreenStyle: String, CaseIterable, Identifiable, Codable {
 
 // MARK: - LaunchView
 //
-// Remade 2026-09. The old screen was an icon with rings and a spinner over a
-// generic accent blur; it said nothing about *your* library and nothing about
-// what it was waiting for. Now:
-//
-// - Backdrop: a slowly drifting wall of the library's own album covers,
-//   darkened and blurred (Aurora), or the plain theme background
-//   (Minimalist / Reduce Motion).
-// - Centerpiece: the app icon as the label of a spinning record, with a
-//   tone-arm-free, groove-lined disc and an accent rim light.
-// - A greeting (the signed-in user, or the wordmark) and library stats.
-// - A live step list — Library → Sync → Ready — with the scan count while
-//   scanning, instead of an unexplained spinner.
-// - The account prompt is a glass bottom card over the same backdrop.
-//
-// Timing is unchanged: held until the scan and pull-sync actually finish,
-// with a 1.2s minimum and 10s cap (see the hold task in `.onAppear`).
+// Remade 2026-11: the "tuning dial". Three rings around the Lumisound mark —
+// Library, Sync, Ready — fill as the real work finishes (the scan count
+// sits in the centre while scanning), a circular spectrum turns around the
+// mark, and soft light ribbons drift behind. All motion at most 60 fps, and
+// none at all with Reduce Motion / Minimalist. Timing is unchanged: held
+// until the scan and pull-sync finish, 0.8 s minimum, 10 s cap.
 
 struct LaunchView: View {
     @EnvironmentObject private var account: AccountService
@@ -56,43 +46,44 @@ struct LaunchView: View {
     /// `isSyncing` may not have flipped on yet, so the steps would read
     /// "done" for a moment and then un-done.
     @State private var minimumHoldPassed = false
-    @State private var wallSongs: [Song] = []
 
     private var libraryStepDone: Bool { minimumHoldPassed && !library.isScanning }
     private var syncStepDone: Bool { minimumHoldPassed && !account.isSyncing }
 
+    /// 0…1 per step, for the dial's rings.
+    private var libraryFill: Double {
+        if libraryStepDone { return 1 }
+        if let p = library.scanProgress, p.total > 0 { return Double(p.current) / Double(p.total) }
+        return 0.18
+    }
+    private var syncFill: Double { !account.isLoggedIn || syncStepDone ? (libraryStepDone ? 1 : 0) : (libraryStepDone ? 0.35 : 0) }
+    private var readyFill: Double { libraryStepDone && (syncStepDone || !account.isLoggedIn) ? 1 : 0 }
+
     var body: some View {
         ZStack {
-            backdrop
+            LaunchRibbons(animate: appeared && !isMinimalist)
+                .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 Spacer(minLength: 40)
 
-                Group {
-                    if InterfaceEdition.isLumen {
-                        LumenLaunchMark(animate: appeared && !isMinimalist)
-                    } else {
-                        LaunchRecord(spinning: appeared && !isMinimalist)
-                    }
-                }
-                    .scaleEffect(appeared ? 1 : 0.7)
+                LaunchDial(library: libraryFill, sync: syncFill, ready: readyFill,
+                           animate: appeared && !isMinimalist,
+                           centre: dialCentreText)
+                    .frame(width: 236, height: 236)
+                    .scaleEffect(appeared ? 1 : 0.82)
                     .opacity(appeared ? 1 : 0)
 
                 greeting
-                    .padding(.top, 28)
+                    .padding(.top, 26)
                     .opacity(appeared ? 1 : 0)
-                    .offset(y: appeared ? 0 : 12)
+                    .offset(y: appeared ? 0 : 10)
 
-                statsRow
+                stepLegend
                     .padding(.top, 18)
                     .opacity(appeared ? 1 : 0)
 
                 Spacer(minLength: 24)
-
-                progressCard
-                    .padding(.horizontal, 20)
-                    .opacity(appeared ? 1 : 0)
-                    .offset(y: appeared ? 0 : 24)
 
                 Text(LaunchView.tips[tipIndex])
                     .font(.caption)
@@ -100,8 +91,7 @@ struct LaunchView: View {
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
                     .padding(.horizontal, 32)
-                    .padding(.top, 14)
-                    .padding(.bottom, 28)
+                    .padding(.bottom, 30)
                     .id(tipIndex)
                     .transition(.opacity)
                     .opacity(appeared ? 1 : 0)
@@ -111,79 +101,61 @@ struct LaunchView: View {
                 accountPrompt
             }
         }
-        .fontDesign(InterfaceEdition.isLumen ? .rounded : nil)
-        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: showPrompt)
-        .animation(.easeInOut(duration: 0.3), value: libraryStepDone)
-        .animation(.easeInOut(duration: 0.3), value: syncStepDone)
+        .animation(LumiMotion.settle, value: showPrompt)
+        .animation(LumiMotion.glide, value: libraryStepDone)
+        .animation(LumiMotion.glide, value: syncStepDone)
         .sheet(isPresented: $showLoginSheet, onDismiss: {
             if account.isLoggedIn {
-                withAnimation(.easeOut(duration: 0.5)) { isLoading = false }
+                withAnimation(LumiMotion.fade) { isLoading = false }
             }
         }) {
             LoginView(startOnRegister: loginStartOnRegister)
                 .environmentObject(account)
         }
         .onAppear(perform: start)
-        .task(id: library.allSongs.isEmpty) {
-            // The library usually restores from its snapshot before this
-            // appears; if it lands a moment later, fill the wall then.
-            if wallSongs.isEmpty { wallSongs = Self.wallSongs(from: library.allSongs) }
-        }
         .onChange(of: account.isLoggedIn) { loggedIn in
             if loggedIn {
                 showLoginSheet = false
-                withAnimation(.easeOut(duration: 0.5)) { isLoading = false }
+                withAnimation(LumiMotion.fade) { isLoading = false }
             }
         }
-        // The tip loop is a plain Task, which outlives this view unless
-        // cancelled.
+        // The tip loop is a plain Task, which outlives this view unless cancelled.
         .onChange(of: isLoading) { loading in
             if !loading { tipCyclingTask?.cancel() }
         }
     }
 
-    // MARK: Backdrop
-
-    @ViewBuilder
-    private var backdrop: some View {
-        if InterfaceEdition.isLumen {
-            // Lumen: the lit ink ground, with the cover wall as a faint
-            // texture behind it rather than the whole picture.
-            ZStack {
-                LumenBackdrop(intensity: 1.5)
-                if !isMinimalist && wallSongs.count >= 6 {
-                    LaunchCoverWall(songs: wallSongs, animate: appeared)
-                        .opacity(0.22)
-                        .blendMode(.screen)
-                }
-            }
-            .ignoresSafeArea()
-        } else if isMinimalist || wallSongs.count < 6 {
-            ZStack {
-                AppTheme.background
-                if !isMinimalist {
-                    RadialGradient(
-                        colors: [AppTheme.dynamicAccent.opacity(0.35), .clear],
-                        center: .top, startRadius: 0, endRadius: 520
-                    )
-                }
-            }
-            .ignoresSafeArea()
-        } else {
-            LaunchCoverWall(songs: wallSongs, animate: appeared)
-                .ignoresSafeArea()
+    /// The centre of the dial: the scan count while scanning, the song count when loaded.
+    private var dialCentreText: (String, String) {
+        if let p = library.scanProgress, p.total > 0, !libraryStepDone {
+            return ("\(p.current)", "of \(p.total)")
         }
+        if libraryStepDone, !library.allSongs.isEmpty {
+            return ("\(library.allSongs.count)", "songs")
+        }
+        return ("", "")
     }
 
-    /// Up to 18 songs from different albums, for the cover wall.
-    static func wallSongs(from songs: [Song]) -> [Song] {
-        var seen = Set<String>()
-        var picked: [Song] = []
-        for song in songs where seen.insert(song.groupableAlbumName).inserted {
-            picked.append(song)
-            if picked.count == 18 { break }
+    private var stepLegend: some View {
+        HStack(spacing: 14) {
+            stepDot("Library", fill: libraryFill, colour: AppTheme.dynamicAccent)
+            if account.isLoggedIn { stepDot("Sync", fill: syncFill, colour: AppTheme.dynamicAccentSecondary) }
+            stepDot("Ready", fill: readyFill, colour: AppTheme.success)
         }
-        return picked
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(libraryStepDone ? (readyFill >= 1 ? "Ready" : "Syncing your account") : libraryStepTitle)
+    }
+
+    private func stepDot(_ title: String, fill: Double, colour: Color) -> some View {
+        HStack(spacing: 6) {
+            ZStack {
+                Circle().stroke(colour.opacity(0.3), lineWidth: 2)
+                Circle().trim(from: 0, to: fill).stroke(colour, style: StrokeStyle(lineWidth: 2, lineCap: .round)).rotationEffect(.degrees(-90))
+                if fill >= 1 { Image(systemName: "checkmark").font(.system(size: 7, weight: .heavy)).foregroundStyle(colour) }
+            }
+            .frame(width: 14, height: 14)
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(fill >= 1 ? AppTheme.textPrimary : AppTheme.textSecondary)
+        }
     }
 
     // MARK: Greeting
@@ -232,55 +204,6 @@ struct LaunchView: View {
         case 17..<22: return "GOOD EVENING"
         default:      return "WELCOME BACK"
         }
-    }
-
-    // MARK: Stats
-
-    @ViewBuilder
-    private var statsRow: some View {
-        if !library.allSongs.isEmpty {
-            HStack(spacing: 8) {
-                LaunchStatPill(icon: "music.note", text: "\(library.allSongs.count)")
-                LaunchStatPill(icon: "music.mic", text: "\(library.artists.count)")
-                LaunchStatPill(icon: "square.stack", text: "\(library.albums.count)")
-                LaunchStatPill(icon: "music.note.list", text: "\(library.playlists.count)")
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(library.allSongs.count) songs, \(library.artists.count) artists, \(library.albums.count) albums, \(library.playlists.count) playlists")
-        }
-    }
-
-    // MARK: Progress
-
-    private var progressCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            LaunchStepRow(
-                title: libraryStepTitle,
-                detail: libraryStepDetail,
-                state: libraryStepDone ? .done : .active
-            )
-            if account.isLoggedIn {
-                LaunchStepRow(
-                    title: "Syncing your account",
-                    detail: syncStepDone ? "Playlists, favorites and settings are up to date" : "Playlists, favorites and settings",
-                    state: syncStepDone ? .done : (libraryStepDone ? .active : .pending)
-                )
-            }
-            LaunchStepRow(
-                title: "Ready",
-                detail: nil,
-                state: (libraryStepDone && (syncStepDone || !account.isLoggedIn)) ? .done : .pending
-            )
-
-            if let progress = library.scanProgress, progress.total > 0, !libraryStepDone {
-                ProgressView(value: Double(progress.current), total: Double(progress.total))
-                    .tint(AppTheme.dynamicAccent)
-                    .animation(.easeOut(duration: 0.2), value: progress.current)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: 420, alignment: .leading)
-        .adaptiveGlass(in: RoundedRectangle(cornerRadius: 22, style: .continuous), fallback: AppTheme.surface.opacity(0.7))
     }
 
     private var libraryStepTitle: String {
@@ -352,7 +275,7 @@ struct LaunchView: View {
                 .buttonStyle(PressableButtonStyle())
 
                 Button {
-                    withAnimation(.easeOut(duration: 0.5)) {
+                    withAnimation(LumiMotion.fade) {
                         showPrompt = false
                         isLoading = false
                     }
@@ -389,8 +312,7 @@ struct LaunchView: View {
     // MARK: Lifecycle
 
     private func start() {
-        wallSongs = Self.wallSongs(from: library.allSongs)
-        withAnimation(.spring(response: 0.6, dampingFraction: 0.75)) {
+        withAnimation(LumiMotion.arrive) {
             appeared = true
         }
 
@@ -399,7 +321,7 @@ struct LaunchView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard !Task.isCancelled else { break }
-                withAnimation(.easeInOut(duration: 0.4)) {
+                withAnimation(LumiMotion.fade) {
                     tipIndex = LaunchView.nextTipIndex(excluding: tipIndex)
                 }
             }
@@ -436,9 +358,9 @@ struct LaunchView: View {
 
             await MainActor.run {
                 if !account.isLoggedIn {
-                    withAnimation { showPrompt = true }
+                    withAnimation(LumiMotion.settle) { showPrompt = true }
                 } else {
-                    withAnimation(.easeOut(duration: 0.5)) { isLoading = false }
+                    withAnimation(LumiMotion.fade) { isLoading = false }
                 }
             }
         }
@@ -478,235 +400,114 @@ struct LaunchView: View {
     }
 }
 
-// MARK: - LaunchCoverWall
+// MARK: - LaunchDial
 
-/// The library's own covers in a tilted grid that drifts slowly upward,
-/// darkened and blurred into a backdrop.
-///
-/// The grid is built once and drifted by a Core Animation loop. It used to be
-/// rebuilt 30 times a second in a `TimelineView` — around sixty artwork views
-/// per frame, under a full-screen blur re-applied each frame — which was
-/// continuous main-thread and GPU work for as long as the loading screen
-/// showed, and froze whenever loading itself held the main thread. Now the
-/// blurred grid is rasterized once and only its position changes.
-private struct LaunchCoverWall: View {
-    let songs: [Song]
+/// Three rings — Library, Sync, Ready — fill as loading progresses, around
+/// a circular spectrum that turns slowly and the Lumisound mark. Drawn in one
+/// Canvas, at most 60 frames a second.
+private struct LaunchDial: View {
+    let library: Double
+    let sync: Double
+    let ready: Double
+    let animate: Bool
+    let centre: (String, String)
+
+    var body: some View {
+        ZStack {
+            TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !animate)) { tl in
+                let t = tl.date.timeIntervalSinceReferenceDate
+                Canvas { ctx, size in
+                    let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                    let r = min(size.width, size.height) / 2
+                    // Spectrum: 72 bars between the inner ring and the mark, a
+                    // travelling wave so it reads as "listening".
+                    let bars = 72
+                    for i in 0..<bars {
+                        let a = Double(i) / Double(bars) * .pi * 2 + t * 0.35
+                        let wave = 0.5 + 0.5 * sin(Double(i) * 0.55 + t * 3.1) * cos(Double(i) * 0.21 - t * 1.7)
+                        let inner = r * 0.47
+                        let outer = inner + r * (0.04 + 0.13 * wave)
+                        var p = Path()
+                        p.move(to: CGPoint(x: c.x + cos(a) * inner, y: c.y + sin(a) * inner))
+                        p.addLine(to: CGPoint(x: c.x + cos(a) * outer, y: c.y + sin(a) * outer))
+                        ctx.stroke(p, with: .color(AppTheme.dynamicAccent.opacity(0.25 + 0.55 * wave)), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    }
+                    // A glint orbiting the outer ring.
+                    let ga = t * 0.9
+                    let gp = CGPoint(x: c.x + cos(ga) * (r - 4), y: c.y + sin(ga) * (r - 4))
+                    ctx.fill(Path(ellipseIn: CGRect(x: gp.x - 3, y: gp.y - 3, width: 6, height: 6)), with: .color(.white.opacity(0.8)))
+                }
+            }
+            ring(fill: library, colour: AppTheme.dynamicAccent, inset: 0)
+            ring(fill: sync, colour: AppTheme.dynamicAccentSecondary, inset: 14)
+            ring(fill: ready, colour: AppTheme.success, inset: 28)
+            VStack(spacing: 0) {
+                if centre.0.isEmpty {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 34, weight: .bold))
+                        .foregroundStyle(AppTheme.dynamicAccentGradient)
+                } else {
+                    Text(centre.0)
+                        .font(.system(size: 30, weight: .heavy, design: .rounded).monospacedDigit())
+                        .foregroundStyle(AppTheme.textPrimary)
+                        .contentTransition(.numericText())
+                    Text(centre.1).font(.caption2.weight(.semibold)).foregroundStyle(AppTheme.textSecondary)
+                }
+            }
+            .frame(width: 92, height: 92)
+            .background(Circle().fill(.ultraThinMaterial))
+            .overlay(Circle().strokeBorder(.white.opacity(0.15), lineWidth: 1))
+        }
+        .animation(LumiMotion.glide, value: library)
+        .animation(LumiMotion.glide, value: sync)
+        .animation(LumiMotion.glide, value: ready)
+        .accessibilityHidden(true)
+    }
+
+    private func ring(fill: Double, colour: Color, inset: CGFloat) -> some View {
+        ZStack {
+            Circle().stroke(colour.opacity(0.14), lineWidth: 5)
+            Circle()
+                .trim(from: 0, to: max(0.001, fill))
+                .stroke(AngularGradient(colors: [colour.opacity(0.5), colour], center: .center), style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .shadow(color: colour.opacity(fill > 0 ? 0.6 : 0), radius: 6)
+        }
+        .padding(inset)
+    }
+}
+
+// MARK: - LaunchRibbons
+
+/// The backdrop: the theme background with three soft light ribbons drifting
+/// across it in the accent colours. Still (and just the gradient) when motion is off.
+private struct LaunchRibbons: View {
     let animate: Bool
 
-    private let tile: CGFloat = 118
-    private let gap: CGFloat = 10
-    private let columns = 4
-    /// The pattern repeats every `period` rows (covers and the brick offset
-    /// both), so drifting exactly that far and jumping back is seamless.
-    private let period = 6
-    /// Points per second, as before.
-    private let speed: CGFloat = 9
-
     var body: some View {
-        GeometryReader { geo in
-            let rowHeight = tile + gap
-            let rows = Int(geo.size.height * 1.4 / rowHeight) + period + 1
-            let gridWidth = CGFloat(columns) * tile + CGFloat(columns - 1) * gap + tile
-            let gridHeight = CGFloat(rows) * rowHeight
-            let loopDistance = rowHeight * CGFloat(period)
-
-            CoreAnimationLoop(
-                .driftUp(distance: loopDistance, period: TimeInterval(loopDistance / speed)),
-                isRunning: animate,
-                rasterize: true
-            ) {
-                VStack(spacing: gap) {
-                    ForEach(0..<rows, id: \.self) { row in
-                        HStack(spacing: gap) {
-                            ForEach(0..<columns, id: \.self) { col in
-                                let song = songs[((row % period) * columns + col) % songs.count]
-                                ArtworkThumbnail(song: song, size: tile, showsScrim: false)
-                            }
+        ZStack {
+            AppTheme.background
+            TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !animate)) { tl in
+                let t = tl.date.timeIntervalSinceReferenceDate
+                Canvas { ctx, size in
+                    let colours = [AppTheme.dynamicAccent, AppTheme.dynamicAccentSecondary, AppTheme.accentSoft]
+                    for k in 0..<3 {
+                        var p = Path()
+                        let phase = t * (0.18 + Double(k) * 0.07) + Double(k) * 2.1
+                        let baseY = size.height * (0.28 + 0.22 * Double(k))
+                        p.move(to: CGPoint(x: -40, y: baseY))
+                        var x: CGFloat = -40
+                        while x <= size.width + 40 {
+                            let y = baseY + CGFloat(sin(Double(x) / 110 + phase) * 46 + sin(Double(x) / 47 - phase * 1.6) * 14)
+                            p.addLine(to: CGPoint(x: x, y: y))
+                            x += 12
                         }
-                        // Alternate rows sit half a tile over, like brickwork.
-                        .offset(x: row.isMultiple(of: 2) ? -tile / 2 : 0)
+                        ctx.stroke(p, with: .color(colours[k].opacity(0.22)), style: StrokeStyle(lineWidth: 70, lineCap: .round, lineJoin: .round))
                     }
                 }
-                .blur(radius: 6)
-                .frame(width: gridWidth, height: gridHeight)
+                .blur(radius: 38)
             }
-            .frame(width: gridWidth, height: gridHeight)
-            .rotationEffect(.degrees(-12))
-            .frame(width: geo.size.width, height: geo.size.height)
+            RadialGradient(colors: [.clear, .black.opacity(0.45)], center: .center, startRadius: 120, endRadius: 600)
         }
-        .overlay(
-            LinearGradient(
-                colors: [
-                    AppTheme.background.opacity(0.55),
-                    AppTheme.background.opacity(0.8),
-                    AppTheme.background.opacity(0.97)
-                ],
-                startPoint: .top, endPoint: .bottom
-            )
-        )
-        .background(AppTheme.background)
-        .clipped()
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-}
-
-// MARK: - LaunchRecord
-
-/// The app icon as the label of a spinning record.
-private struct LaunchRecord: View {
-    let spinning: Bool
-
-    private let size: CGFloat = 210
-
-    var body: some View {
-        // The glow and spindle are circles centred on the axis, so only the
-        // disc needs to turn — and the whole disc can, as one layer, because
-        // the grooves are circles too. The spin runs as a Core Animation loop
-        // so it keeps going while the main thread is busy loading; see
-        // `CoreAnimationLoop`.
-        ZStack {
-            // Accent glow behind the disc.
-            Circle()
-                .fill(AppTheme.dynamicAccent)
-                .frame(width: size * 0.9, height: size * 0.9)
-                .blur(radius: 50)
-                .opacity(0.45)
-
-            CoreAnimationLoop(.spin(period: 6), isRunning: spinning) {
-                disc
-            }
-            .frame(width: size, height: size)
-
-            // Spindle.
-            Circle()
-                .fill(AppTheme.background)
-                .frame(width: 8, height: 8)
-        }
-        .frame(width: size, height: size)
-        .shadow(color: .black.opacity(0.5), radius: 24, y: 14)
-        .accessibilityHidden(true)
-    }
-
-    /// Everything that turns: disc, grooves, rim lights and label.
-    private var disc: some View {
-        ZStack {
-            // Disc and grooves.
-            Circle()
-                .fill(Color(white: 0.06))
-                .frame(width: size, height: size)
-            ForEach(0..<9, id: \.self) { i in
-                Circle()
-                    .stroke(Color.white.opacity(i.isMultiple(of: 3) ? 0.09 : 0.04), lineWidth: 1)
-                    .frame(width: size - 24 - CGFloat(i) * 11, height: size - 24 - CGFloat(i) * 11)
-            }
-            // Rim lights that turn with the disc.
-            Circle()
-                .trim(from: 0.05, to: 0.22)
-                .stroke(
-                    LinearGradient(colors: [.clear, .white.opacity(0.35), .clear], startPoint: .leading, endPoint: .trailing),
-                    style: StrokeStyle(lineWidth: 3, lineCap: .round)
-                )
-                .frame(width: size - 8, height: size - 8)
-            Circle()
-                .trim(from: 0.55, to: 0.68)
-                .stroke(AppTheme.dynamicAccent.opacity(0.7), style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .frame(width: size - 8, height: size - 8)
-
-            // Label: an accent disc with the app icon on it, turning with
-            // the record. The disc is there so the label reads as a
-            // label even where the icon art is dark.
-            ZStack {
-                Circle()
-                    .fill(AppTheme.dynamicAccentGradient)
-                // The icon when it loads; a waveform glyph when it doesn't
-                // (it drew nothing in the simulator screenshot runs).
-                if let icon = UIImage(named: "AppIconDisplay") {
-                    Image(uiImage: icon)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: size * 0.3, height: size * 0.3)
-                        .clipShape(RoundedRectangle(cornerRadius: size * 0.07, style: .continuous))
-                        .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
-                } else {
-                    Image(systemName: "waveform")
-                        .font(.system(size: size * 0.14, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-            }
-            .frame(width: size * 0.42, height: size * 0.42)
-            .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 1))
-        }
-        .frame(width: size, height: size)
-    }
-}
-
-// MARK: - LaunchStepRow
-
-private struct LaunchStepRow: View {
-    enum StepState { case pending, active, done }
-
-    let title: String
-    let detail: String?
-    let state: StepState
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            ZStack {
-                switch state {
-                case .done:
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(AppTheme.dynamicAccent)
-                        .transition(.scale.combined(with: .opacity))
-                case .active:
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(AppTheme.dynamicAccent)
-                case .pending:
-                    Circle()
-                        .strokeBorder(AppTheme.textSecondary.opacity(0.4), lineWidth: 1.5)
-                        .frame(width: 18, height: 18)
-                }
-            }
-            .frame(width: 22, height: 22)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.subheadline.weight(state == .pending ? .regular : .semibold))
-                    .foregroundStyle(state == .pending ? AppTheme.textSecondary : AppTheme.textPrimary)
-                    .contentTransition(.numericText())
-                if let detail {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.textSecondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-// MARK: - LaunchStatPill
-
-private struct LaunchStatPill: View {
-    let icon: String
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(AppTheme.dynamicAccent)
-            Text(text)
-                .font(AppTheme.monoFont(size: 13).weight(.semibold))
-                .foregroundStyle(AppTheme.textPrimary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .adaptiveGlass(in: Capsule(), fallback: AppTheme.surface.opacity(0.6))
     }
 }

@@ -25,7 +25,7 @@ struct DeletedPlaylistsView: View {
                 .buttonStyle(.plain)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: store.entries.map(\.id))
+        .animation(LumiMotion.fade(0.2), value: store.entries.map(\.id))
     }
 
     /// Days left before the 30-day purge, as a draining ring.

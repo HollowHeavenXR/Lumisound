@@ -13,7 +13,7 @@ struct ConfettiOverlay: View {
     var body: some View {
         GeometryReader { geo in
             if isActive, let startDate {
-                TimelineView(.animation) { timeline in
+                TimelineView(.animation(minimumInterval: LumiMotion.frame)) { timeline in
                     let elapsed = timeline.date.timeIntervalSince(startDate)
                     ZStack {
                         ForEach(0..<Self.pieceCount, id: \.self) { i in

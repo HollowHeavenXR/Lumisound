@@ -27,7 +27,7 @@ struct AppearanceStylePicker: View {
         let selected = appearance.styleID == style.id
         let accent = t.accentOverride?.color ?? AppTheme.dynamicAccent
         return Button {
-            withAnimation(.easeInOut(duration: 0.2)) { appearance.select(style: style.id) }
+            withAnimation(LumiMotion.fade(0.2)) { appearance.select(style: style.id) }
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack {

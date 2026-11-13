@@ -97,7 +97,7 @@ struct AccentColorPickerView: View {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(SocialAccentPalette.swatches) { swatch in
                     Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        withAnimation(LumiMotion.snap) {
                             selectedHex = swatch.hex
                         }
                     } label: {

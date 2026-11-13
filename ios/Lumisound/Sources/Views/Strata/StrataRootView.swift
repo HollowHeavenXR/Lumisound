@@ -141,7 +141,7 @@ struct StrataRootView: View {
             Spacer()
         }
         .padding(.top, 56)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: toastCenter.current)
+        .animation(LumiMotion.settle, value: toastCenter.current)
         .zIndex(10)
     }
 

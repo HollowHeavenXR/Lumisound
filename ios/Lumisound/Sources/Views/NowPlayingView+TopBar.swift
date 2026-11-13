@@ -86,7 +86,7 @@ extension NowPlayingView {
             ForEach(NowPlayingDisplayMode.allCases) { mode in
                 Button {
                     selectHaptic.selectionChanged()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    withAnimation(LumiMotion.snap) {
                         displayMode = mode
                     }
                 } label: {
@@ -105,7 +105,7 @@ extension NowPlayingView {
         }
         .padding(3)
         .adaptiveGlass(in: Capsule(style: .continuous), fallback: AppTheme.surface.opacity(0.6))
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: displayMode)
+        .animation(LumiMotion.snap, value: displayMode)
     }
 
     /// Overflow menu — sleep timer (previously only reachable once already
@@ -256,7 +256,7 @@ extension NowPlayingView {
                 label: displayMode == .lyrics ? "Show Artwork" : "Show Lyrics",
                 isActive: displayMode == .lyrics
             ) {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                withAnimation(LumiMotion.snap) {
                     displayMode = displayMode == .lyrics ? .artwork : .lyrics
                 }
             }
@@ -328,14 +328,14 @@ extension NowPlayingView {
         }
         .buttonStyle(PressableButtonStyle())
         .accessibilityLabel(label)
-        .animation(.easeInOut(duration: 0.18), value: isActive)
+        .animation(LumiMotion.fade(0.18), value: isActive)
     }
 
     /// Selects a panel and scrolls down to it (see `scrollContent`'s
     /// `panelScrollRequest` handler).
     func showPanel(_ panel: NowPlayingPanel) {
         selectHaptic.selectionChanged()
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+        withAnimation(LumiMotion.settle) {
             selectedPanel = panel
         }
         panelScrollRequest += 1
@@ -352,7 +352,7 @@ extension NowPlayingView {
             HStack(spacing: 8) {
                 actionPill(icon: "dot.radiowaves.left.and.right", label: "Radio", isActive: player.autoRadioEnabled) {
                     selectHaptic.selectionChanged()
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                    withAnimation(LumiMotion.snap) {
                         player.autoRadioEnabled.toggle()
                     }
                 }
@@ -409,6 +409,6 @@ extension NowPlayingView {
             }
         }
         .adaptiveGlass(in: Capsule(style: .continuous), fallback: AppTheme.surface.opacity(isActive ? 0 : 0.7))
-        .animation(.easeInOut(duration: 0.18), value: isActive)
+        .animation(LumiMotion.fade(0.18), value: isActive)
     }
 }

@@ -46,14 +46,14 @@ extension NowPlayingView {
         // ID immediately used to pop the new artwork in instantly before the fade-out
         // animation had a chance to play, producing a jarring flash on every transition
         // (and especially during crossfade, where the swap happens mid-playback).
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(LumiMotion.glide(0.15)) {
             artworkOpacity = 0
             artworkScale = 0.92
         }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 150_000_000)
             artworkAnimationID = player.currentSong?.id ?? UUID().uuidString
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.65)) {
+            withAnimation(LumiMotion.settle) {
                 artworkOpacity = 1
                 artworkScale = 1.0
             }

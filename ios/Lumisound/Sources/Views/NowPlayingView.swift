@@ -165,7 +165,7 @@ struct NowPlayingView: View {
     @State var extractedPalette: ArtworkPalette?
 
     // Every built-in/custom artwork style wraps its `body` in
-    // `TimelineView(.animation)` (see ArtworkClock's header comment), which
+    // `TimelineView(.animation(minimumInterval: LumiMotion.frame))` (see ArtworkClock's header comment), which
     // schedules genuine per-frame redraws — SwiftUI does NOT stop delivering
     // those just because this view isn't the front-most tab: `ContentView`'s
     // root `TabView` keeps all 5 of its tagged children instantiated for as
@@ -481,11 +481,11 @@ struct PulseModifier: ViewModifier {
     let isPlaying: Bool
 
     func body(content: Content) -> some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { timeline in
+        TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !isPlaying)) { timeline in
             let phase = ArtworkClock.pingPong(timeline.date, legDuration: 1.8)
             content
                 .scaleEffect(isPlaying ? 1.0 + 0.022 * phase : 1.0)
-                .animation(.easeOut(duration: 0.4), value: isPlaying)
+                .animation(LumiMotion.glide(0.4), value: isPlaying)
         }
     }
 }

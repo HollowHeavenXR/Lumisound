@@ -65,7 +65,7 @@ extension NowPlayingView {
         let scale = screenStyle.transportScale
         return Button {
             playHaptic.impactOccurred()
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+            withAnimation(LumiMotion.snap) {
                 player.togglePlayPause()
             }
         } label: {
@@ -183,6 +183,6 @@ extension NowPlayingView {
         .buttonStyle(PressableButtonStyle())
         .accessibilityLabel(label)
         .accessibilityValue(isActive ? "On" : "Off")
-        .animation(.easeInOut(duration: 0.2), value: isActive)
+        .animation(LumiMotion.fade(0.2), value: isActive)
     }
 }

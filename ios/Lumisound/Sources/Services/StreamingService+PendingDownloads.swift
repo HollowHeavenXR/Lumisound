@@ -90,6 +90,19 @@ extension StreamingService {
     /// since each successfully-imported job is deleted server-side as it's
     /// fetched (see /api/download/result's pending-download branch).
     @discardableResult
+    private static let lastDownloadActivityKey = "downloads.lastActivity"
+
+    /// Downloads were started in the last 24 h, so finished jobs may be waiting.
+    static var hasRecentDownloadActivity: Bool {
+        guard let d = UserDefaults.standard.object(forKey: lastDownloadActivityKey) as? Date else { return false }
+        return Date().timeIntervalSince(d) < 24 * 3600
+    }
+
+    static func noteDownloadActivity() {
+        UserDefaults.standard.set(Date(), forKey: lastDownloadActivityKey)
+    }
+
+    @discardableResult
     func reconcilePendingDownloads() async -> Int {
         await pendingDownloadsReconcileGate.run { [self] in
             await performReconcilePendingDownloads()

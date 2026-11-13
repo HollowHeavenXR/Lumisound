@@ -28,7 +28,7 @@ struct StrataScreenHost: View {
                             let target = Int(s.indexPositions[i])
                             await model.ensureLoaded(section: s, through: target, route: route, store: store)
                             if let row = model.items(of: s)[safe: target] {
-                                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(row.id, anchor: .top) }
+                                withAnimation(LumiMotion.glide(0.2)) { proxy.scrollTo(row.id, anchor: .top) }
                             }
                         }
                     }
@@ -187,7 +187,7 @@ struct StrataHead: View {
         VStack(alignment: .leading, spacing: 10) {
             if !store.path.isEmpty {
                 Button {
-                    _ = withAnimation(.easeInOut(duration: 0.28)) { store.path.removeLast() }
+                    _ = withAnimation(LumiMotion.fade(0.28)) { store.path.removeLast() }
                 } label: {
                     Label("Back", systemImage: "arrow.left")
                         .font(.system(size: t.typeScale[4], weight: .semibold))
@@ -679,7 +679,7 @@ struct StrataPress: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .opacity(configuration.isPressed ? 0.85 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(LumiMotion.glide(0.12), value: configuration.isPressed)
     }
 }
 

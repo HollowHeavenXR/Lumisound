@@ -102,7 +102,7 @@ struct UserMusicTrackRow: View {
                 .stroke(.white.opacity(0.05), lineWidth: 1)
         )
         .opacity(isDeleting ? 0.55 : 1)
-        .animation(.easeOut(duration: 0.2), value: isDeleting)
+        .animation(LumiMotion.glide(0.2), value: isDeleting)
         .contentShape(Rectangle())
         .onTapGesture { if !isDeleting { onPlay() } }
     }

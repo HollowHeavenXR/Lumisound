@@ -289,7 +289,7 @@ struct AlbumDetailView: View {
 
     private func layoutButton(columns target: Int, icon: String, label: String) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.2)) { columns = target }
+            withAnimation(LumiMotion.fade(0.2)) { columns = target }
         } label: {
             Image(systemName: icon)
                 .font(.caption.weight(.semibold))

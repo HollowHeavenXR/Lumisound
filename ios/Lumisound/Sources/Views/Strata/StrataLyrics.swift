@@ -65,7 +65,7 @@ struct StrataLyricsPanel: View {
                             .tracking(-0.4)
                             .foregroundStyle(i == current ? StrataPalette.ink : (i < current ? StrataPalette.inkFaint : StrataPalette.inkDim))
                             .scaleEffect(i == current ? 1.0 : 0.96, anchor: .leading)
-                            .animation(.easeOut(duration: 0.25), value: current)
+                            .animation(LumiMotion.glide(0.25), value: current)
                             .id(i)
                             .onTapGesture { if line.time > 0 { player.seek(to: line.time) } }
                     }
@@ -77,7 +77,7 @@ struct StrataLyricsPanel: View {
             .scrollIndicators(.hidden)
             .onChange(of: current) { _, i in
                 guard i >= 0 else { return }
-                withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(i, anchor: UnitPoint(x: 0, y: 0.3)) }
+                withAnimation(LumiMotion.fade(0.35)) { proxy.scrollTo(i, anchor: UnitPoint(x: 0, y: 0.3)) }
             }
         }
         .task(id: player.currentSong?.id) {

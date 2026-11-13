@@ -235,7 +235,7 @@ struct LumenArtistDetailView: View {
                             .foregroundStyle(LumenPalette.textSecondary)
                             .lineLimit(bioExpanded ? nil : 4)
                         Button(bioExpanded ? "Less" : "More") {
-                            withAnimation(.easeInOut) { bioExpanded.toggle() }
+                            withAnimation(LumiMotion.fade) { bioExpanded.toggle() }
                         }
                         .font(LumenType.headline(13))
                         .foregroundStyle(LumenPalette.accent)
@@ -382,10 +382,10 @@ struct LumenPlaylistDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if isEditing {
-                    Button("Done") { withAnimation { isEditing = false } }
+                    Button("Done") { withAnimation(LumiMotion.glide) { isEditing = false } }
                 } else {
                     LumiMenu {
-                        Button { withAnimation { isEditing = true } } label: { Label("Reorder & Remove", systemImage: "arrow.up.arrow.down") }
+                        Button { withAnimation(LumiMotion.glide) { isEditing = true } } label: { Label("Reorder & Remove", systemImage: "arrow.up.arrow.down") }
                         Button {
                             renameText = playlist.name
                             showRename = true

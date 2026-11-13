@@ -110,14 +110,14 @@ final class LumenAmbience: ObservableObject {
         guard song?.id != songID else { return }
         songID = song?.id
         guard let song else {
-            withAnimation(.easeInOut(duration: 1.2)) {
+            withAnimation(LumiMotion.fade(1.2)) {
                 primary = LumenPalette.iris
                 secondary = LumenPalette.azure
             }
             return
         }
         guard let palette = await ArtworkPaletteLoader.palette(for: song), songID == song.id else { return }
-        withAnimation(.easeInOut(duration: 1.4)) {
+        withAnimation(LumiMotion.fade(1.4)) {
             primary = palette.primary.lumenGlow()
             secondary = palette.secondary.lumenGlow(hueShift: 0.04)
         }
@@ -178,7 +178,7 @@ struct LumenBackdrop: View {
         .ignoresSafeArea()
         .onAppear {
             guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 16).repeatForever(autoreverses: true)) { drift = true }
+            withAnimation(LumiMotion.drift(16)) { drift = true }
         }
         .allowsHitTesting(false)
     }
@@ -235,7 +235,7 @@ struct LumenPressStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed ? scale : 1)
             .opacity(configuration.isPressed ? 0.82 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+            .animation(LumiMotion.snap, value: configuration.isPressed)
     }
 }
 
@@ -353,7 +353,7 @@ struct LumenSegmented<Option: Hashable>: View {
             ForEach(options, id: \.self) { option in
                 let selected = option == selection
                 Button {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { selection = option }
+                    withAnimation(LumiMotion.settle) { selection = option }
                 } label: {
                     Text(label(option))
                         .font(LumenType.headline(14))
@@ -582,7 +582,7 @@ struct LumenEqualizerGlyph: View {
     var height: CGFloat = 14
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !isAnimating)) { timeline in
+        TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !isAnimating)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             HStack(alignment: .bottom, spacing: 2) {
                 ForEach(0..<3, id: \.self) { i in
@@ -771,7 +771,7 @@ struct LumenSearchField: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(focused ? LumenPalette.accent.opacity(0.6) : LumenPalette.hairline, lineWidth: 1)
         )
-        .animation(.easeInOut(duration: 0.18), value: focused)
+        .animation(LumiMotion.fade(0.18), value: focused)
     }
 }
 

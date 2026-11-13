@@ -103,7 +103,7 @@ struct LumisoundApp: App {
                     .environmentObject(bluetoothBattery)
                     .environmentObject(listenRooms)
                     .opacity(showLaunch ? 0 : 1)
-                    .animation(.easeInOut(duration: 0.4), value: showLaunch)
+                    .animation(LumiMotion.fade(0.4), value: showLaunch)
 
                 if showLaunch {
                     LaunchView(isLoading: $showLaunch)
@@ -143,8 +143,8 @@ struct LumisoundApp: App {
                         .zIndex(2)
                 }
             }
-            .animation(.easeInOut(duration: 0.4), value: showLaunch)
-            .animation(.easeInOut(duration: 0.25), value: appLock.isUnlocked)
+            .animation(LumiMotion.fade(0.4), value: showLaunch)
+            .animation(LumiMotion.fade(0.25), value: appLock.isUnlocked)
             .preferredColorScheme(.dark)
             .onChange(of: scenePhase) { phase in
                 if phase == .inactive {
@@ -209,12 +209,15 @@ struct LumisoundApp: App {
                     // suspended app left a part-finished playlist with no trigger
                     // at all — the user had to force-quit and reopen, or wait for
                     // a background slot iOS may never grant.
-                    Task {
-                        await streaming.reconcilePendingDownloads()
-                        await TrackedPlaylistStore.shared.runAutoDownloads(
-                            streaming: streaming, library: libraryManager
-                        )
+                    // The background downloader no longer runs on every
+                    // return to the app: only a finished-download collection
+                    // when this app actually started downloads recently, and a
+                    // full pass only when the 15-hour schedule is due or the
+                    // last pass was interrupted (both cheap local checks).
+                    if StreamingService.hasRecentDownloadActivity {
+                        Task { await streaming.reconcilePendingDownloads() }
                     }
+                    TrackedPlaylistStore.shared.runIfDue(streaming: streaming, library: libraryManager)
                     // An announcement's window can open while the app is simply
                     // sitting suspended, which for a music app can be days — so
                     // relying on a cold launch alone would let a three-day
@@ -382,18 +385,15 @@ struct LumisoundApp: App {
                     // StreamingService+PendingDownloads) — the scenePhase ==
                     // .active handler covers returning to the foreground later,
                     // but that onChange doesn't fire for the very first launch.
-                    Task {
-                        await streaming.reconcilePendingDownloads()
-                        await TrackedPlaylistStore.shared.runAutoDownloads(
-                            streaming: streaming, library: libraryManager
-                        )
-                        // Keeps a long playlist progressing for as long as the
-                        // app stays open, instead of depending on iOS granting
-                        // background time. See startForegroundResumeLoop.
-                        TrackedPlaylistStore.shared.startForegroundResumeLoop(
-                            streaming: streaming, library: libraryManager
-                        )
+                    // Background downloader: collect finished jobs if any were
+                    // started recently, run a pass only if 15 h have passed (or
+                    // the last pass was interrupted), and arm the in-app 15-hour
+                    // timer. Manual runs: Settings > Downloads.
+                    if StreamingService.hasRecentDownloadActivity {
+                        Task { await streaming.reconcilePendingDownloads() }
                     }
+                    TrackedPlaylistStore.shared.runIfDue(streaming: streaming, library: libraryManager)
+                    TrackedPlaylistStore.shared.startScheduleTimer(streaming: streaming, library: libraryManager)
 
                     // If logged in, pull latest state from DB as primary storage source.
                     if account.isLoggedIn {

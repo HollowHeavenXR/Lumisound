@@ -357,10 +357,10 @@ struct ClassicContentView: View {
             .scaleEffect(tabPopScale)
             .offset(y: tabSlideOffset)
             .opacity(tabContentOpacity)
-            .animation(.easeInOut(duration: 0.18), value: selectedTab)
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: tabPopScale)
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: tabSlideOffset)
-            .animation(.easeInOut(duration: 0.15), value: tabContentOpacity)
+            .animation(LumiMotion.fade(0.18), value: selectedTab)
+            .animation(LumiMotion.snap, value: tabPopScale)
+            .animation(LumiMotion.snap, value: tabSlideOffset)
+            .animation(LumiMotion.fade(0.15), value: tabContentOpacity)
             // Crash-context breadcrumb — "what was the user doing right before
             // the crash" is the single most useful fact for diagnosing reports
             // like "it just freezes/crashes sometimes". See AppLogger.breadcrumb.
@@ -479,7 +479,7 @@ struct ClassicContentView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                     Spacer()
                 }
-                .animation(.spring(response: 0.4, dampingFraction: 0.75), value: bridgeHealth.showToast)
+                .animation(LumiMotion.settle, value: bridgeHealth.showToast)
                 .allowsHitTesting(false)
             }
 
@@ -489,7 +489,7 @@ struct ClassicContentView: View {
                     .padding(.top, 56)
                 Spacer()
             }
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: toastCenter.current)
+            .animation(LumiMotion.settle, value: toastCenter.current)
             .allowsHitTesting(false)
 
             // MARK: "Add an email address" prompt for accounts created before one
@@ -502,7 +502,7 @@ struct ClassicContentView: View {
                     .padding(.top, 56)
                 Spacer()
             }
-            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: account.needsEmail)
+            .animation(LumiMotion.settle, value: account.needsEmail)
         }
         .acoustIDConfirmSheet()
         .clipMakerSheet()
@@ -730,8 +730,8 @@ struct CustomTabBar: View {
         // Cross-fades between the two very different layouts instead of a
         // hard cut — covers both an explicit mode switch and mini-player
         // mode silently falling back to the tab row when playback stops.
-        .animation(.easeInOut(duration: 0.25), value: navbarMode)
-        .animation(.easeInOut(duration: 0.25), value: player.currentSong == nil)
+        .animation(LumiMotion.fade(0.25), value: navbarMode)
+        .animation(LumiMotion.fade(0.25), value: player.currentSong == nil)
         // Swipe up/down on the bar itself as a faster alternative to the
         // Settings/Now Playing toggle for switching Navbar Mode.
         // `.simultaneousGesture` (not `.gesture`) deliberately doesn't
@@ -883,7 +883,7 @@ struct CustomTabBar: View {
                 }
             }
             .buttonStyle(PressableButtonStyle())
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: player.isPlaying)
+            .animation(LumiMotion.snap, value: player.isPlaying)
 
             Button {
                 player.userSkipToNext()
@@ -900,7 +900,7 @@ struct CustomTabBar: View {
     private func tabButton(_ spec: TabSpec) -> some View {
         let isSelected = selectedTab == spec.tag
         Button {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+            withAnimation(LumiMotion.settle) {
                 selectedTab = spec.tag
             }
         } label: {
@@ -949,7 +949,7 @@ struct CustomTabBar: View {
                     Capsule()
                         .fill(AppTheme.dynamicAccent.opacity(0.18))
                         .matchedGeometryEffect(id: "selectedTabCapsule", in: selectionNamespace)
-                        .animation(.spring(response: 0.32, dampingFraction: 0.78), value: selectedTab)
+                        .animation(LumiMotion.settle, value: selectedTab)
                 }
             }
             .contentShape(Rectangle())
@@ -1022,7 +1022,7 @@ struct CustomTabBar: View {
                     // MiniPlayerBar jumping to the Playing tab). Still needed
                     // with `glassEffectID` — the morph only animates inside an
                     // active animation transaction, same as before.
-                    .animation(.spring(response: 0.32, dampingFraction: 0.78), value: selectedTab)
+                    .animation(LumiMotion.settle, value: selectedTab)
             }
         }
     }

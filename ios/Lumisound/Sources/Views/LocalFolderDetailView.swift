@@ -585,7 +585,7 @@ struct LocalFolderDetailView: View {
 
     private func layoutButton(columns target: Int, icon: String, label: String) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.2)) { columns = target }
+            withAnimation(LumiMotion.fade(0.2)) { columns = target }
         } label: {
             Image(systemName: icon)
                 .font(.caption.weight(.semibold))
@@ -635,11 +635,11 @@ struct LocalFolderDetailView: View {
                                 : AppTheme.textSecondary
                         )
                         .transition(.scale.combined(with: .opacity))
-                        .animation(.spring(response: 0.25, dampingFraction: 0.6), value: selectedIDs)
+                        .animation(LumiMotion.snap, value: selectedIDs)
                 }
                 SongRow(song: song, isCurrent: player.currentSong?.id == song.id, subtitle: subtitle)
             }
-            .animation(.easeInOut(duration: 0.15), value: isSelecting)
+            .animation(LumiMotion.fade(0.15), value: isSelecting)
         }
         .buttonStyle(.plain)
         .listRowBackground(

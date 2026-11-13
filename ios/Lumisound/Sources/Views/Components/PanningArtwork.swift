@@ -165,7 +165,7 @@ struct SwiftUIPanningArtwork: View {
         // onAppear: the animated Now Playing styles redraw this every frame,
         // and a re-render froze that animation mid-slide (the cover stopped
         // moving until the screen was reopened). Same easing and pace.
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !pans)) { timeline in
+        TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !pans)) { timeline in
             let phase = pans ? CGFloat(ArtworkClock.pingPong(timeline.date, legDuration: leg)) : 0.5
             let shift: CGFloat = travel / 2 - travel * phase
             Image(uiImage: image)

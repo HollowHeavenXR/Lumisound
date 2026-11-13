@@ -33,7 +33,7 @@ struct BackgroundSettingsView: View {
                         let on = backgroundSource == source.rawValue
                         Button {
                             UISelectionFeedbackGenerator().selectionChanged()
-                            withAnimation(.easeInOut(duration: 0.2)) { backgroundSource = source.rawValue }
+                            withAnimation(LumiMotion.fade(0.2)) { backgroundSource = source.rawValue }
                         } label: {
                             VStack(spacing: 6) {
                                 Image(systemName: source == .photos ? "photo.stack" : source == .sonic ? "waveform.circle" : "sparkles")
@@ -88,7 +88,7 @@ struct BackgroundSettingsView: View {
                                 .background(bg.isEnabled && bg.isActive ? AppTheme.error : AppTheme.dynamicAccent, in: Capsule())
                         }
                         .buttonStyle(.plain)
-                        .animation(.easeInOut(duration: 0.2), value: bg.isEnabled && bg.isActive)
+                        .animation(LumiMotion.fade(0.2), value: bg.isEnabled && bg.isActive)
                     }
                 }
                 .padding(.vertical, 4)

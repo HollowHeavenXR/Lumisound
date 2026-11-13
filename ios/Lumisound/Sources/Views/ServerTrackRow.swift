@@ -109,7 +109,7 @@ struct ServerTrackRow: View {
             }
             .buttonStyle(PressableButtonStyle())
             .disabled(isDownloading || isDownloaded)
-            .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isDownloaded)
+            .animation(LumiMotion.settle, value: isDownloaded)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

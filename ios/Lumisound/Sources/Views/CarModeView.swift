@@ -152,7 +152,7 @@ struct CarModeView: View {
                 }
             }
             .buttonStyle(.plain)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: player.isPlaying)
+            .animation(LumiMotion.snap, value: player.isPlaying)
 
             Spacer()
 

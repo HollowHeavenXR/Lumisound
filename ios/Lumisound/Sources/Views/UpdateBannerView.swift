@@ -45,7 +45,7 @@ struct UpdateBannerView: View {
             .buttonStyle(.plain)
 
             Button {
-                withAnimation(.easeOut(duration: 0.2)) {
+                withAnimation(LumiMotion.glide(0.2)) {
                     isDismissed = true
                 }
             } label: {

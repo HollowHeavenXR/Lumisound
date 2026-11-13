@@ -124,7 +124,7 @@ extension StreamSearchView {
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: trendingQueries.isEmpty)
+        .animation(LumiMotion.fade(0.25), value: trendingQueries.isEmpty)
     }
 
     /// Header row: flame label, time-window switcher, refresh button, and a

@@ -359,7 +359,7 @@ async fn validate_key(State(st): State<AppState>, u: User) -> ApiResult<Json<Val
         return Ok(Json(json!({"status": "invalid"})));
     }
     let (code, data) = yt_probe(&st, &key).await;
-    let mut out = json!({"quota_units_used_today": st.yt.usage_today(&key), "quota_units_used_today_is_estimate": true, "quota_cooldown_active": st.yt.cooling_down(&key)});
+    let mut out = json!({"quota_units_used_today": st.yt.usage_today(&key), "quota_units_used_today_is_estimate": true, "quota_cooldown_active": st.yt.cooling_down(&key), "quota_daily_units": crate::youtube::DAILY_UNITS, "quota_breakdown": st.yt.usage_breakdown(&key)});
     let reason = data["error"]["errors"][0]["reason"].as_str().unwrap_or("");
     let status = if (200..300).contains(&code) {
         "valid"

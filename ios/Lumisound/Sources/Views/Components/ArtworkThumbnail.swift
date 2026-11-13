@@ -105,7 +105,7 @@ struct ArtworkThumbnail: View {
             isLoading = true
             let loaded = await ArtworkService.shared.loadThumbnail(for: song, pixelSize: pixelSize)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.22)) {
+            withAnimation(LumiMotion.glide(0.22)) {
                 image = loaded
             }
             isLoading = false

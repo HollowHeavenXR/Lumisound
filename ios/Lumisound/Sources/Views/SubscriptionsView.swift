@@ -78,12 +78,12 @@ struct SubscriptionsView: View {
                 playlistShelf
             }
         }
-        .animation(.easeInOut(duration: 0.22), value: shelf)
-        .animation(.easeInOut(duration: 0.22), value: showAdd)
+        .animation(LumiMotion.fade(0.22), value: shelf)
+        .animation(LumiMotion.fade(0.22), value: showAdd)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
-                    withAnimation { showAdd.toggle() }
+                    withAnimation(LumiMotion.glide) { showAdd.toggle() }
                 } label: {
                     Image(systemName: showAdd ? "xmark.circle.fill" : "plus.circle.fill")
                         .font(.system(size: 20))

@@ -114,7 +114,7 @@ struct LumenNowPlayingView: View {
     }
 
     private func close() {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) {
+        withAnimation(LumiMotion.settle) {
             isPresented = false
             dismissOffset = 0
         }
@@ -135,7 +135,7 @@ struct LumenNowPlayingView: View {
                         .id(song.id)
                         .transition(.opacity)
                 }
-                .animation(.easeInOut(duration: 0.8), value: song.id)
+                .animation(LumiMotion.fade(0.8), value: song.id)
             }
             LinearGradient(colors: [.black.opacity(0.1), .black.opacity(0.35), .black.opacity(0.75)],
                            startPoint: .top, endPoint: .bottom)
@@ -156,7 +156,7 @@ struct LumenNowPlayingView: View {
                 if value.translation.height > 140 || value.predictedEndTranslation.height > 320 {
                     close()
                 } else {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { dismissOffset = 0 }
+                    withAnimation(LumiMotion.settle) { dismissOffset = 0 }
                 }
             }
     }
@@ -247,7 +247,7 @@ struct LumenNowPlayingView: View {
 
     private func setStage(_ new: Stage) {
         UISelectionFeedbackGenerator().selectionChanged()
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+        withAnimation(LumiMotion.settle) {
             stage = (stage == new) ? .artwork : new
         }
     }
@@ -293,8 +293,8 @@ struct LumenNowPlayingView: View {
             .shadow(color: LumenAmbience.shared.primary.opacity(player.isPlaying ? 0.45 : 0.2), radius: 40, y: 20)
             .offset(x: artworkSwipe)
             .rotationEffect(.degrees(Double(artworkSwipe) / 40))
-            .animation(.spring(response: 0.5, dampingFraction: 0.75), value: player.isPlaying)
-            .animation(.easeInOut(duration: 0.3), value: song.id)
+            .animation(LumiMotion.settle, value: player.isPlaying)
+            .animation(LumiMotion.fade(0.3), value: song.id)
             .frame(maxWidth: .infinity)
             .accessibilityLabel("Artwork for \(song.displayName). Swipe left or right to change track.")
     }
@@ -309,7 +309,7 @@ struct LumenNowPlayingView: View {
                 let dx = value.translation.width
                 if dx < -90 { haptic.impactOccurred(); player.userSkipToNext() }
                 else if dx > 90 { haptic.impactOccurred(); player.skipToPrevious() }
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) { artworkSwipe = 0 }
+                withAnimation(LumiMotion.settle) { artworkSwipe = 0 }
             }
     }
 
@@ -557,7 +557,7 @@ struct LumenScrubber: View {
                             dragFraction = nil
                         }
                 )
-                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: dragging)
+                .animation(LumiMotion.snap, value: dragging)
             }
             .frame(height: 24)
 
@@ -612,7 +612,7 @@ struct LumenVolumeSlider: View {
                         }
                         .onEnded { _ in dragging = false }
                 )
-                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: dragging)
+                .animation(LumiMotion.snap, value: dragging)
             }
             .frame(height: 20)
             Image(systemName: "speaker.wave.3.fill")
@@ -715,7 +715,7 @@ struct LumenLyricsPanel: View {
                                 .onTapGesture {
                                     if isSynced { player.seek(to: line.time) }
                                 }
-                                .animation(.easeInOut(duration: 0.3), value: active)
+                                .animation(LumiMotion.fade(0.3), value: active)
                         }
                     }
                     .padding(.vertical, 120)
@@ -726,7 +726,7 @@ struct LumenLyricsPanel: View {
                                      startPoint: .top, endPoint: .bottom))
                 .onChange(of: active) { _, new in
                     guard let new else { return }
-                    withAnimation(.easeInOut(duration: 0.45)) { proxy.scrollTo(new, anchor: .center) }
+                    withAnimation(LumiMotion.fade(0.45)) { proxy.scrollTo(new, anchor: .center) }
                 }
                 .onAppear {
                     if let active { proxy.scrollTo(active, anchor: .center) }

@@ -88,7 +88,7 @@ struct NowPlayingCustomizeSheet: View {
     private func select(_ id: String) {
         haptic.selectionChanged()
         selection = id
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(LumiMotion.fade(0.25)) {
             onSelectArtworkStyle(id)
         }
     }
@@ -189,7 +189,7 @@ struct NowPlayingCustomizeSheet: View {
         .buttonStyle(PressableButtonStyle())
         .accessibilityLabel(name)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .animation(.easeInOut(duration: 0.18), value: isSelected)
+        .animation(LumiMotion.fade(0.18), value: isSelected)
     }
 
     private func actionTile(name: String, icon: String, dashed: Bool, action: @escaping () -> Void) -> some View {
@@ -229,7 +229,7 @@ struct NowPlayingCustomizeSheet: View {
                 ForEach(SeekerStyle.allCases) { style in
                     optionChip(name: style.displayName, icon: style.iconName, isSelected: seekerStyle == style) {
                         haptic.selectionChanged()
-                        withAnimation(.easeInOut(duration: 0.2)) { seekerStyle = style }
+                        withAnimation(LumiMotion.fade(0.2)) { seekerStyle = style }
                     }
                 }
             }
@@ -253,7 +253,7 @@ struct NowPlayingCustomizeSheet: View {
                 ForEach(PlaytimeCounterStyle.allCases) { style in
                     optionChip(name: style.displayName, icon: style.iconName, isSelected: playtimeCounterStyle == style) {
                         haptic.selectionChanged()
-                        withAnimation(.easeInOut(duration: 0.2)) { playtimeCounterStyle = style }
+                        withAnimation(LumiMotion.fade(0.2)) { playtimeCounterStyle = style }
                     }
                 }
             }
@@ -305,6 +305,6 @@ struct NowPlayingCustomizeSheet: View {
         .buttonStyle(PressableButtonStyle())
         .accessibilityLabel(name)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .animation(.easeInOut(duration: 0.18), value: isSelected)
+        .animation(LumiMotion.fade(0.18), value: isSelected)
     }
 }

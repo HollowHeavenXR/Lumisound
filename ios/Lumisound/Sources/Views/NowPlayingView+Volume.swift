@@ -109,7 +109,7 @@ private struct AmbientEqualizerBars: View {
     var body: some View {
         // Capped at 30fps: decorative bars gain nothing from 120Hz ProMotion
         // redraws, which were costing CPU for the whole time Now Playing is open.
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isPlaying)) { timeline in
+        TimelineView(.animation(minimumInterval: LumiMotion.frame, paused: !isPlaying)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             HStack(spacing: 3) {
                 ForEach(0..<barCount, id: \.self) { i in
@@ -121,7 +121,7 @@ private struct AmbientEqualizerBars: View {
                 }
             }
             .frame(height: 18, alignment: .center)
-            .animation(.easeInOut(duration: 0.2), value: isPlaying)
+            .animation(LumiMotion.fade(0.2), value: isPlaying)
         }
     }
 }

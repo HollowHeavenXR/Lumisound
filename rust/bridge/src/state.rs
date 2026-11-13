@@ -116,7 +116,7 @@ impl AppState {
             yt: YouTube::new(http.clone()),
             tags: TagCache::load(tags_path),
             live: LiveHub::default(),
-            search_cache: TtlCache::new(Duration::from_secs(3600), 500),
+            search_cache: TtlCache::new(Duration::from_secs(6 * 3600), 5000),
             stream_urls: TtlCache::new(Duration::from_secs(5 * 3600), 20_000),
             stream_failures: TtlCache::new(Duration::from_secs(60), 5000),
             stream_resolving: DashMap::new(),

@@ -205,9 +205,18 @@ extension AudioPlayerManager {
                                                        bassBoostEnabled: s.bassBoostEnabled, bassBoostGain: s.bassBoostGain),
                             enabled: s.equalizerEnabled || s.bassBoostEnabled,
                             loudnessMatch: s.eqLoudnessMatch ?? true)
-        let wet = s.reverbEnabled ? min(max(s.reverbWetDryMix, 0), 100) / 100 : 0
-        Self.rust.setEffects(reverbWet: wet, reverbPreset: s.reverbPreset.rawValue,
+        // The active LumiFX effect may bring its own room and character; it
+        // sits on top of (never overwrites) the listener's reverb setting.
+        let fx = AudioEffectsService.fx(s.activeEffectID)
+        var wet = s.reverbEnabled ? min(max(s.reverbWetDryMix, 0), 100) / 100 : 0
+        var room = s.reverbPreset.rawValue
+        if let fxWet = fx?.reverbWet, let fxRoom = fx?.reverbPreset {
+            wet = min(max(fxWet, 0), 100) / 100
+            room = fxRoom
+        }
+        Self.rust.setEffects(reverbWet: wet, reverbPreset: room,
                              mono: s.monoAudioEnabled == true, nightMode: s.nightModeEnabled == true)
+        Self.rust.setCharacter(character: fx?.character ?? AudioEffectsService.neutralCharacter)
         applyRustModulation()
         applyRustSpatial()
     }

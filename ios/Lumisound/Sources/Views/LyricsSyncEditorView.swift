@@ -129,7 +129,7 @@ struct LyricsSyncEditorView: View {
             .filter { !$0.isEmpty }
         guard !lines.isEmpty else { return }
         rows = lines.map { LyricRow(text: $0, timestamp: nil) }
-        withAnimation { showPasteView = false }
+        withAnimation(LumiMotion.glide) { showPasteView = false }
     }
 
     // MARK: - Editor view
@@ -156,7 +156,7 @@ struct LyricsSyncEditorView: View {
                 }
                 .onChange(of: currentHighlightIndex) { newIdx in
                     guard let idx = newIdx else { return }
-                    withAnimation(.easeInOut(duration: 0.3)) {
+                    withAnimation(LumiMotion.fade(0.3)) {
                         proxy.scrollTo(idx, anchor: .center)
                     }
                 }
@@ -234,7 +234,7 @@ struct LyricsSyncEditorView: View {
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .scaleEffect(isCurrent ? 1.03 : 1.0, anchor: .leading)
-                .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isCurrent)
+                .animation(LumiMotion.snap, value: isCurrent)
 
             // Clear individual stamp
             if row.timestamp != nil {
@@ -257,7 +257,7 @@ struct LyricsSyncEditorView: View {
             rows[index].timestamp = progress.position
         }
         .id(index)
-        .animation(.easeInOut(duration: 0.15), value: isCurrent)
+        .animation(LumiMotion.fade(0.15), value: isCurrent)
     }
 
     // MARK: - Action bar
@@ -266,7 +266,7 @@ struct LyricsSyncEditorView: View {
         HStack(spacing: 14) {
             // Reset all timestamps
             Button {
-                withAnimation {
+                withAnimation(LumiMotion.glide) {
                     for i in rows.indices { rows[i].timestamp = nil }
                 }
             } label: {
@@ -350,16 +350,16 @@ struct LyricsSyncEditorView: View {
             let filename  = sanitizeFilename(song.id) + ".lrc"
             let fileURL   = lyricsDir.appendingPathComponent(filename)
             try lrcContent.write(to: fileURL, atomically: true, encoding: .utf8)
-            withAnimation { saveStatus = .saved }
+            withAnimation(LumiMotion.glide) { saveStatus = .saved }
             Task {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                withAnimation { saveStatus = .idle }
+                withAnimation(LumiMotion.glide) { saveStatus = .idle }
             }
         } catch {
-            withAnimation { saveStatus = .failed }
+            withAnimation(LumiMotion.glide) { saveStatus = .failed }
             Task {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                withAnimation { saveStatus = .idle }
+                withAnimation(LumiMotion.glide) { saveStatus = .idle }
             }
         }
     }

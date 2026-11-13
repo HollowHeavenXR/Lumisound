@@ -113,14 +113,14 @@ struct CustomScrubberView: View {
                         .fill(fillShading)
                         .frame(width: geo.size.width * CGFloat(progress), height: height)
                         .shadow(color: glowColor.opacity(glowIntensity), radius: 4 + height)
-                        .animation(.easeOut(duration: 0.15), value: progress)
+                        .animation(LumiMotion.glide(0.15), value: progress)
 
                     if showThumb {
                         Circle()
                             .fill(colorMode == .monochrome ? Color.white : AppTheme.dynamicAccent)
                             .frame(width: height + 10, height: height + 10)
                             .offset(x: max(0, geo.size.width * CGFloat(progress) - (height + 10) / 2))
-                            .animation(.easeOut(duration: 0.15), value: progress)
+                            .animation(LumiMotion.glide(0.15), value: progress)
                     }
                 }
                 .frame(height: max(24, height + 12))

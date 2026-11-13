@@ -99,7 +99,7 @@ struct SongRow: View {
                 .contentShape(Rectangle())
                 // Animate the "now playing" highlight (accent text/background/border)
                 // transitioning in or out, instead of snapping instantly.
-                .animation(.easeInOut(duration: 0.25), value: isCurrent)
+                .animation(LumiMotion.fade(0.25), value: isCurrent)
                 .contextMenu {
                     SongContextMenuContent(song: song)
                 }
@@ -401,7 +401,7 @@ struct SongGridCell: View {
         )
         // Animate the "now playing" highlight (accent text/badge) transitioning
         // in or out, instead of snapping instantly.
-        .animation(.easeInOut(duration: 0.25), value: isCurrent)
+        .animation(LumiMotion.fade(0.25), value: isCurrent)
         .contextMenu {
             SongContextMenuContent(song: song)
         }
@@ -422,7 +422,7 @@ private struct WaveformIcon: View {
                     .fill(AppTheme.textPrimary)
                     .frame(width: 3, height: animating ? 14 * heights[i] : 4)
                     .animation(
-                        .easeInOut(duration: 0.55)
+                        LumiMotion.fade(0.55)
                             .repeatForever(autoreverses: true)
                             .delay(delays[i]),
                         value: animating

@@ -35,6 +35,9 @@ extension StreamingService {
         destinationFolderName: String? = nil,
         reportExistingAsSkipped: Bool = false
     ) async throws -> URL {
+        // Marks recent download activity so returning to the app collects
+        // finished background jobs (and only then).
+        StreamingService.noteDownloadActivity()
         // Single chokepoint every download path in the app funnels through
         // (foreground downloads, background job reconciliation, tracked
         // playlist auto-download), so gating Wi-Fi Only Downloads here

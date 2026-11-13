@@ -82,7 +82,7 @@ struct ClassicAccountView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 24)
-            .animation(.spring(response: 0.35, dampingFraction: 0.86), value: deckRaw)
+            .animation(LumiMotion.settle, value: deckRaw)
         }
         .background(GalleryBackgroundView().ignoresSafeArea())
         .safeAreaInset(edge: .bottom) { MiniPlayerBar() }
@@ -215,10 +215,10 @@ struct ClassicAccountView: View {
             if let id = account.currentUser?.id {
                 Button {
                     UIPasteboard.general.string = id
-                    withAnimation { copiedID = true }
+                    withAnimation(LumiMotion.glide) { copiedID = true }
                     Task {
                         try? await Task.sleep(nanoseconds: 1_800_000_000)
-                        withAnimation { copiedID = false }
+                        withAnimation(LumiMotion.glide) { copiedID = false }
                     }
                 } label: {
                     HStack(spacing: 8) {
@@ -606,7 +606,7 @@ struct ClassicAccountView: View {
                     Slider(value: $aiDJ.pitchMultiplier, in: 0.5...2.0, step: 0.02).tint(AppTheme.dynamicAccent)
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: aiDJ.isEnabled)
+            .animation(LumiMotion.fade(0.2), value: aiDJ.isEnabled)
             footnote("AI DJ speaks a short line between tracks with an on-device voice. Only the two track titles and artists are sent to write it — never audio.")
         }
     }

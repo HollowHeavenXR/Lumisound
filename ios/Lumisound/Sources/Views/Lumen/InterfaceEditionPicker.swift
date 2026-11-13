@@ -18,7 +18,7 @@ struct InterfaceEditionPicker: View {
                 Button {
                     guard edition != selected else { return }
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    withAnimation(.easeInOut(duration: 0.35)) { editionRaw = edition.rawValue }
+                    withAnimation(LumiMotion.fade(0.35)) { editionRaw = edition.rawValue }
                 } label: {
                     VStack(alignment: .leading, spacing: 10) {
                         // The preview fills whatever width the card gets; it
@@ -272,7 +272,7 @@ struct LumenWelcomeSheet: View {
                     Button {
                         dismiss()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                            withAnimation { editionRaw = InterfaceEdition.classic.rawValue }
+                            withAnimation(LumiMotion.glide) { editionRaw = InterfaceEdition.classic.rawValue }
                         }
                     } label: {
                         Text("Keep the Classic interface")

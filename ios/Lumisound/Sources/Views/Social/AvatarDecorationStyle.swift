@@ -6,7 +6,7 @@ import SwiftUI
 // TOP of the avatar image itself — distinct from `AvatarFrameStyle`, which
 // draws AROUND the avatar's outer edge. Like that type, this is purely
 // cosmetic, purely client-rendered (a procedural particle system driven by
-// `TimelineView(.animation)` + `Canvas`, no image/Lottie assets, no
+// `TimelineView(.animation(minimumInterval: LumiMotion.frame))` + `Canvas`, no image/Lottie assets, no
 // server-stored pixels) and always tinted from the profile's own main/sub
 // accent colors rather than a fixed palette, so a decoration always matches
 // the rest of the profile. Validated server-side against this exact set
@@ -83,7 +83,7 @@ struct AvatarDecorationOverlay: View {
         if style == .none {
             EmptyView()
         } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            TimelineView(.animation(minimumInterval: LumiMotion.frame)) { timeline in
                 Canvas { context, size in
                     let time = timeline.date.timeIntervalSinceReferenceDate
                     for particle in particles {
@@ -333,7 +333,7 @@ struct AvatarDecorationPickerView: View {
         LazyVGrid(columns: columns, spacing: 16) {
             ForEach(AvatarDecorationStyle.allCases) { style in
                 Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.snap) {
                         selected = style
                     }
                 } label: {

@@ -105,7 +105,7 @@ struct LyricsView: View {
     private func scrollToCurrentLine(proxy: ScrollViewProxy, index: Int?, animated: Bool) {
         guard let idx = index, lines.indices.contains(idx) else { return }
         if animated {
-            withAnimation(.easeInOut(duration: 0.35)) {
+            withAnimation(LumiMotion.fade(0.35)) {
                 proxy.scrollTo(lines[idx].id, anchor: .center)
             }
         } else {
@@ -123,7 +123,7 @@ struct LyricsView: View {
             .foregroundStyle(isCurrent ? AppTheme.dynamicAccent : AppTheme.textSecondary)
             .multilineTextAlignment(.center)
             .scaleEffect(isCurrent ? 1.06 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isCurrent)
+            .animation(LumiMotion.snap, value: isCurrent)
             .frame(maxWidth: .infinity, alignment: .center)
             .contentShape(Rectangle())
     }

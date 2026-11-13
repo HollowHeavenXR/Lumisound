@@ -167,7 +167,7 @@ extension NowPlayingView {
                 Spacer(minLength: 0)
                 if !isCurrent {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        withAnimation(LumiMotion.fade(0.2)) {
                             player.removeSong(id: song.id)
                         }
                     } label: {
@@ -253,7 +253,7 @@ struct QueuePageView: View {
             .scrollContentBackground(.hidden)
             .background(Color.clear)
             .environment(\.editMode, $editMode)
-            .animation(.spring(response: 0.35, dampingFraction: 0.82), value: player.queue.map(\.id))
+            .animation(LumiMotion.settle, value: player.queue.map(\.id))
         }
         .alert("Save Queue as Playlist", isPresented: $showSaveAlert) {
             TextField("Playlist name", text: $saveName)
@@ -292,7 +292,7 @@ struct QueuePageView: View {
             .buttonStyle(.plain)
             if !player.queue.isEmpty {
                 Button {
-                    withAnimation { editMode = editMode == .active ? .inactive : .active }
+                    withAnimation(LumiMotion.glide) { editMode = editMode == .active ? .inactive : .active }
                 } label: {
                     Text(editMode == .active ? "Done" : "Reorder")
                         .font(.caption.weight(.semibold))
@@ -322,7 +322,7 @@ struct QueuePageView: View {
                             .fill(AppTheme.dynamicAccent.opacity(nowPlayingPulse ? 0.20 : 0.09))
                     )
                     .onAppear {
-                        withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
+                        withAnimation(LumiMotion.drift(1.1)) {
                             nowPlayingPulse = true
                         }
                     }
@@ -342,7 +342,7 @@ struct QueuePageView: View {
                     queueRow(song: song, leadingIcon: "person.fill")
                 }
                 .onMove { source, destination in
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.snap) {
                         player.moveManualQueueItem(from: source, to: destination)
                     }
                 }
@@ -362,7 +362,7 @@ struct QueuePageView: View {
                     queueRow(song: song, leadingIcon: nil)
                 }
                 .onMove { source, destination in
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.snap) {
                         player.moveAutoQueueItem(from: source, to: destination)
                     }
                 }
@@ -411,7 +411,7 @@ struct QueuePageView: View {
         .buttonStyle(.plain)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
-                withAnimation(.easeInOut(duration: 0.22)) {
+                withAnimation(LumiMotion.fade(0.22)) {
                     player.removeSong(id: song.id)
                 }
             } label: {

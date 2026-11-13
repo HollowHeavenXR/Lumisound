@@ -405,10 +405,10 @@ struct AccountView: View {
                     if let userID = account.currentUser?.id {
                         Button {
                             UIPasteboard.general.string = userID
-                            withAnimation { didCopyUserID = true }
+                            withAnimation(LumiMotion.glide) { didCopyUserID = true }
                             Task {
                                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                                withAnimation { didCopyUserID = false }
+                                withAnimation(LumiMotion.glide) { didCopyUserID = false }
                             }
                         } label: {
                             LabeledContent("User ID") {
@@ -747,7 +747,7 @@ struct AccountView: View {
                         .foregroundStyle(AppTheme.textSecondary)
                 }
                 .listRowBackground(tintedRowBackground(.blue))
-                .animation(.easeInOut(duration: 0.2), value: aiDJ.isEnabled)
+                .animation(LumiMotion.fade(0.2), value: aiDJ.isEnabled)
 
                 // MARK: Security Section
                 Section {

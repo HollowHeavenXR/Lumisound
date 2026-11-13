@@ -21,7 +21,7 @@ extension NowPlayingView {
             onEnded: { horizontal, vertical in
                 let isHorizontalSwipe = abs(horizontal) > abs(vertical) * 1.5 && abs(horizontal) > 60
 
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                withAnimation(LumiMotion.settle) {
                     artworkDragOffset = 0
                     artworkDragScale = 1.0
                 }

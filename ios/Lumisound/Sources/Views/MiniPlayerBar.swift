@@ -92,7 +92,7 @@ struct MiniPlayerBar: View {
                         .id(player.currentSong?.id)
                         .transition(.opacity)
                 }
-                .animation(.easeInOut(duration: 0.25), value: player.currentSong?.id)
+                .animation(LumiMotion.fade(0.25), value: player.currentSong?.id)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     selectedTab = 1
@@ -165,12 +165,12 @@ struct MiniPlayerBar: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .animation(.spring(response: 0.3, dampingFraction: 0.55), value: library.isFavorite(songID: song.id))
+                .animation(LumiMotion.snap, value: library.isFavorite(songID: song.id))
                 .onChange(of: library.isFavorite(songID: song.id)) { isFavorite in
                     guard isFavorite else { return }
                     heartBurstScale = 1.0
                     heartBurstOpacity = 0.8
-                    withAnimation(.easeOut(duration: 0.45)) {
+                    withAnimation(LumiMotion.glide(0.45)) {
                         heartBurstScale = 2.2
                         heartBurstOpacity = 0
                     }
@@ -199,7 +199,7 @@ struct MiniPlayerBar: View {
                 }
             }
             .buttonStyle(PressableButtonStyle())
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: player.isPlaying)
+            .animation(LumiMotion.snap, value: player.isPlaying)
 
             // Skip Next
             Button {

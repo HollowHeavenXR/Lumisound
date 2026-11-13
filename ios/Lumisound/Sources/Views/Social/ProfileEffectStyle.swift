@@ -72,7 +72,7 @@ struct ProfileEffectOverlay: View {
         if style == .none {
             EmptyView()
         } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            TimelineView(.animation(minimumInterval: LumiMotion.frame)) { timeline in
                 Canvas { context, size in
                     let time = timeline.date.timeIntervalSinceReferenceDate
                     if style == .aurora {
@@ -354,7 +354,7 @@ struct ProfileEffectPickerView: View {
         LazyVGrid(columns: columns, spacing: 14) {
             ForEach(ProfileEffectStyle.allCases) { style in
                 Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(LumiMotion.snap) {
                         selected = style
                     }
                 } label: {

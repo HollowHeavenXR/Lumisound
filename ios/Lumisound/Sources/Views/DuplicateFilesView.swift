@@ -33,7 +33,7 @@ struct DuplicateFilesView: View {
                         } onCleanUp: {
                             confirmGroup = group
                         } onIgnore: {
-                            withAnimation(.easeInOut(duration: 0.2)) { service.ignore(group) }
+                            withAnimation(LumiMotion.fade(0.2)) { service.ignore(group) }
                             ignoredCount = dupeIgnoredCount()
                         }
                     }
@@ -45,7 +45,7 @@ struct DuplicateFilesView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .animation(.easeInOut(duration: 0.22), value: service.groups.map(\.id))
+            .animation(LumiMotion.fade(0.22), value: service.groups.map(\.id))
         }
         .background(GalleryBackgroundView().ignoresSafeArea())
         .navigationTitle("Duplicate Finder")
@@ -53,7 +53,7 @@ struct DuplicateFilesView: View {
         .confirmationDialog("Clean Up This Group?", isPresented: Binding(get: { confirmGroup != nil }, set: { if !$0 { confirmGroup = nil } }), titleVisibility: .visible) {
             if let g = confirmGroup {
                 Button("Move \(g.removeIds.count) Cop\(g.removeIds.count == 1 ? "y" : "ies") to Recently Deleted", role: .destructive) {
-                    withAnimation { _ = service.resolve(g) }
+                    withAnimation(LumiMotion.glide) { _ = service.resolve(g) }
                     confirmGroup = nil
                 }
                 Button("Cancel", role: .cancel) { confirmGroup = nil }
@@ -63,7 +63,7 @@ struct DuplicateFilesView: View {
         }
         .confirmationDialog("Clean Up All Safe Groups?", isPresented: $showCleanAllConfirm, titleVisibility: .visible) {
             Button("Clean Up \(service.safeGroups.count) Group\(service.safeGroups.count == 1 ? "" : "s")", role: .destructive) {
-                withAnimation { _ = service.resolveAllSafe() }
+                withAnimation(LumiMotion.glide) { _ = service.resolveAllSafe() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -168,7 +168,7 @@ struct DuplicateFilesView: View {
     private func chip(_ kind: DupeKind?, _ title: String, count: Int) -> some View {
         let on = filter == kind
         return Button {
-            withAnimation(.easeInOut(duration: 0.15)) { filter = kind }
+            withAnimation(LumiMotion.fade(0.15)) { filter = kind }
         } label: {
             HStack(spacing: 5) {
                 if let kind { Image(systemName: kind.symbol).font(.caption2) }
@@ -220,7 +220,7 @@ struct DuplicateFilesView: View {
                             .foregroundStyle(AppTheme.textSecondary)
                     }
                     Spacer()
-                    Button("Undo") { withAnimation { service.undo(r) } }
+                    Button("Undo") { withAnimation(LumiMotion.glide) { service.undo(r) } }
                         .font(.caption.weight(.semibold))
                         .buttonStyle(.bordered)
                         .tint(AppTheme.dynamicAccent)
@@ -281,7 +281,7 @@ struct DupeGroupCard: View {
             VStack(spacing: 8) {
                 ForEach(group.copies, id: \.id) { copy in
                     DupeCopyRow(copy: copy, song: DuplicateFinderService.shared.song(copy.id), isKeeper: copy.id == group.keeperId) {
-                        withAnimation(.easeInOut(duration: 0.18)) { onKeep(copy.id) }
+                        withAnimation(LumiMotion.fade(0.18)) { onKeep(copy.id) }
                     }
                 }
             }

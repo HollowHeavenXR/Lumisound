@@ -332,7 +332,7 @@ struct LumenSongsListView: View {
                 }
                 .accessibilityLabel("Sort")
                 Button(isSelecting ? "Done" : "Select") {
-                    withAnimation { isSelecting.toggle(); selectedIDs.removeAll() }
+                    withAnimation(LumiMotion.glide) { isSelecting.toggle(); selectedIDs.removeAll() }
                 }
             }
         }
@@ -424,7 +424,7 @@ struct LumenSelectionBar: View {
     }
 
     private func finish() {
-        withAnimation {
+        withAnimation(LumiMotion.glide) {
             selectedIDs.removeAll()
             isSelecting = false
         }

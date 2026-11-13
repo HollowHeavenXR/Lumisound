@@ -41,7 +41,7 @@ struct StrataNowView: View {
             }
             .offset(y: max(0, drag))
             .gesture(DragGesture().onChanged { drag = $0.translation.height }.onEnded { v in
-                if v.translation.height > 140 { close() } else { withAnimation(.spring()) { drag = 0 } }
+                if v.translation.height > 140 { close() } else { withAnimation(LumiMotion.settle) { drag = 0 } }
             })
         }
         .task(id: player.currentSong?.id) {
@@ -76,7 +76,7 @@ struct StrataNowView: View {
         return HStack(spacing: 18) {
             ForEach([("now", "Now"), ("lyrics", "Lyrics"), ("queue", "Queue")], id: \.0) { key, label in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { tab = key }
+                    withAnimation(LumiMotion.fade(0.2)) { tab = key }
                     UISelectionFeedbackGenerator().selectionChanged()
                 } label: {
                     VStack(spacing: 4) {
@@ -96,7 +96,7 @@ struct StrataNowView: View {
     }
 
     private func close() {
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) { store.showNow = false }
+        withAnimation(LumiMotion.settle) { store.showNow = false }
         drag = 0
     }
 }

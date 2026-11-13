@@ -236,7 +236,7 @@ struct LumenRootView: View {
     private func select(_ tab: LumenTab) {
         if tab == selectedTab {
             // Re-tapping the current tab pops it back to its root.
-            withAnimation(.easeInOut(duration: 0.25)) { paths[tab] = NavigationPath() }
+            withAnimation(LumiMotion.fade(0.25)) { paths[tab] = NavigationPath() }
         } else {
             UISelectionFeedbackGenerator().selectionChanged()
             selectedTabRaw = tab.rawValue
@@ -262,7 +262,7 @@ struct LumenRootView: View {
 
     private func openPlayer() {
         guard player.currentSong != nil else { return }
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) { showNowPlaying = true }
+        withAnimation(LumiMotion.settle) { showNowPlaying = true }
     }
 
     // MARK: Overlays
@@ -280,9 +280,9 @@ struct LumenRootView: View {
             Spacer()
         }
         .padding(.top, 56)
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: bridgeHealth.showToast)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: toastCenter.current)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: account.needsEmail)
+        .animation(LumiMotion.settle, value: bridgeHealth.showToast)
+        .animation(LumiMotion.settle, value: toastCenter.current)
+        .animation(LumiMotion.settle, value: account.needsEmail)
         .zIndex(10)
     }
 
@@ -371,7 +371,7 @@ struct LumenDock: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 4)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: player.currentSong == nil)
+        .animation(LumiMotion.settle, value: player.currentSong == nil)
     }
 
     private var tabBar: some View {
@@ -390,7 +390,7 @@ struct LumenDock: View {
     private func tabButton(_ tab: LumenTab) -> some View {
         let selected = tab == selectedTab
         return Button {
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) { onSelect(tab) }
+            withAnimation(LumiMotion.settle) { onSelect(tab) }
         } label: {
             VStack(spacing: 3) {
                 ZStack(alignment: .topTrailing) {
@@ -544,7 +544,7 @@ struct LumenMiniPlayer: View {
                     }
                     .onEnded { value in
                         let dx = value.translation.width, dy = value.translation.height
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { dragOffset = 0 }
+                        withAnimation(LumiMotion.snap) { dragOffset = 0 }
                         if dy < -40, abs(dy) > abs(dx) {
                             onOpen()
                         } else if dx < -70 {
@@ -554,7 +554,7 @@ struct LumenMiniPlayer: View {
                         }
                     }
             )
-            .animation(.easeInOut(duration: 0.25), value: song.id)
+            .animation(LumiMotion.fade(0.25), value: song.id)
             .accessibilityElement(children: .contain)
             .accessibilityHint("Opens the player. Swipe sideways to change track.")
         }

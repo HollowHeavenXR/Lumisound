@@ -135,7 +135,7 @@ struct NeedleDropView: View {
             }
         }
         .padding(.vertical, 24)
-        .animation(.easeInOut(duration: 0.25), value: game.state)
+        .animation(LumiMotion.fade(0.25), value: game.state)
     }
 
     private var mysteryArt: some View {

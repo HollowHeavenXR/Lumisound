@@ -86,7 +86,7 @@ struct MoodPlaylistsView: View {
                         }
                     }
                     .padding(.horizontal, 16)
-                    .animation(.easeInOut(duration: 0.3), value: visibleMoods.map { $0.songs.count })
+                    .animation(LumiMotion.fade(0.3), value: visibleMoods.map { $0.songs.count })
                 }
 
                 Spacer(minLength: 190) // space for mini player bar (80pt) + tab bar (~83pt) + margin

@@ -67,7 +67,7 @@ struct SubscriptionSettingsSheet: View {
                     }
                 }
                 .padding(LK.gutter)
-                .animation(.easeInOut(duration: 0.2), value: autoDownload)
+                .animation(LumiMotion.fade(0.2), value: autoDownload)
             }
             .background(GalleryBackgroundView().ignoresSafeArea())
             .navigationTitle("Channel Settings")

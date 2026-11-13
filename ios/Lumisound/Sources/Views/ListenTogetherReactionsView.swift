@@ -87,7 +87,7 @@ private struct FloatingReactionAnimator: ViewModifier {
             .offset(y: animate ? -160 : 0)
             .opacity(animate ? 0 : 1)
             .onAppear {
-                withAnimation(.easeOut(duration: 1.6)) {
+                withAnimation(LumiMotion.glide(1.6)) {
                     animate = true
                 }
             }
