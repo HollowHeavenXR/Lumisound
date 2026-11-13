@@ -89,7 +89,6 @@ extension StreamingService {
     /// re-running after a partial success only reprocesses what's left,
     /// since each successfully-imported job is deleted server-side as it's
     /// fetched (see /api/download/result's pending-download branch).
-    @discardableResult
     private static let lastDownloadActivityKey = "downloads.lastActivity"
 
     /// Downloads were started in the last 24 h, so finished jobs may be waiting.
