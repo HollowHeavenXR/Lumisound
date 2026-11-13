@@ -135,10 +135,17 @@ struct LibraryView: View {
                 // Tab content. A plain crossfade on the internal tab switch —
                 // each `tabContent` case is a structurally distinct view, so
                 // without this SwiftUI just hard-cuts between them.
-                tabContent
-                    .id(selectedTab)
-                    .transition(.opacity)
-                    .animation(LumiMotion.fade(0.18), value: selectedTab)
+                if showsUnifiedSearch {
+                    // One search across the whole library (Rust engine):
+                    // songs, artists, albums, playlists and lyrics.
+                    LibrarySearchView(query: debouncedSearch.trimmingCharacters(in: .whitespacesAndNewlines))
+                        .transition(.opacity)
+                } else {
+                    tabContent
+                        .id(selectedTab)
+                        .transition(.opacity)
+                        .animation(LumiMotion.fade(0.18), value: selectedTab)
+                }
             }
             .background(GalleryBackgroundView().ignoresSafeArea())
             .navigationTitle("Library")
@@ -159,8 +166,9 @@ struct LibraryView: View {
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search songs, artists, albums…"
+                prompt: "Songs, artists, albums, playlists, lyrics"
             )
+            .animation(LumiMotion.fade(0.18), value: showsUnifiedSearch)
             .toolbar { toolbarItems }
             .task(id: "\(library.allSongs.count)|\(debouncedSearch)") {
                 // Keep the O(n log n) Songs-tab query out of SwiftUI body
@@ -205,6 +213,7 @@ struct LibraryView: View {
                     .environmentObject(library)
             }
             .onAppear {
+                LibrarySearchService.shared.refresh(from: library, immediately: true)
                 library.scanWatchedFolders(using: folderService)
                 library.scanLocalDocuments()
                 scheduleBackupSync()
@@ -227,6 +236,10 @@ struct LibraryView: View {
             // skips songs already present server-side.
             .onChange(of: library.allSongs.count) { _ in
                 scheduleBackupSync()
+                LibrarySearchService.shared.refresh(from: library)
+            }
+            .onChange(of: library.playlists) { _ in
+                LibrarySearchService.shared.refresh(from: library)
             }
             .onChange(of: selectedTab) { _ in
                 isSelecting = false
@@ -252,6 +265,14 @@ struct LibraryView: View {
             guard !Task.isCancelled else { return }
             streaming.backUpLibraryIfNeeded(songs: songs, token: token)
         }
+    }
+
+    /// The library-wide search takes over while there's a query, except on
+    /// tabs that filter their own content and while selecting songs.
+    private var showsUnifiedSearch: Bool {
+        !debouncedSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !isSelecting
+            && selectedTab != .favorites && selectedTab != .podcasts
     }
 
     // MARK: Tab content switcher

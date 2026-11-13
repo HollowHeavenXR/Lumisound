@@ -187,7 +187,7 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - [ ] 9. tvOS: complete functional, visual and structural overhaul of every screen; anything new that iOS lacks
        must be ported to iOS too.
 - [ ] 10. Tests for every changed custom system; release; verify IPA signing + App Group.
-- [ ] 11. Library search: custom search system (songs, albums, artists, playlists, lyrics…) in Rust, new UI.
+- [x] 11. Library search engine in Rust (rust/core/src/search.rs, LibrarySearch): songs, artists (credits split on feat/&/,/x), albums, playlists and lyrics (Lyrics folder, LRC times kept); accent/case folding, prefix-as-you-type, OSA typo tolerance, every-word AND, phrase/exact/plays/favourite boosts, UTF-16 highlight ranges; ~7 ms on 20k songs (prefilter + parallel ranking). UI: LibrarySearchView (top result, songs, artist/album ribbons, playlists, lyric cards that play from the line, scope chips) replaces tab content while searching. LibrarySearchService reindexes on library changes and re-reads lyrics when the folder changes.
 - [ ] 12. SharePlay / Listen Together: custom system (no GroupActivities dependency).
 - [ ] 13. After every system is custom: run tests against cloud tracks.
 - [ ] 14. Optimize app responsiveness.

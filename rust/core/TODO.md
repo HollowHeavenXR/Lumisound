@@ -34,6 +34,11 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
 - `engine/space.rs`: LumiSpace — stereo virtual speakers (4 ITD + head-shadow paths), pinna cue, early
   reflections per room, bass bypass, crossfeed mode, mode cross-fades. Replaces `binaural.rs`.
 
+## Done (2026-11-13)
+- `search.rs` LibrarySearch: library-wide search (songs / artists / albums / playlists / lyrics) with folding,
+  typo tolerance, highlights and LRC times; 9 tests incl. a 20k-song speed bound.
+- `engine/deck.rs`: gapless trim + decoder output rate (HE-AAC), deck gapless test.
+
 ## Open (2026-11-12)
 - engine_quality: "hits speed 1.25x / 0.8x pre-echo" limits fail (also before this pass; stretch.rs).
 - LumiPrint: probes only within ±4 s duration clusters; a version with a long extra intro isn't matched.
