@@ -77,7 +77,16 @@ final class BackgroundService: ObservableObject {
     @Published var shuffleIntervalSeconds: Double = 30.0 { didSet { settingsChanged(restart: true) } }
     @Published var animation: BackgroundAnimation = .fade { didSet { settingsChanged() } }
     @Published var opacity: Double = 0.35 { didSet { settingsChanged() } }
-    @Published var blurRadius: Double = 16.0 { didSet { settingsChanged() } }
+    @Published var blurRadius: Double = 16.0 {
+        didSet {
+            settingsChanged()
+            // Re-render the current still with the new blur baked in.
+            if oldValue != blurRadius, !isLoadingSettings { refreshBlur() }
+        }
+    }
+    /// Blur radius (points) already baked into `currentImage` by the core
+    /// (stills only); the view blurs live only for whatever is left.
+    @Published private(set) var currentImageBlur: Double = 0
     @Published var kenBurnsEnabled: Bool = false { didSet { settingsChanged() } }
     /// Shuffled order (each photo once per round) instead of gallery order.
     @Published var shuffleOrder: Bool = false { didSet { settingsChanged() } }
@@ -88,7 +97,7 @@ final class BackgroundService: ObservableObject {
     // MARK: Private
 
     private var ticker: Timer?
-    private var prefetched: (id: String, image: UIImage)?
+    private var prefetched: (id: String, image: UIImage, blur: Double)?
     private var foregroundObserver: NSObjectProtocol?
     private var cloudSyncTask: Task<Void, Never>?
     /// A cloud → device sync is running (one at a time).
@@ -310,14 +319,16 @@ final class BackgroundService: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             let image: UIImage?
-            if let p = self.prefetched, p.id == entry.id {
-                image = p.image
+            let baked: Double
+            if let p = self.prefetched, p.id == entry.id, p.blur == self.blurRadius {
+                (image, baked) = (p.image, p.blur)
             } else {
-                image = await Self.decode(entry)
+                (image, baked) = await Self.decode(entry, blur: self.blurRadius)
             }
             guard let image else { return }
             let apply = {
                 self.currentImage = image
+                self.currentImageBlur = baked
                 self.currentEntryID = entry.id
                 self.currentIndex = Int(frame.index)
                 self.transitionSeconds = frame.transitionSecs
@@ -334,24 +345,46 @@ final class BackgroundService: ObservableObject {
     private func prefetchNext() {
         guard let next = engine.peekNext(), prefetched?.id != next.id else { return }
         Task { [weak self] in
-            if let img = await Self.decode(next) { self?.prefetched = (next.id, img) }
+            guard let blur = self?.blurRadius else { return }
+            let (img, baked) = await Self.decode(next, blur: blur)
+            if let img { self?.prefetched = (next.id, img, baked) }
         }
     }
 
-    /// Screen-sized decode (GIFs stay animated, frames capped).
-    nonisolated private static func decode(_ entry: GalleryEntry) async -> UIImage? {
-        let maxSide = await MainActor.run {
+    /// Screen-sized decode (GIFs stay animated, frames capped). A still
+    /// with a blur set comes back already blurred by the core (small,
+    /// since blur hides detail), with the radius it carries; the view then
+    /// moves a plain image instead of re-blurring a full-screen photo on
+    /// every frame of the Ken Burns pan.
+    nonisolated private static func decode(_ entry: GalleryEntry, blur: Double) async -> (UIImage?, Double) {
+        let (maxSide, longPts) = await MainActor.run {
             let b = UIScreen.main.bounds
-            return max(b.width, b.height) * UIScreen.main.scale
+            return (max(b.width, b.height) * UIScreen.main.scale, max(b.width, b.height))
         }
-        return await Task.detached(priority: .utility) {
+        return await Task.detached(priority: .utility) { () -> (UIImage?, Double) in
             let url = URL(fileURLWithPath: entry.path)
             if entry.animated {
-                guard let data = try? Data(contentsOf: url) else { return nil }
-                return UIImage.gifImage(data: data, maxDimension: 1280)
+                guard let data = try? Data(contentsOf: url) else { return (nil, 0) }
+                return (UIImage.gifImage(data: data, maxDimension: 1280), 0)
             }
-            return ImageDownsampler.downsampled(at: url, maxPixelSize: min(maxSide, 2048))
+            if blur >= 1 {
+                // Blur strength as a share of the screen, so it looks the same
+                // at any image size; 720 px is plenty under a blur.
+                let frac = Float(blur / Double(longPts))
+                if let data = galleryBlurredStill(path: entry.path, maxLong: 720, sigmaFrac: frac),
+                   let img = UIImage(data: Data(data)) {
+                    return (img, blur)
+                }
+            }
+            return (ImageDownsampler.downsampled(at: url, maxPixelSize: min(maxSide, 2048)), 0)
         }.value
+    }
+
+    /// The blur setting changed: show the current still again with it baked in.
+    private func refreshBlur() {
+        prefetched = nil
+        guard let id = currentEntryID, let frame = engine.current(), frame.entry.id == id else { return }
+        present(frame, animated: false)
     }
 
     /// ImageIO downsample of encoded bytes (used by other image pickers).

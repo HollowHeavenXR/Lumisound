@@ -53,7 +53,9 @@ struct GalleryBackgroundView: View {
                                 .frame(width: geo.size.width, height: geo.size.height)
                                 .clipped()
                                 .modifier(KenBurnsModifier(isActive: bg.kenBurnsEnabled && !reduceMotion))
-                                .blur(radius: bg.blurRadius, opaque: true)
+                                // Stills arrive pre-blurred from the core; only GIFs (or a
+                                // still decoded before a blur change) still need it live.
+                                .blur(radius: max(0, bg.blurRadius - bg.currentImageBlur), opaque: true)
                                 .opacity(bg.opacity)
                                 // WAS `.drawingGroup()` — found via a live view-hierarchy
                                 // dump (recursiveDescription) captured while the reported

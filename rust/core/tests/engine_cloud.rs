@@ -226,19 +226,47 @@ fn correlation(a: &[f32], b: &[f32]) -> f64 {
 }
 
 /// Lag (samples, R relative to L) maximising cross-correlation within ±`max`.
+/// Interaural lag by GCC-PHAT: the cross-spectrum is whitened, so the
+/// peak marks the direct-path delay rather than a blend of the direct sound
+/// and the (deliberately per-ear) early reflections, which a plain
+/// cross-correlation of broadband music smears together. That's also what
+/// localisation follows (the first arrival wins).
 fn best_lag(l: &[f32], r: &[f32], max: i64) -> i64 {
-    let n = l.len().min(48_000 * 4);
-    let mut best = (0i64, f64::MIN);
-    for lag in -max..=max {
-        let mut s = 0.0;
-        for i in (max as usize)..(n - max as usize) {
-            s += l[i] as f64 * r[(i as i64 + lag) as usize] as f64;
-        }
-        if s > best.1 {
-            best = (lag, s);
-        }
+    use rustfft::{FftPlanner, num_complex::Complex};
+    let n = l.len().min(r.len()).min(48_000 * 4);
+    let size = (2 * n).next_power_of_two();
+    let mut planner = FftPlanner::<f32>::new();
+    let (fwd, inv) = (planner.plan_fft_forward(size), planner.plan_fft_inverse(size));
+    let mut a: Vec<Complex<f32>> = (0..size).map(|i| Complex::new(if i < n { l[i] } else { 0.0 }, 0.0)).collect();
+    let mut b: Vec<Complex<f32>> = (0..size).map(|i| Complex::new(if i < n { r[i] } else { 0.0 }, 0.0)).collect();
+    fwd.process(&mut a);
+    fwd.process(&mut b);
+    // r(t) correlated against l(t + lag): conj(L) · R, whitened.
+    for (x, y) in a.iter_mut().zip(&b) {
+        let c = x.conj() * y;
+        let m = c.norm();
+        *x = if m > 1e-12 { c / m } else { Complex::new(0.0, 0.0) };
     }
-    best.0
+    inv.process(&mut a);
+    let at = |lag: i64| a[((lag + size as i64) % size as i64) as usize].re;
+    (-max..=max).max_by(|x, y| at(*x).total_cmp(&at(*y))).unwrap_or(0)
+}
+
+/// Level difference (dB, L − R) above 3 kHz, where head shadow acts.
+/// Broadband ILD is dominated by bass and mids and barely moves when a
+/// wide mix turns; the highs show the head turning.
+fn hf_ild(l: &[f32], r: &[f32], rate: f64) -> f64 {
+    use rustfft::{FftPlanner, num_complex::Complex};
+    let n = l.len().min(r.len()).min(48_000 * 4);
+    let size = n.next_power_of_two();
+    let fft = FftPlanner::<f32>::new().plan_fft_forward(size);
+    let energy = |x: &[f32]| {
+        let mut b: Vec<Complex<f32>> = (0..size).map(|i| Complex::new(if i < n { x[i] } else { 0.0 }, 0.0)).collect();
+        fft.process(&mut b);
+        let lo = (3000.0 / rate * size as f64) as usize;
+        b[lo..size / 2].iter().map(|c| c.norm_sqr() as f64).sum::<f64>().max(1e-20)
+    };
+    10.0 * (energy(l) / energy(r)).log10()
 }
 
 fn zcr(x: &[f32]) -> f64 {
@@ -361,9 +389,10 @@ fn cloud_tracks_through_engine_and_effects() {
                     let lag = best_lag(&l, &rr, 48);
                     let ild = db(rms(&l)) - db(rms(&rr));
                     let (dlag, dild) = (lag - base_lag, ild - base_ild);
-                    check = format!("ITD lag {:.2} ms ({:+.2} vs dry), ILD {ild:+.1} dB ({dild:+.1} vs dry)", lag as f64 / r.rate * 1000.0, dlag as f64 / r.rate * 1000.0);
+                    let dhf = hf_ild(&l, &rr, r.rate) - hf_ild(&bl, &br, r.rate);
+                    check = format!("ITD lag {:.2} ms ({:+.2} vs dry), ILD {ild:+.1} dB ({dild:+.1} vs dry), >3k ILD {dhf:+.1} dB vs dry", lag as f64 / r.rate * 1000.0, dlag as f64 / r.rate * 1000.0);
                     if c.spatial_yaw == Some(60.0) {
-                        pass &= dlag.abs() >= 8 || dild.abs() > 1.5;
+                        pass &= dlag.abs() >= 8 || dild.abs() > 1.5 || dhf.abs() > 2.0;
                     } else {
                         pass &= dlag.abs() <= 2 && dild.abs() < 1.5;
                     }

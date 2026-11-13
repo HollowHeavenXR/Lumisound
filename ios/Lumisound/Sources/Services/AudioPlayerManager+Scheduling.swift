@@ -148,10 +148,15 @@ extension AudioPlayerManager {
     /// is actually starting (not from prepareCurrent()'s restore-only path
     /// or a paused seek) — installing the analyzer tap while nothing is
     /// playing was spinning up engine activity on cold launch for no reason.
+    ///
+    /// Now only *releases* it at the start of a track: holding the analyzer
+    /// for the whole song ran a 2048-point FFT (and a SwiftUI publish) 23
+    /// times a second through every track, on every screen and in the
+    /// background, for one reading at the fade. `checkCrossfadeTrigger`
+    /// re-arms it 20 s before the fade, which is plenty for the smoothing to
+    /// settle. (Name kept: it is called from every scheduling path.)
     func startSmartCrossfadeAnalysisIfNeeded() {
-        if audioSettings.smartCrossfadeEnabled {
-            AudioVisualizerService.shared.start(for: .smartCrossfade)
-        }
+        AudioVisualizerService.shared.stop(for: .smartCrossfade)
     }
 
     /// Reads `url`'s embedded `REPLAYGAIN_TRACK_GAIN` tag (falling back to RMS

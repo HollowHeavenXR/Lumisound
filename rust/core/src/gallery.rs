@@ -495,3 +495,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(d);
     }
 }
+
+/// Pre-blurred background still (see lumisound_media::gallery::blurred_still).
+#[uniffi::export]
+pub fn gallery_blurred_still(path: String, max_long: u32, sigma_frac: f32) -> Option<Vec<u8>> {
+    let bytes = std::fs::read(&path).ok()?;
+    lumisound_media::gallery::blurred_still(&bytes, max_long, sigma_frac)
+}

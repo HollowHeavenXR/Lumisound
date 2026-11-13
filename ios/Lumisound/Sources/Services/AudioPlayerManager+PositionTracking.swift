@@ -310,6 +310,12 @@ extension AudioPlayerManager {
     func checkCrossfadeTrigger() {
         guard let trigger = crossfadeTriggerPosition else { return }
         guard isPlaying, !isCrossfading, !isUsingOpusPlayer else { return }
+        // Smart Crossfade reads the analyzer at the fade: warm it up shortly
+        // before rather than for the whole track (idempotent while armed).
+        if audioSettings.smartCrossfadeEnabled, position >= trigger - 20,
+           !AudioVisualizerService.shared.isActive(for: .smartCrossfade) {
+            AudioVisualizerService.shared.start(for: .smartCrossfade)
+        }
         // A zero/unknown duration means the track isn't really loaded yet;
         // triggering against a position of 0 would fade out of a track that has
         // not started.

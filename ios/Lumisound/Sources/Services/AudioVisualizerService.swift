@@ -74,6 +74,8 @@ final class AudioVisualizerService: ObservableObject {
     /// reasons at once — the tap stays installed as long as any reason is
     /// active. Back-compat no-arg overload defaults to the original Live
     /// Spectrum UI call sites' meaning.
+    func isActive(for reason: AnalysisReason) -> Bool { activeReasons.contains(reason) }
+
     func start(for reason: AnalysisReason = .liveSpectrumUI) {
         let wasInactive = activeReasons.isEmpty
         activeReasons.insert(reason)
@@ -94,7 +96,7 @@ final class AudioVisualizerService: ObservableObject {
     /// actually stops once no reason remains active. Safe to call for a
     /// reason that was never started (a harmless no-op).
     func stop(for reason: AnalysisReason = .liveSpectrumUI) {
-        activeReasons.remove(reason)
+        guard activeReasons.remove(reason) != nil else { return }
         appLog("AudioVisualizerService: stop(for: \(reason)) — active reasons now \(activeReasons)", category: "audio")
         guard activeReasons.isEmpty else { return }
         appLog("AudioVisualizerService: removing analyzer tap — no reasons remain active", category: "audio")
