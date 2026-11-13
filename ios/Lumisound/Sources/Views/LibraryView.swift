@@ -111,10 +111,17 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Custom scrollable tab bar
+                // Header (counts + shuffle / add) and the section strip. The
+                // header steps aside while searching to give results the room.
+                if !showsUnifiedSearch {
+                    LibraryHeader(onAddMusic: { showAddMusic = true })
+                        .padding(.horizontal)
+                        .padding(.top, 4)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
                 LibraryTabBar(selectedTab: $selectedTab)
                     .padding(.horizontal)
-                    .padding(.top, 8)
+                    .padding(.top, 10)
                     .padding(.bottom, 4)
 
                 // Error banner.
@@ -149,7 +156,9 @@ struct LibraryView: View {
             }
             .background(GalleryBackgroundView().ignoresSafeArea())
             .navigationTitle("Library")
-            .navigationBarTitleDisplayMode(.large)
+            // The header carries the big title; the bar stays slim for search.
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.visible, for: .navigationBar)
             // Lives on the NavigationStack root — not on SongsTab, which is
             // mounted/torn down on every internal tab switch and previously
             // owned this modifier, occasionally leaving the search
@@ -316,6 +325,11 @@ struct LibraryView: View {
 
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
+        // The header shows "Library" big; keep the bar's own title empty
+        // (the navigation title still names the back button on pushed pages).
+        ToolbarItem(placement: .principal) {
+            Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+        }
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             if selectedTab == .songs && !filteredSongsState.isEmpty {
                 LumiMenu {
