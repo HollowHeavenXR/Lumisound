@@ -108,6 +108,32 @@ final class TVPlayerModel: ObservableObject {
 
     var current: TVPlayable? { queue.indices.contains(currentIndex) ? queue[currentIndex] : nil }
 
+    // MARK: Listen Together hooks (TVListenTogether)
+
+    /// Room identity of the playing track: the source id it was started
+    /// from by a room, else folded "title|artist" (rust together_track_key).
+    var togetherKey: String {
+        guard let item = current else { return "" }
+        if let key = togetherKeys[item.id] { return key }
+        return togetherTrackKey(sourceTrackId: nil, title: item.title, artist: item.artist)
+    }
+    private var togetherKeys: [String: String] = [:]
+    /// Where the next `loadCurrent` starts (a room's position), once.
+    private var followStart: Double?
+
+    /// Plays the room's track from `position`.
+    func playForRoom(_ item: TVPlayable, key: String, at position: Double) {
+        togetherKeys[item.id] = key
+        followStart = position
+        currentContext = nil
+        start(context: TVPlayContext(queue: [item], startID: item.id))
+    }
+
+    /// Listen Together's tempo nudge (pitch kept); 1 = normal.
+    func setTogetherRate(_ rate: Double) {
+        _ = try? core.setSpeedPitch(speed: min(1.1, max(0.9, rate)), pitchSemitones: 0)
+    }
+
     /// The queue/start-point `start(context:)` most recently actually
     /// adopted — repeat calls with the SAME context (navigating back to Now
     /// Playing without picking a new track) resume in place.
@@ -211,7 +237,10 @@ final class TVPlayerModel: ObservableObject {
             self.currentFile = file
             // Leading-silence trim (skips dead air before the music).
             var start: Double = 0
-            if TVAudioSettings.shared.skipSilentIntros, !item.isLocked {
+            if let f = self.followStart {
+                self.followStart = nil
+                start = f
+            } else if TVAudioSettings.shared.skipSilentIntros, !item.isLocked {
                 start = await TVSilenceTrim.analyze(url: file, trackID: item.id)
                 guard self.loadGeneration == generation else { return }
             }
@@ -544,7 +573,7 @@ final class TVPlayerModel: ObservableObject {
 
 // MARK: - TVPlayerView
 
-private enum TVSidePanel: Equatable { case none, upNext, lyrics }
+private enum TVSidePanel: Equatable { case none, upNext, lyrics, sound }
 
 struct TVPlayerView: View {
     /// The queue to START when this screen appears — nil when Now Playing is
@@ -613,6 +642,9 @@ struct TVPlayerView: View {
 
             if sidePanel == .upNext {
                 upNextPanel
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else if sidePanel == .sound {
+                TVSoundPanel(onClose: { withAnimation(.easeInOut(duration: 0.25)) { sidePanel = .none } })
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             } else if sidePanel == .lyrics {
                 TVLyricsPanel(
@@ -787,6 +819,7 @@ struct TVPlayerView: View {
 
                     sleepTimerMenu
                     toggleIconButton("quote.bubble", isOn: sidePanel == .lyrics) { togglePanel(.lyrics) }
+                    toggleIconButton("slider.vertical.3", isOn: sidePanel == .sound) { togglePanel(.sound) }
                     artworkStyleMenu
                     if model.queue.count > 1 {
                         toggleIconButton("list.bullet", isOn: sidePanel == .upNext) { togglePanel(.upNext) }
@@ -1194,5 +1227,70 @@ private struct TVArtworkStyleSheet: View {
             }
             .navigationTitle("Artwork Style")
         }
+    }
+}
+
+// MARK: - Sound panel
+
+/// LumiEQ, Night Mode and Room from Now Playing, applied by the engine as
+/// you move between them (the same settings as Settings → Sound).
+private struct TVSoundPanel: View {
+    let onClose: () -> Void
+    @ObservedObject private var settings = TVAudioSettings.shared
+    @FocusState private var firstFocused: Bool
+
+    private var presets: [EqPresetInfo] {
+        eqPresets().filter { $0.category == "Signature" || $0.category == "Genre" }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 26) {
+            HStack {
+                Text("SOUND")
+                    .font(TVType.eyebrow)
+                    .tracking(2.4)
+                    .foregroundStyle(TVPalette.neonAlt)
+                Spacer()
+                Button("Close", action: onClose)
+            }
+            Button {
+                settings.eqEnabled.toggle()
+            } label: {
+                TVChip(title: settings.eqEnabled ? "LumiEQ On" : "LumiEQ Off", isSelected: settings.eqEnabled)
+            }
+            .buttonStyle(.plain)
+            .focused($firstFocused)
+            if settings.eqEnabled {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                        ForEach(presets, id: \.id) { p in
+                            Button { settings.eqPresetID = p.id } label: {
+                                TVChip(title: p.name, isSelected: settings.eqPresetID == p.id)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(maxHeight: 420)
+            }
+            HStack(spacing: 14) {
+                Button { settings.nightMode.toggle() } label: {
+                    TVChip(title: "Night Mode", isSelected: settings.nightMode)
+                }
+                .buttonStyle(.plain)
+                ForEach(Array(["Dry", "Room", "Hall"].enumerated()), id: \.offset) { i, name in
+                    Button { settings.room = i } label: { TVChip(title: name, isSelected: settings.room == i) }
+                        .buttonStyle(.plain)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(40)
+        .frame(width: 640)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .tvGlassPanel(cornerRadius: 40)
+        .padding(.vertical, 60)
+        .padding(.trailing, 60)
+        .onAppear { firstFocused = true }
     }
 }

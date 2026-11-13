@@ -268,6 +268,10 @@ struct TVAccountView: View {
                              systemImage: "rectangle.stack.badge.person.crop") {
                             TVSessionsView(client: client, account: account, token: token)
                         }
+                        tile("Listen Together", subtitle: TVListenTogether.shared.isInRoom ? "In a room" : "Join a friend",
+                             systemImage: "person.2.wave.2.fill") {
+                            TVListenTogetherView(client: client, token: token)
+                        }
                         tile("Settings", subtitle: "Playback & display",
                              systemImage: "gearshape.fill") {
                             TVSettingsView()
