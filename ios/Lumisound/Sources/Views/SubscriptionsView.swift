@@ -211,113 +211,121 @@ struct SubscriptionsView: View {
         } else if filteredSubscriptions.isEmpty {
             LKEmpty(icon: "line.3.horizontal.decrease.circle", title: "Nothing in \"\(selectedCategory ?? "")\"", tint: .cyan)
         } else {
-            ForEach(filteredSubscriptions) { sub in
-                channelCard(sub)
+            // One grouped card of compact rows: ~56pt per channel instead of a
+            // full card each, so a long follow list fits on a screen or two.
+            VStack(spacing: 0) {
+                ForEach(Array(filteredSubscriptions.enumerated()), id: \.element.id) { index, sub in
+                    if index > 0 { LKDivider(inset: 62) }
+                    channelRow(sub)
+                }
             }
+            .padding(.vertical, 4)
+            .background(LKCardBackground())
         }
     }
 
-    private func channelCard(_ sub: ArtistSubscription) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
+    private func channelRow(_ sub: ArtistSubscription) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
                 channelThumbnail(for: sub)
-                    .frame(width: 48, height: 48)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(sub.channelName ?? sub.channelUrl)
-                        .font(.headline)
-                        .foregroundStyle(AppTheme.textPrimary)
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        if let category = sub.category { LKPill(text: category, tint: .cyan) }
-                        if let freq = sub.uploadFrequencyLabel {
-                            Text(freq).font(.caption2).foregroundStyle(AppTheme.textSecondary)
+                    .frame(width: 38, height: 38)
+                    .overlay(alignment: .bottomTrailing) {
+                        if sub.autoDownload {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.white, .green)
+                                .background(Circle().fill(AppTheme.surface).padding(-1))
+                                .offset(x: 3, y: 3)
+                                .accessibilityLabel("Auto-download on")
                         }
                     }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(sub.channelName ?? sub.channelUrl)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.textPrimary)
+                        .lineLimit(1)
+                    Text(channelMeta(sub))
+                        .font(.caption2)
+                        .foregroundStyle(sub.isStale ? AppTheme.warning : AppTheme.textSecondary)
+                        .lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                if checkingID == sub.id { ProgressView().tint(.cyan) }
-            }
-            HStack(spacing: 8) {
-                statusToggle(icon: sub.notificationsMuted ? "bell.slash.fill" : "bell.fill",
-                             title: sub.notificationsMuted ? "Muted" : "Alerts", on: !sub.notificationsMuted) { toggleMute(sub) }
-                statusChip(icon: sub.autoDownload ? "arrow.down.circle.fill" : "arrow.down.circle",
-                           title: sub.autoDownload ? "Auto" : "Manual", on: sub.autoDownload)
-                Spacer()
+                Button { toggleMute(sub) } label: {
+                    Image(systemName: sub.notificationsMuted ? "bell.slash" : "bell.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(sub.notificationsMuted ? AppTheme.textSecondary : Color.cyan)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(sub.notificationsMuted ? "Unmute alerts" : "Mute alerts")
                 Button { check(sub) } label: {
-                    Label("Check", systemImage: "arrow.clockwise")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(Color.cyan.opacity(0.15), in: Capsule())
-                        .foregroundStyle(.cyan)
+                    Group {
+                        if checkingID == sub.id { ProgressView().controlSize(.small).tint(.cyan) }
+                        else { Image(systemName: "arrow.clockwise").font(.system(size: 13, weight: .bold)) }
+                    }
+                    .foregroundStyle(.cyan)
+                    .frame(width: 30, height: 30)
+                    .background(Color.cyan.opacity(0.13), in: Circle())
                 }
                 .buttonStyle(.plain)
                 .disabled(checkingID != nil || isCheckingAll)
+                .accessibilityLabel("Check for new uploads")
                 Menu {
                     Button { editingSubscription = sub } label: { Label("Settings", systemImage: "gearshape") }
                     Button(role: .destructive) { remove(sub) } label: { Label("Unfollow", systemImage: "trash") }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .bold))
-                        .frame(width: 32, height: 28)
-                        .background(AppTheme.elevatedSurface, in: Capsule())
-                        .foregroundStyle(AppTheme.textPrimary)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(AppTheme.textSecondary)
+                        .frame(width: 26, height: 30)
+                        .contentShape(Rectangle())
                 }
-            }
-            if sub.isStale {
-                HStack(spacing: 8) {
-                    Image(systemName: "moon.zzz.fill").foregroundStyle(AppTheme.textSecondary)
-                    Text("Quiet for a long time.").font(.caption).foregroundStyle(AppTheme.textSecondary)
-                    Spacer()
-                    Button("Unfollow", role: .destructive) { remove(sub) }.font(.caption.weight(.semibold))
-                }
-                .padding(10)
-                .background(AppTheme.elevatedSurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             if let newTracks = newTracksBySubscription[sub.id] {
                 if newTracks.isEmpty {
-                    Text("No new uploads.").font(.caption).foregroundStyle(AppTheme.textSecondary)
+                    Text("No new uploads.").font(.caption2).foregroundStyle(AppTheme.textSecondary).padding(.leading, 48)
                 } else {
                     VStack(spacing: 0) {
                         ForEach(newTracks) { track in
                             Button { play(track: track) } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "play.circle.fill").font(.system(size: 22)).foregroundStyle(.cyan)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(track.title).font(.subheadline).foregroundStyle(AppTheme.textPrimary).lineLimit(1)
-                                        Text(track.artist).font(.caption2).foregroundStyle(AppTheme.textSecondary).lineLimit(1)
-                                    }
+                                HStack(spacing: 8) {
+                                    Image(systemName: "play.circle.fill").font(.system(size: 18)).foregroundStyle(.cyan)
+                                    Text(track.title).font(.caption).foregroundStyle(AppTheme.textPrimary).lineLimit(1)
                                     Spacer()
-                                    if loadingTrackID == track.id { ProgressView() }
+                                    if loadingTrackID == track.id { ProgressView().controlSize(.small) }
                                 }
-                                .padding(.vertical, 6)
+                                .padding(.vertical, 5)
                             }
                             .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 10)
-                    .background(Color.cyan.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(Color.cyan.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(.leading, 48)
                 }
             }
         }
-        .padding(14)
-        .background(LKCardBackground())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .contentShape(Rectangle())
         .contextMenu {
             Button { editingSubscription = sub } label: { Label("Settings", systemImage: "gearshape") }
             Button(role: .destructive) { remove(sub) } label: { Label("Unfollow", systemImage: "trash") }
         }
     }
 
-    private func statusChip(icon: String, title: String, on: Bool) -> some View {
-        Label(title, systemImage: icon)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 9).padding(.vertical, 5)
-            .foregroundStyle(on ? Color.cyan : AppTheme.textSecondary)
-            .background((on ? Color.cyan : AppTheme.textSecondary).opacity(0.12), in: Capsule())
-    }
-
-    private func statusToggle(icon: String, title: String, on: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) { statusChip(icon: icon, title: title, on: on) }
-            .buttonStyle(.plain)
+    /// "Rock · Uploads ~weekly", or a quiet-channel hint once it's gone stale.
+    private func channelMeta(_ sub: ArtistSubscription) -> String {
+        var parts: [String] = []
+        if let category = sub.category { parts.append(category) }
+        if sub.isStale {
+            parts.append("Quiet for a long time")
+        } else if let freq = sub.uploadFrequencyLabel {
+            parts.append(freq)
+        }
+        if sub.notificationsMuted { parts.append("Muted") }
+        return parts.isEmpty ? "Following" : parts.joined(separator: " · ")
     }
 
     // MARK: Playlists
@@ -386,29 +394,6 @@ struct SubscriptionsView: View {
             LKChip(title: title, selected: isSelected, tint: .cyan)
         }
         .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private func subscriptionSubtitle(for sub: ArtistSubscription) -> some View {
-        if sub.category != nil || sub.uploadFrequencyLabel != nil {
-            HStack(spacing: 6) {
-                if let category = sub.category {
-                    Text(category)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(AppTheme.dynamicAccent)
-                }
-                if let frequencyLabel = sub.uploadFrequencyLabel {
-                    Text(frequencyLabel)
-                        .font(.caption2)
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
-                if sub.autoDownload {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
-            }
-        }
     }
 
     private func load() async {
@@ -550,12 +535,5 @@ struct SubscriptionsView: View {
                 .resizable()
                 .foregroundStyle(AppTheme.textSecondary.opacity(0.6))
         }
-    }
-
-    private func sectionHeader(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(AppTheme.bodyFont(size: 11))
-            .foregroundStyle(AppTheme.textSecondary)
-            .kerning(0.8)
     }
 }

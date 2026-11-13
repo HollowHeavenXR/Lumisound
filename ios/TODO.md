@@ -179,7 +179,7 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - [x] 2. New app identity: "sound eclipse" icon (waveform corona round a dark disc, pulse line, spark) for iOS, in-app display, tvOS parallax layers + Top Shelf, and a new watch AppIcon catalogue. Source: ios/Branding (make_icon.py + render.sh regenerate every size). Widgets use the host app icon.
 - [x] 3. README: only what users need (what it is, install via AltStore/SideStore source, features). No build internals.
 - [x] 4. Fix the same track appearing twice in Favorites.
-- [ ] 5. Subscriptions: smaller channel cards; revamp the tracked-playlist detail screen (downloaded vs missing).
+- [x] 5. Subscriptions: channels are compact ~56pt rows in one grouped card (avatar with auto-download badge, meta line, mute/check/menu icons). TrackedPlaylistDetailView rebuilt: blurred-art hero, downloaded vs missing split bar, Missing / In Library / All filter + search, lazy track card, Tracking settings card.
 - [ ] 6. Audit features still on Apple/iOS systems; build custom (Rust) versions; test each.
 - [ ] 7. Formats: confirm the Lumisound engine handles every format the app plays (opus done; check m4a/aac/mp3/flac/
        wav/ogg/webm/alac...); custom decoders where missing; then hide the "Lumisound Audio Engine" toggle.
