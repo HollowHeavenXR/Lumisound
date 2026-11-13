@@ -8,6 +8,9 @@ on:
   push:
     tags:
       - 'tvos/v*'
+  # Runs from a tvos/v* tag; a manual run must be started on that tag too
+  # (Run workflow → pick the tag), since the version comes from its name.
+  workflow_dispatch:
 
 permissions:
   contents: write
