@@ -278,6 +278,7 @@ struct NowPlayingView: View {
 
     // Transfer Playback sheet
     @State var showTransferPlaybackSheet = false
+    @State var showListenTogetherSheet = false
 
     // Custom speed / pitch inline editing
     @State var editingSpeed = false
@@ -371,6 +372,11 @@ struct NowPlayingView: View {
         }
         .sheet(item: $voiceMemoBookmark) { bookmark in
             VoiceMemoRecorderSheet(bookmark: bookmark)
+        }
+        .sheet(isPresented: $showListenTogetherSheet) {
+            ListenTogetherSheet()
+                .environmentObject(ListenRoomService.shared)
+                .environmentObject(player)
         }
         .sheet(isPresented: $showTransferPlaybackSheet) {
             TransferPlaybackSheet()

@@ -100,25 +100,34 @@ struct ListenRoomView: View {
             .padding(.vertical, 2)
 
             if !rooms.isHost {
-                Button {
-                    catchUp()
-                } label: {
-                    Label("Catch up to host", systemImage: "arrow.trianglehead.clockwise")
-                        .font(AppTheme.bodyFont(size: 14))
-                        .foregroundStyle(canCatchUp ? AppTheme.dynamicAccent : AppTheme.textSecondary)
+                Toggle(isOn: $rooms.followHost) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Follow the host")
+                            .font(AppTheme.bodyFont(size: 14))
+                        Text(syncLabel)
+                            .font(AppTheme.bodyFont(size: 11))
+                            .foregroundStyle(AppTheme.textSecondary)
+                    }
                 }
-                .disabled(!canCatchUp)
-                if !canCatchUp, rooms.state?.title != nil {
-                    Text("Play this track yourself to sync up with the room.")
-                        .font(AppTheme.bodyFont(size: 11))
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
+                .tint(AppTheme.dynamicAccent)
+                ListenTogetherReactionBar()
+                    .listRowBackground(Color.clear)
             } else {
-                Text("You're hosting — everyone follows your playback.")
+                Text("You're hosting — everyone follows your playback, seeks and pauses included.")
                     .font(AppTheme.bodyFont(size: 11))
                     .foregroundStyle(AppTheme.textSecondary)
+                ListenTogetherReactionBar()
+                    .listRowBackground(Color.clear)
             }
         }
+    }
+
+    /// "In step" / "Catching up · 0.3 s behind" from the sync engine.
+    private var syncLabel: String {
+        guard rooms.followHost else { return "Off — you're playing your own music." }
+        guard let d = rooms.syncDrift else { return "Starting the host's track…" }
+        if abs(d) < 0.08 { return "In step with the host" }
+        return String(format: "Catching up · %.1f s %@", abs(d), d > 0 ? "ahead" : "behind")
     }
 
     /// The host's position, advanced for however long ago they reported it — the
@@ -128,25 +137,6 @@ struct ListenRoomView: View {
         guard let seconds = rooms.state?.resolvedPosition() else { return "--:--" }
         let total = Int(seconds.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
-    }
-
-    /// Whether a catch-up would actually do anything: the host's track has to be
-    /// the one already loaded here.
-    private var canCatchUp: Bool {
-        guard rooms.state?.resolvedPosition() != nil,
-              let roomTrack = rooms.state?.trackURL,
-              let localTrack = player.currentSong?.url?.absoluteString
-        else { return false }
-        return roomTrack == localTrack
-    }
-
-    private func catchUp() {
-        // Only seeks when the same track is already loaded. Putting a follower's
-        // player onto a track they may not have is a download decision, not a seek,
-        // and quietly starting one from a sync button would be a surprise — so the
-        // button is disabled for that case instead, with the reason shown below it.
-        guard canCatchUp, let target = rooms.state?.resolvedPosition() else { return }
-        player.seek(to: target)
     }
 
     // MARK: Participants
@@ -355,5 +345,14 @@ struct ListenRoomEntryView: View {
                     .environmentObject(player)
             }
         }
+    }
+}
+
+/// The room when in one, otherwise start / join.
+struct ListenTogetherSheet: View {
+    @EnvironmentObject var rooms: ListenRoomService
+
+    var body: some View {
+        if rooms.isInRoom { ListenRoomView() } else { ListenRoomEntryView() }
     }
 }

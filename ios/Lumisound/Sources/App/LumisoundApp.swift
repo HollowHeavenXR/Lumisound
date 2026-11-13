@@ -15,7 +15,6 @@ struct LumisoundApp: App {
     @StateObject private var bridgeHealth = BridgeHealthService()
     @StateObject private var moodService = MoodPlaylistService()
     @StateObject private var cacheManager = CacheManagerService()
-    @StateObject private var sharePlay = SharePlayCoordinator()
     @StateObject private var deviceSync = DeviceSyncService()
     @StateObject private var physicalGestures = PhysicalGesturesService()
     @StateObject private var appLock = AppLockService()
@@ -91,7 +90,6 @@ struct LumisoundApp: App {
                     .environmentObject(bridgeHealth)
                     .environmentObject(moodService)
                     .environmentObject(cacheManager)
-                    .environmentObject(sharePlay)
                     .environmentObject(deviceSync)
                     .environmentObject(physicalGestures)
                     .environmentObject(appLock)
@@ -282,15 +280,8 @@ struct LumisoundApp: App {
                     LyricsSyncLockService.shared.start(library: libraryManager, player: player)
                     EngineExclusiveService.shared.startBackgroundConversion(library: libraryManager, player: player)
 
-                    // Wire SharePlay up to live app state, same reason App
-                    // Intents use weak `.shared` singletons — this needs to
-                    // reach the player/library/streaming instances constructed
-                    // by this View's @StateObjects.
-                    sharePlay.player = player
-                    sharePlay.library = libraryManager
-                    sharePlay.streaming = streaming
-
-                    // Same weak-singleton wiring as SharePlay above — Sync
+                    // Weak-singleton wiring, same reason App Intents use
+                    // `.shared` — Sync
                     // My Devices needs to reach the same live player/
                     // streaming instances without being a SwiftUI
                     // environment object itself.

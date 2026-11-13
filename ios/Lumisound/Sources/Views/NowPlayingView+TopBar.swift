@@ -245,7 +245,7 @@ extension NowPlayingView {
     // MARK: - Utility row
     //
     // One row of round glass buttons under the transport controls — the
-    // Apple-Music-style bottom row: lyrics, AirPlay, SharePlay, sleep timer,
+    // Apple-Music-style bottom row: lyrics, AirPlay, Listen Together, sleep timer,
     // queue. Each used to live somewhere different (top bar, track-info row,
     // overflow menu, "Playing from" row).
 
@@ -270,7 +270,7 @@ extension NowPlayingView {
             .adaptiveGlass(in: Circle(), fallback: AppTheme.surface.opacity(0.5))
             .accessibilityLabel("AirPlay")
             Spacer(minLength: 0)
-            sharePlayButton
+            listenTogetherButton
             Spacer(minLength: 0)
             utilityButton(
                 icon: sleepTimer.isActive ? "moon.zzz.fill" : "moon.zzz",

@@ -73,6 +73,7 @@ pub fn routes() -> Router<AppState> {
         .route("/rooms/{code}/leave", post(leave_room))
         .route("/rooms/{code}/events", get(room_events))
         .route("/rooms/{code}/chat", post(room_chat))
+        .route("/rooms/{code}/react", post(room_react))
         .route("/rooms/{code}/queue", get(room_queue).post(add_room_queue))
         .route("/rooms/{code}/queue/{item}/vote", post(vote_room_queue))
         .route("/rooms/{code}/queue/{item}", delete(remove_room_queue))
@@ -1913,6 +1914,28 @@ async fn room_chat(State(st): State<AppState>, u: User, Path(code): Path<String>
     let (st2, uid) = (st.clone(), u.id.clone());
     tokio::spawn(async move { push_room(&st2, &rid, ev, Some(&uid)).await });
     Ok((StatusCode::CREATED, Json(json!({"status": "posted"}))).into_response())
+}
+
+#[derive(Deserialize)]
+struct ReactBody {
+    emoji: String,
+}
+
+/// A live reaction (an emoji floating up for everyone in the room). Not
+/// stored: it only matters to whoever is listening right now.
+async fn room_react(State(st): State<AppState>, u: User, Path(code): Path<String>, J(b): J<ReactBody>) -> ApiResult<Json<Value>> {
+    let emoji: String = b.emoji.trim().chars().take(8).collect();
+    if emoji.is_empty() || emoji.chars().any(|c| c.is_ascii_alphanumeric()) {
+        return Err(AppError::bad_request("Send one emoji"));
+    }
+    let rid = room_id(&st, &code).await?;
+    touch(&st, &rid, &u.id).await?;
+    let who: Option<(String, Option<String>)> = sqlx::query_as("SELECT username, display_name FROM ios_users WHERE id = $1").bind(&u.id).fetch_optional(&st.db).await?;
+    let ev = json!({"type": "room_reaction", "room_code": code.to_uppercase(), "user_id": u.id,
+        "display_name": who.as_ref().map(|w| w.1.clone().filter(|d| !d.is_empty()).unwrap_or(w.0.clone())), "emoji": emoji, "created_at": now_utc_iso()});
+    let (st2, uid) = (st.clone(), u.id.clone());
+    tokio::spawn(async move { push_room(&st2, &rid, ev, Some(&uid)).await });
+    Ok(Json(json!({"status": "sent", "server_time": now_utc_iso()})))
 }
 
 async fn room_queue(State(st): State<AppState>, Path(code): Path<String>) -> ApiResult<Json<Value>> {

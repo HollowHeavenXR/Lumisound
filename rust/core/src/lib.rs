@@ -41,6 +41,7 @@ pub mod smart;
 pub mod store;
 pub mod sync;
 pub mod thermal;
+pub mod together;
 pub mod stores;
 
 use std::future::Future;

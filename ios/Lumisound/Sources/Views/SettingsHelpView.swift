@@ -518,7 +518,7 @@ struct SettingsHelpView: View {
             HelpTopic(
                 icon: "shareplay",
                 title: "Listen Together Group Queue",
-                body: "Once a Listen Together (SharePlay) session is active, the Queue screen shows a Listen Together section. Swipe left on any track and tap Suggest to add it to a shared list everyone in the session can see and upvote. Tap Play Top Voted Next to insert whichever suggestion has the most votes right after the current track. Suggestions and votes only exist for the lifetime of the session — nothing is saved to your account."
+                body: "Start a Listen Together room from the people button on Now Playing and share its six-letter code; friends join with the code (no call needed). Everyone follows the host's playback automatically — track, pauses and seeks — and Lumisound keeps you in step by gently speeding up or slowing down by a few percent instead of jumping. Turn off Follow the host to stay in the room but play your own music. While in a room, the Queue screen shows the room's suggestions: swipe a track and tap Suggest, vote with the arrow, and the host can play the top pick with one tap. Tap an emoji to send a reaction everyone sees."
             ),
             HelpTopic(
                 icon: "face.smiling",

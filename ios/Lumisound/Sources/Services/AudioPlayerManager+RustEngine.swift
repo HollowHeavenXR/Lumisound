@@ -40,6 +40,20 @@ extension AudioPlayerManager {
     /// from the old switch is ignored.
     static var rustEngineEnabled: Bool { true }
 
+    /// Listen Together's tempo nudge (× the listener's own speed, pitch
+    /// kept): a follower a few tenths of a second off the host plays a
+    /// little faster or slower until it's back in step. 1 = no nudge.
+    /// Never saved: it isn't the listener's speed setting.
+    static var togetherRate: Double = 1
+
+    func setTogetherRate(_ rate: Double) {
+        let r = min(1.1, max(0.9, rate))
+        guard abs(r - Self.togetherRate) > 1e-6 else { return }
+        Self.togetherRate = r
+        guard isUsingRustEngine else { return }
+        applyRustSettings()
+    }
+
     func rustEligible(for url: URL) -> Bool {
         // Engine-exclusive tracks always use the Lumisound engine, whatever
         // the Settings toggle says.
@@ -115,7 +129,7 @@ extension AudioPlayerManager {
         if isPlaying { guard ensureRustOutput() else { return false } }
         Self.rustRelay.player = self
         // Speed/pitch apply to every deck the engine opens.
-        _ = try? Self.rust.setSpeedPitch(speed: Double(audioSettings.speed), pitchSemitones: Double(audioSettings.pitchSemitones))
+        _ = try? Self.rust.setSpeedPitch(speed: Double(audioSettings.speed) * Self.togetherRate, pitchSemitones: Double(audioSettings.pitchSemitones))
         do {
             let id = try Self.rust.load(path: playable.path, startSecs: max(0, startTime), gainDb: 0)
             rustDeckID = id
@@ -198,7 +212,7 @@ extension AudioPlayerManager {
         applyRustVolume()
         // Pitch-preserving speed + pitch shift (WSOLA) — re-opens the deck at
         // the current position when they change.
-        if let newID = try? Self.rust.setSpeedPitch(speed: Double(s.speed), pitchSemitones: Double(s.pitchSemitones)) {
+        if let newID = try? Self.rust.setSpeedPitch(speed: Double(s.speed) * Self.togetherRate, pitchSemitones: Double(s.pitchSemitones)) {
             rustDeckID = newID
             rustNextDeckID = nil
             rustNextPath = nil

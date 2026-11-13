@@ -45,7 +45,7 @@ final class LongTrackResumeService {
         Task { [weak self] in
             // Give AVFoundation a beat to actually start playback before
             // seeking into it — same reasoning as AIDJService/
-            // SharePlayCoordinator+Queue.swift's identical short waits
+            // the same kind of short waits used elsewhere
             // before their own post-track-change seeks.
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard let self, let player = self.player, player.currentSong?.id == song.id else { return }

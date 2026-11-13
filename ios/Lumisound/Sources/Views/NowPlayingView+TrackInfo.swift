@@ -1,53 +1,27 @@
 import SwiftUI
 import UIKit
-import GroupActivities
 
 extension NowPlayingView {
 
     // MARK: - Track Info + Favorite
 
-    /// SharePlay "listen together" entry point. Calls the `GroupActivity`
-    /// protocol's own `activate()` directly (a core, stable part of the
-    /// GroupActivities framework since its introduction) rather than a
-    /// higher-level SwiftUI convenience wrapper — the OS still owns the whole
-    /// activation flow (FaceTime picker, permissions, etc.) once `activate()`
-    /// is called; this app only needs to hand it the activity to propose.
-    /// Actual cross-device sync is handled separately by `SharePlayCoordinator`
-    /// once a session starts (see that type's doc comment for why sync is
-    /// message-based rather than a shared `AVPlaybackCoordinator` timeline).
-    /// Requires the Group Activities capability/entitlement — see integration
-    /// notes wherever project.yml/entitlements changes are tracked.
+    /// Listen Together: opens the room (or the start / join screen).
+    /// Lumisound's own rooms — any friend with the app, no FaceTime call —
+    /// kept in step by the sync engine (rust/core/src/together.rs).
     @ViewBuilder
-    var sharePlayButton: some View {
-        if let song = player.currentSong {
+    var listenTogetherButton: some View {
+        if player.currentSong != nil {
             Button {
-                Task {
-                    do {
-                        let activated = try await ListenTogetherActivity(songTitle: song.title, artistName: song.artist).activate()
-                        if !activated {
-                            // No error thrown, but the system didn't hand off to a
-                            // SharePlay session — e.g. no eligible FaceTime call and
-                            // the system sharing sheet was dismissed. Previously this
-                            // was silently discarded (`_ = try await ...`), so tapping
-                            // the button did nothing visible at all — indistinguishable
-                            // from the button being broken.
-                            appWarn("SharePlay activate() returned false — no session started", category: "general")
-                            ToastCenter.shared.show("SharePlay unavailable — start a FaceTime call first", category: .info, icon: "shareplay")
-                        }
-                    } catch {
-                        appWarn("SharePlay activate failed: \(error.localizedDescription)", category: "general")
-                        ToastCenter.shared.show("Couldn't start SharePlay", category: .error, icon: "shareplay")
-                    }
-                }
+                showListenTogetherSheet = true
             } label: {
-                Image(systemName: "shareplay")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(screenStyle.controlsColor ?? AppTheme.textSecondary)
+                Image(systemName: ListenRoomService.shared.isInRoom ? "person.2.wave.2.fill" : "person.2.wave.2")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(ListenRoomService.shared.isInRoom ? AppTheme.dynamicAccent : (screenStyle.controlsColor ?? AppTheme.textSecondary))
                     .frame(width: 44, height: 44)
                     .adaptiveGlass(in: Circle(), fallback: AppTheme.surface.opacity(0.5))
             }
             .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel("SharePlay")
+            .accessibilityLabel("Listen Together")
         }
     }
 
@@ -76,7 +50,7 @@ extension NowPlayingView {
 
     // 2026-09 restructure: title and artist get the full width (the format
     // and BPM chips used to share the artist's line and squeeze its
-    // marquee), with the chips on their own line underneath. SharePlay
+    // marquee), with the chips on their own line underneath. Listen Together
     // moved to the utility row; the heart stays here.
     var trackInfoSection: some View {
         HStack(alignment: .center, spacing: 12) {

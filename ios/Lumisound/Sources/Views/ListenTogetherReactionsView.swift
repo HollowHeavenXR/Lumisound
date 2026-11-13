@@ -1,26 +1,25 @@
 import SwiftUI
+import Combine
 
-/// Live emoji reactions during a Listen Together (SharePlay) session — a
-/// small picker row plus a floating-burst overlay, both driven by
-/// `SharePlayCoordinator.reactionReceived`/`sendReaction(_:)` (see
-/// `SharePlayCoordinator+Reactions.swift`). Distinct from the shared
-/// suggest-and-vote queue (`SharePlayCoordinator+Queue.swift`): this is a
-/// purely in-the-moment social layer with nothing persisted — closer to
-/// "everyone claps at the drop together" than "decide what plays next".
+/// Live emoji reactions in a Listen Together room — a small picker row plus
+/// a floating-burst overlay, both driven by `ListenRoomService.reactions` /
+/// `sendReaction(_:)` (pushed to the room over the live socket by the
+/// bridge, nothing stored). Distinct from the room's suggest-and-vote queue:
+/// this is the in-the-moment layer — everyone claps at the drop together.
 
 /// A row of tappable emoji, shown only while a session is active — see
 /// `NowPlayingView+ScrollContent.swift` for where this sits on screen.
 struct ListenTogetherReactionBar: View {
-    @EnvironmentObject private var sharePlay: SharePlayCoordinator
+    @ObservedObject private var rooms = ListenRoomService.shared
 
     private static let emojiOptions = ["🔥", "❤️", "😂", "🎉", "👏", "😮"]
 
     var body: some View {
-        if sharePlay.isSessionActive {
+        if rooms.isInRoom {
             HStack(spacing: 14) {
                 ForEach(Self.emojiOptions, id: \.self) { emoji in
                     Button {
-                        sharePlay.sendReaction(emoji)
+                        rooms.sendReaction(emoji)
                     } label: {
                         Text(emoji)
                             .font(.system(size: 22))
@@ -42,32 +41,39 @@ struct ListenTogetherReactionBar: View {
 /// `NowPlayingView.swift`), not scoped to the reaction bar itself, so a
 /// reaction is visible no matter where on the screen you're scrolled to.
 struct ListenTogetherReactionsOverlay: View {
-    @EnvironmentObject private var sharePlay: SharePlayCoordinator
+    private let rooms = ListenRoomService.shared
     @State private var floating: [FloatingReaction] = []
 
     private struct FloatingReaction: Identifiable {
         let id = UUID()
         let emoji: String
+        let from: String
         let xOffset: CGFloat
     }
 
     var body: some View {
         ZStack {
             ForEach(floating) { reaction in
-                Text(reaction.emoji)
-                    .font(.system(size: 36))
-                    .offset(x: reaction.xOffset)
+                VStack(spacing: 2) {
+                    Text(reaction.emoji).font(.system(size: 36))
+                    Text(reaction.from)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.black.opacity(0.35), in: Capsule())
+                }
+                .offset(x: reaction.xOffset)
                     .modifier(FloatingReactionAnimator())
             }
         }
         .allowsHitTesting(false)
-        .onReceive(sharePlay.reactionReceived) { emoji in
-            spawn(emoji)
+        .onReceive(rooms.reactions.receive(on: DispatchQueue.main)) { r in
+            spawn(r.emoji, from: r.from)
         }
     }
 
-    private func spawn(_ emoji: String) {
-        let reaction = FloatingReaction(emoji: emoji, xOffset: CGFloat.random(in: -60...60))
+    private func spawn(_ emoji: String, from: String) {
+        let reaction = FloatingReaction(emoji: emoji, from: from, xOffset: CGFloat.random(in: -60...60))
         floating.append(reaction)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
             floating.removeAll { $0.id == reaction.id }

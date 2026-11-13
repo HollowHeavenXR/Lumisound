@@ -24,7 +24,7 @@ struct QueueView: View {
     @EnvironmentObject private var player: AudioPlayerManager
     @EnvironmentObject private var library: LibraryManager
     @EnvironmentObject private var account: AccountService
-    @EnvironmentObject private var sharePlay: SharePlayCoordinator
+    @ObservedObject private var rooms = ListenRoomService.shared
     @State private var editMode: EditMode = .inactive
     @State private var isRestoringQueue = false
     @State private var showSaveQueueAlert = false
@@ -389,65 +389,71 @@ struct QueueView: View {
         return songs.isEmpty ? "Nothing up next" : "\(songs.count) up next · \(time)"
     }
 
-    /// Shows only during an active Listen Together (SharePlay) session —
-    /// participants suggest tracks (via the "Suggest to Group" swipe action
-    /// on any row below) and upvote each other's picks; the most-voted one
-    /// can be played next with one tap. See `SharePlayCoordinator+Queue.swift`.
+    /// Shows while in a Listen Together room — everyone suggests tracks
+    /// (the "Suggest" swipe action on any row below) and votes; the host
+    /// plays the most-voted one with one tap. Backed by the room's queue on
+    /// the bridge (`ListenRoomService`).
     @ViewBuilder
     private var listenTogetherSection: some View {
-        if sharePlay.isSessionActive {
+        if rooms.isInRoom {
             Section {
-                if sharePlay.sortedSharedQueue.isEmpty {
-                    Text("Swipe a track below and tap \"Suggest\" to add it here for the group to vote on.")
+                if rooms.queue.isEmpty {
+                    Text("Swipe a track below and tap \"Suggest\" to add it here for the room to vote on.")
                         .font(.caption)
                         .foregroundStyle(AppTheme.textSecondary)
                         .padding(.vertical, 4)
                 } else {
-                    ForEach(sharePlay.sortedSharedQueue) { item in
+                    ForEach(rooms.queue) { item in
                         listenTogetherRow(item)
                     }
-                    Button {
-                        Task { await sharePlay.playTopSuggestion() }
-                    } label: {
-                        Label("Play Top Voted Next", systemImage: "play.fill")
+                    if rooms.isHost, let top = rooms.queue.first {
+                        Button {
+                            Task { await rooms.playSuggestion(top) }
+                        } label: {
+                            Label("Play Top Voted Now", systemImage: "play.fill")
+                        }
                     }
-                    .disabled(sharePlay.sortedSharedQueue.isEmpty)
                 }
             } header: {
-                Label("Listen Together · \(sharePlay.participantCount) here", systemImage: "shareplay")
+                Label("Listen Together · \(rooms.participants.count) here", systemImage: "person.2.wave.2")
             }
             .listRowSeparatorTint(AppTheme.surface)
         }
     }
 
-    private func listenTogetherRow(_ item: SharedQueueItem) -> some View {
-        let voted = item.voterDeviceIDs.contains(sharePlay.localDeviceID)
-        return HStack(spacing: 10) {
+    private func listenTogetherRow(_ item: RoomQueueItem) -> some View {
+        HStack(spacing: 10) {
             Button {
-                withAnimation(LumiMotion.snap) {
-                    sharePlay.toggleVote(for: item.id)
-                }
+                Task { await rooms.toggleVote(itemID: item.id) }
             } label: {
                 VStack(spacing: 2) {
-                    Image(systemName: voted ? "arrow.up.circle.fill" : "arrow.up.circle")
-                    Text("\(item.voteCount)")
+                    Image(systemName: "arrow.up.circle")
+                    Text("\(item.votes)")
                         .font(.caption2.monospacedDigit())
                 }
-                .foregroundStyle(voted ? AppTheme.dynamicAccent : AppTheme.textSecondary)
+                .foregroundStyle(item.votes > 0 ? AppTheme.dynamicAccent : AppTheme.textSecondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Vote, \(item.votes) votes")
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(AppTheme.textPrimary)
                     .lineLimit(1)
-                Text(item.artist)
+                Text(item.artist ?? "")
                     .font(.caption)
                     .foregroundStyle(AppTheme.textSecondary)
                     .lineLimit(1)
             }
             Spacer()
+            if rooms.isHost {
+                Button { Task { await rooms.playSuggestion(item) } } label: {
+                    Image(systemName: "play.circle.fill").font(.title3).foregroundStyle(AppTheme.dynamicAccent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Play now")
+            }
         }
     }
 
@@ -573,12 +579,12 @@ struct QueueView: View {
             }
         }
         .swipeActions(edge: .leading) {
-            if sharePlay.isSessionActive {
+            if rooms.isInRoom {
                 Button {
-                    sharePlay.suggestTrack(song)
-                    ToastCenter.shared.show("Suggested to group", category: .success, icon: "shareplay")
+                    Task { await rooms.suggest(song: song) }
+                    ToastCenter.shared.show("Suggested to the room", category: .success, icon: "person.2.wave.2")
                 } label: {
-                    Label("Suggest", systemImage: "shareplay")
+                    Label("Suggest", systemImage: "person.2.wave.2")
                 }
                 .tint(AppTheme.dynamicAccent)
             }

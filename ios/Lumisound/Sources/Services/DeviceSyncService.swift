@@ -2,16 +2,13 @@ import Foundation
 
 /// Keeps playback synced across this ACCOUNT'S OWN devices — start playback
 /// on your phone, have your iPad in another room pick it up and stay
-/// roughly in step. Distinct from `SharePlayCoordinator`'s "Listen
-/// Together": that one needs an active FaceTime/Messages `GroupSession`,
-/// which is the wrong fit for "my own second device sitting in another
-/// room with nobody calling anybody." This instead reuses the bridge's
+/// roughly in step. Distinct from Listen Together (`ListenRoomService`,
+/// rooms with friends and a code). This reuses the bridge's
 /// Shared Listening Room mechanism (`/rooms/{code}`) under the hood, just
 /// self-scoped and auto-joined with no room code ever shown — see
 /// `/user/device-sync/*` in main.py.
 ///
-/// Not sample-accurate, and not trying to be: like `PlaybackSyncMessage.
-/// adjustedPosition` (SharePlayCoordinator.swift), this corrects for
+/// Not sample-accurate, and not trying to be: this corrects for
 /// message/poll transit time but is fundamentally a cloud-relay-based sync,
 /// perceptually "in step" (low single-digit seconds) rather than
 /// Sonos-grade sample sync — the honest ceiling for this architecture.
@@ -180,7 +177,7 @@ final class DeviceSyncService: ObservableObject {
 
         if trackURL != lastAppliedTrackURL || player.currentSong?.sourceTrackID != trackURL {
             // sourceTrackID is "source:id" — same re-resolution approach as
-            // SharePlayCoordinator.apply(), and the same Bandcamp caveat
+            // ListenRoomService.resolve(), and the same Bandcamp caveat
             // (its stream lookup needs the original webpage URL, which
             // isn't carried by sourceTrackID alone).
             let parts = trackURL.split(separator: ":", maxSplits: 1)

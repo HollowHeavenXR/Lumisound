@@ -38,6 +38,7 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
 - `search.rs` LibrarySearch: library-wide search (songs / artists / albums / playlists / lyrics) with folding,
   typo tolerance, highlights and LRC times; 9 tests incl. a 20k-song speed bound.
 - `engine/deck.rs`: gapless trim + decoder output rate (HE-AAC), deck gapless test.
+- `together.rs` TogetherSync: Listen Together clock offset + follow decisions (load/seek/play/pause/tempo nudge), 6 tests incl. a convergence simulation.
 
 ## Open (2026-11-12)
 - engine_quality: "hits speed 1.25x / 0.8x pre-echo" limits fail (also before this pass; stretch.rs).

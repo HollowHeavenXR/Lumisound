@@ -32,6 +32,27 @@ final class ListenRoomService: ObservableObject {
     /// rather than silently emptying.
     @Published private(set) var closedByHost = false
 
+    /// Listeners follow the host's playback (track, play/pause, position)
+    /// with the Lumisound sync engine (rust/core/src/together.rs). Off lets
+    /// a listener stay in the room (chat, queue) and play their own thing.
+    @Published var followHost = true {
+        didSet {
+            if followHost { applyHost() } else { player?.setTogetherRate(1); sync.reset() }
+        }
+    }
+    /// How far this device is from the host (seconds, + = ahead), nil when not following.
+    @Published private(set) var syncDrift: Double?
+    /// Live reactions: (emoji, who sent it).
+    let reactions = PassthroughSubject<(emoji: String, from: String), Never>()
+
+    nonisolated let sync = TogetherSync()
+    private weak var player: AudioPlayerManager?
+    private var followTimer: Timer?
+    /// The host track being resolved / loaded right now (don't start it twice).
+    private var loadingKey: String?
+    /// What the host last published, to spot seeks between timer ticks.
+    private var lastSent: (key: String, position: Double, playing: Bool, at: Date)?
+
     var roomCode: String? { state?.roomCode }
     var isInRoom: Bool { state != nil }
 
@@ -46,7 +67,7 @@ final class ListenRoomService: ObservableObject {
     /// stay in sync — they need *recent enough* ones to survive a seek or a pause
     /// they missed. Every 15s keeps a late joiner within a few seconds without
     /// making a listening session a write-heavy workload on a shared bridge.
-    private static let hostBroadcastInterval: TimeInterval = 15
+    private static let hostBroadcastInterval: TimeInterval = 10
 
     private var heartbeatTimer: Timer?
     private var hostBroadcastTimer: Timer?
@@ -79,6 +100,30 @@ final class ListenRoomService: ObservableObject {
         return d
     }()
 
+    // MARK: - Track identity & clock
+
+    /// A song's identity across devices (rust `together_track_key`): its
+    /// source id ("youtube:abc") or folded "title|artist".
+    static func trackKey(_ song: Song?) -> String {
+        guard let song else { return "" }
+        return togetherTrackKey(sourceTrackId: song.sourceTrackID, title: song.title, artist: song.artist)
+    }
+
+    /// A request whose reply carries `server_time`, timed for the clock
+    /// estimate. Returns the reply.
+    @discardableResult
+    private func clocked(_ path: String, method: String = "GET") async throws -> Data {
+        guard let account = AccountService.shared else { throw CancellationError() }
+        let sent = Date().timeIntervalSince1970
+        let data = try await account.makeRequest(path, method: method)
+        let received = Date().timeIntervalSince1970
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let server = Self.parseDate(obj["server_time"] as? String) {
+            sync.addClockSample(sent: sent, server: server.timeIntervalSince1970, received: received)
+        }
+        return data
+    }
+
     // MARK: - Lifecycle
 
     /// Subscribes to live room pushes. Called once at launch.
@@ -104,7 +149,7 @@ final class ListenRoomService: ObservableObject {
         }
         let song = player.currentSong
         let body = Body(
-            track_url: song?.url?.absoluteString,
+            track_url: Self.trackKey(song),
             title: song?.title,
             artist: (song?.artist.isEmpty ?? true) ? nil : song?.artist,
             position_seconds: player.position,
@@ -149,10 +194,22 @@ final class ListenRoomService: ObservableObject {
             isHost = joined.isHost ?? false
             errorMessage = nil
             appLog("ListenRoom: joined \(normalised) (host: \(isHost))", category: "rooms")
+            self.player = player
             await refreshEvents()
             await refreshQueue()
             startHeartbeat()
-            if isHost { startHostBroadcast(player: player) }
+            if isHost {
+                startHostBroadcast(player: player)
+            } else {
+                // A few quick round trips seed the clock estimate, then follow.
+                for _ in 0..<3 {
+                    if let data = try? await clocked("/rooms/\(normalised)"),
+                       let fresh = try? Self.decoder.decode(RoomState.self, from: data) {
+                        state = fresh
+                    }
+                }
+                startFollowing()
+            }
         } catch let err as AccountError {
             errorMessage = err.statusCode == 404 ? "No room with that code." : err.message
         } catch {
@@ -164,6 +221,11 @@ final class ListenRoomService: ObservableObject {
     func leave(close: Bool = false) async {
         guard let account = AccountService.shared, let code = roomCode else { return }
         stopTimers()
+        player?.setTogetherRate(1)
+        sync.reset()
+        loadingKey = nil
+        lastSent = nil
+        syncDrift = nil
         let shouldClose = close && isHost
         // Local state is cleared first, so the UI dismisses immediately rather
         // than waiting on a request that may be slow or fail. There is nothing to
@@ -220,7 +282,7 @@ final class ListenRoomService: ObservableObject {
         do {
             _ = try await account.makeRequest(
                 "/rooms/\(code)/queue", method: "POST",
-                body: Body(track_url: song.url?.absoluteString, title: song.title,
+                body: Body(track_url: Self.trackKey(song), title: song.title,
                            artist: song.artist.isEmpty ? nil : song.artist))
             await refreshQueue()
         } catch let err as AccountError {
@@ -304,6 +366,11 @@ final class ListenRoomService: ObservableObject {
                 isHost: current.isHost,
                 participants: current.participants
             )
+            applyHost()
+        case "room_reaction":
+            if let emoji = event["emoji"] as? String {
+                reactions.send((emoji, event["display_name"] as? String ?? "Someone"))
+            }
         case "room_chat":
             let incoming = RoomEvent(
                 eventType: "chat", title: nil, artist: nil,
@@ -335,14 +402,119 @@ final class ListenRoomService: ObservableObject {
     }
 
     private func refreshParticipants() async {
-        guard let account = AccountService.shared, let code = roomCode else { return }
+        guard AccountService.shared != nil, let code = roomCode else { return }
         do {
-            let data = try await account.makeRequest("/rooms/\(code)/heartbeat", method: "POST")
+            let data = try await clocked("/rooms/\(code)/heartbeat", method: "POST")
             struct Wrapper: Decodable { let participants: [RoomParticipant] }
             participants = try Self.decoder.decode(Wrapper.self, from: data).participants
         } catch {
             // Non-fatal.
         }
+    }
+
+    // MARK: - Following the host
+
+    private func startFollowing() {
+        followTimer?.invalidate()
+        // Twice a second: cheap (no network), and it's what lets a tempo
+        // nudge end on time.
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.applyHost() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        followTimer = t
+        applyHost()
+    }
+
+    /// One step of following: ask the sync engine what to do, do it.
+    func applyHost() {
+        guard followHost, !isHost, let st = state, let player else {
+            syncDrift = nil
+            return
+        }
+        let now = Date().timeIntervalSince1970
+        let hostKey = st.trackURL ?? ""
+        let host = TogetherHost(trackKey: hostKey, position: st.positionSeconds ?? 0, playing: st.isPlaying,
+                                asOfServer: st.updatedAt?.timeIntervalSince1970 ?? (now + sync.clockOffset()))
+        let local = TogetherLocal(trackKey: Self.trackKey(player.currentSong), position: player.position,
+                                  playing: player.isPlaying, now: now)
+        let action = sync.decide(host: host, local: local)
+        syncDrift = local.trackKey == hostKey ? action.drift : nil
+        switch action.kind {
+        case .hold:
+            break
+        case .load:
+            guard loadingKey != hostKey else { return }
+            loadingKey = hostKey
+            Task { await load(key: hostKey, title: st.title ?? "", artist: st.artist ?? "", host: host) }
+        case .seek:
+            player.seek(to: action.position)
+        case .play:
+            player.seek(to: action.position)
+            player.resume()
+        case .pause:
+            player.pause()
+        case .nudge:
+            player.setTogetherRate(action.rate)
+        }
+    }
+
+    /// Starts the host's track on this device: the library copy when there
+    /// is one, else the stream for its source id.
+    private func load(key: String, title: String, artist: String, host: TogetherHost) async {
+        defer { if loadingKey == key { loadingKey = nil } }
+        guard let player, let song = await resolve(key: key, title: title, artist: artist) else {
+            errorMessage = "The host is playing “\(title)”, which isn't in your library or streamable here."
+            return
+        }
+        player.setTogetherRate(1)
+        sync.reset()
+        player.play(song: song, in: [song], uiSource: "listen_together")
+        // Land where the host is by the time the track has opened.
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        guard Self.trackKey(player.currentSong) == key else { return }
+        let at = sync.hostPosition(host: host, now: Date().timeIntervalSince1970)
+        if at > 0.5 { player.seek(to: at) }
+        if !host.playing { player.pause() }
+    }
+
+    /// The song for a room track key.
+    func resolve(key: String, title: String, artist: String) async -> Song? {
+        let library = LibraryManager.shared
+        if let songs = library?.allSongs {
+            // Same track by identity, a local file first.
+            let matches = songs.filter { Self.trackKey($0) == key }
+            if let local = matches.first(where: { $0.url?.isFileURL == true }) ?? matches.first { return local }
+        }
+        guard !key.hasPrefix("lumi:"), let streaming = StreamingService.shared else { return nil }
+        let parts = key.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2, parts[0] != "bandcamp" else { return nil }
+        let track = StreamTrack(id: String(parts[1]), title: title, artist: artist, durationSeconds: 0,
+                                thumbnailURL: "", source: String(parts[0]), youtubeURL: "")
+        guard let url = try? await streaming.streamURL(for: track) else { return nil }
+        return streaming.toSong(track: track, streamURL: url)
+    }
+
+    // MARK: - Reactions & suggestions
+
+    /// Sends a live reaction to everyone in the room (shown locally at once).
+    func sendReaction(_ emoji: String) {
+        guard let account = AccountService.shared, let code = roomCode else { return }
+        reactions.send((emoji, "You"))
+        struct Body: Encodable { let emoji: String }
+        Task { _ = try? await account.makeRequest("/rooms/\(code)/react", method: "POST", body: Body(emoji: emoji)) }
+    }
+
+    /// Host: play a suggestion now and take it off the queue.
+    func playSuggestion(_ item: RoomQueueItem) async {
+        guard isHost, let player, let account = AccountService.shared, let code = roomCode else { return }
+        guard let song = await resolve(key: item.trackURL ?? "", title: item.title, artist: item.artist ?? "") else {
+            errorMessage = "Couldn't find “\(item.title)” to play."
+            return
+        }
+        player.play(song: song, in: [song], uiSource: "listen_together")
+        _ = try? await account.makeRequest("/rooms/\(code)/queue/\(item.id)", method: "DELETE")
+        await refreshQueue()
     }
 
     // MARK: - Timers
@@ -358,15 +530,23 @@ final class ListenRoomService: ObservableObject {
 
     private func startHostBroadcast(player: AudioPlayerManager) {
         hostBroadcastTimer?.invalidate()
-
-        // Timer-driven rather than purely observing the player. A track change and
-        // a pause both need to reach followers promptly, but a seek produces no
-        // discrete event to observe at all — only a position that is suddenly
-        // different — so a periodic republish is the only thing that covers every
-        // case. The observers below exist to make the common, visible changes
-        // immediate instead of waiting up to a full interval.
-        let t = Timer(timeInterval: Self.hostBroadcastInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in await self?.broadcast(player: player) }
+        // Checked every second, published only when something a listener
+        // must know changed: track, play/pause, a seek (the position moved
+        // away from where it should be by now), or every 10 s as a refresh.
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, let last = self.lastSent else {
+                    await self?.broadcast(player: player)
+                    return
+                }
+                let key = Self.trackKey(player.currentSong)
+                let projected = last.position + (last.playing ? Date().timeIntervalSince(last.at) * Double(player.audioSettings.speed) : 0)
+                if key != last.key || player.isPlaying != last.playing
+                    || abs(player.position - projected) > 0.75
+                    || Date().timeIntervalSince(last.at) > Self.hostBroadcastInterval {
+                    await self.broadcast(player: player)
+                }
+            }
         }
         RunLoop.main.add(t, forMode: .common)
         hostBroadcastTimer = t
@@ -398,10 +578,11 @@ final class ListenRoomService: ObservableObject {
             let is_playing: Bool
         }
         let song = player.currentSong
+        lastSent = (Self.trackKey(song), player.position, player.isPlaying, Date())
         do {
             _ = try await account.makeRequest(
                 "/rooms/\(code)", method: "PUT",
-                body: Body(track_url: song?.url?.absoluteString,
+                body: Body(track_url: Self.trackKey(song),
                            title: song?.title,
                            artist: (song?.artist.isEmpty ?? true) ? nil : song?.artist,
                            position_seconds: player.position,
@@ -415,6 +596,7 @@ final class ListenRoomService: ObservableObject {
     private func stopTimers() {
         heartbeatTimer?.invalidate(); heartbeatTimer = nil
         hostBroadcastTimer?.invalidate(); hostBroadcastTimer = nil
+        followTimer?.invalidate(); followTimer = nil
         cancellables.removeAll()
     }
 }

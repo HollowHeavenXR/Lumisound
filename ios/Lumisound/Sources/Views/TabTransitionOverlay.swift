@@ -54,7 +54,7 @@ enum TransitionContext: CaseIterable {
             ]
         case .friends:
             return [
-                "Listen Together keeps everyone's playback in sync over SharePlay, with a shared suggest-and-vote queue.",
+                "Listen Together keeps friends in step with your playback — no call needed — with reactions and a suggest-and-vote queue.",
                 "Friend requests and activity both live here — tap a friend's now-playing entry to jump straight to that track.",
                 "Your friends only see what you're listening to if Share Now Playing is on — check Profile → Edit Profile.",
                 "Music Compatibility scores how closely your taste matches a friend's, based on real listening history.",

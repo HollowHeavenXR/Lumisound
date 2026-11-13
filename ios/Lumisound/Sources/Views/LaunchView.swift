@@ -378,7 +378,7 @@ struct LaunchView: View {
         "Smart Auto Crossfade reads how the outgoing track's ending actually sounds and snaps the fade to a downbeat.",
         "Practice Mode adds a tempo-synced metronome and a sub-100% speed slider — built for learning a track by ear.",
         "Focus Sessions pair a Pomodoro-style work/break timer with a soundtrack that pauses itself at each break.",
-        "Listen Together keeps everyone's playback in sync over SharePlay, with a shared suggest-and-vote queue.",
+        "Listen Together keeps friends in step with your playback — no call needed — with reactions and a suggest-and-vote queue.",
         "Smart Playlists refresh themselves automatically based on rules like favorite status, play count, or genre.",
         "Library Health gives your whole library a single 0–100 score across duplicates, corruption, and missing metadata.",
         "Two-Factor Authentication is available under Account → Security — protect your account with an authenticator app.",

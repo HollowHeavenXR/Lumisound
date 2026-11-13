@@ -13,7 +13,7 @@ extension NowPlayingView {
     //   track info    title, artist, format chips · heart
     //   timeline      the chosen seeker (+ optional counter)
     //   transport     shuffle · prev · play · next · repeat (custom-style aware)
-    //   utility row   lyrics · AirPlay · SharePlay · sleep · queue
+    //   utility row   lyrics · AirPlay · Listen Together · sleep · queue
     //   actions       Radio · Save · Share · Customize
     //   panels        Controls / Sound / Queue / Lyrics / Marks, in a glass card
     //   stations      suggestion shelf

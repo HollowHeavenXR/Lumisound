@@ -109,7 +109,7 @@ final class AIDJService: NSObject, ObservableObject {
     }
 
     /// Starts observing track changes. Call once at launch after `player`
-    /// and `account` are constructed (same timing as `sharePlay.player = player`
+    /// and `account` are constructed (same timing as the other weak-singleton wiring
     /// in `LumisoundApp.swift`'s `.task`).
     func attach(player: AudioPlayerManager, account: AccountService) {
         self.player = player

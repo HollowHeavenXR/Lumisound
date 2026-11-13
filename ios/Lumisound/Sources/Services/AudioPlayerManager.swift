@@ -49,11 +49,6 @@ final class AudioPlayerManager: ObservableObject {
                 applyTrackAudioSettings(previousID: oldValue?.id)
                 pushPlaybackStateToBridge()
                 scheduleHistoryLog()
-                // If a SharePlay "listen together" session is active, let the
-                // other participants know the track changed — no-ops when no
-                // session is active or when this change came FROM applying a
-                // remote participant's message (see SharePlayCoordinator).
-                SharePlayCoordinator.shared?.broadcastTrackChange(song: currentSong, isPlaying: isPlaying, position: position)
             } else if currentSong?.displayName != oldValue?.displayName
                         || currentSong?.artistName != oldValue?.artistName {
                 // Same track, corrected metadata. `updateNowPlaying()` only
@@ -112,7 +107,6 @@ final class AudioPlayerManager: ObservableObject {
             )
             WidgetDataService.shared.updatePlayState(isPlaying: isPlaying, position: position, duration: duration)
             pushPlaybackStateToBridge()
-            SharePlayCoordinator.shared?.broadcastPlayState(isPlaying: isPlaying, position: position)
         }
     }
     /// Backing store for `position`/`duration` — see `PlaybackProgress` for why

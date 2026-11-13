@@ -6,12 +6,6 @@
     <array>
         <string>group.com.lumisound.ios</string>
     </array>
-    <!-- SharePlay ("Listen Together" — see ListenTogetherActivity.swift /
-         SharePlayCoordinator.swift). Self-serviceable via Xcode's Signing &
-         Capabilities "Group Activities" toggle — unlike CarPlay's entitlement
-         below (commented out), this one needs no separate Apple approval. -->
-    <key>com.apple.developer.group-session</key>
-    <true/>
     <!-- HealthKit (see HearingHealthService.swift / AdaptiveSleepTimerService.swift)
          — read-only: headphone audio exposure (Hearing Health feature) and
          sleep analysis (Adaptive Sleep Timer). Self-serviceable, no separate
