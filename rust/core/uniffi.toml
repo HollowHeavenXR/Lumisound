@@ -6,3 +6,5 @@ ffi_module_filename = "LumisoundCoreFFI"
 [bindings.kotlin]
 package_name = "com.lumisound.core"
 cdylib_name = "lumisound_core"
+# Android's cleaner where java.lang.ref.Cleaner does not exist (before API 33).
+android = true
