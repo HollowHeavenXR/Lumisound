@@ -32,10 +32,22 @@ extension LibraryManager {
 
     func toggleFavorite(songID: String) {
         let nowFavorite: Bool
-        if favoriteSongIDs.contains(songID) {
-            favoriteSongIDs.remove(songID)
-            nowFavorite = false
+        if isFavorite(songID: songID) {
+            // Every id that makes this song a favourite goes: its own, and
+            // the ids other devices saved it under (matched by file name in
+            // `isFavorite`). Removing only this device's id left a favourite
+            // made on the Apple TV or an Android phone impossible to remove
+            // here — the heart stayed filled, and tapping it again *added* a
+            // second row.
+            let key = Self.favoriteKey(for: songID)
+            let same = favoriteSongIDs.filter { $0 == songID || (!key.isEmpty && Self.favoriteKey(for: $0) == key) }
+            favoriteSongIDs.subtract(same)
+            persistence.saveFavorites(favoriteSongIDs)
             ToastCenter.shared.show("Removed from Favorites", category: .info, icon: "heart")
+            for id in same {
+                AccountService.shared?.pushFavorite(songID: id, isFavorite: false, title: nil, artist: nil, album: nil)
+            }
+            return
         } else {
             favoriteSongIDs.insert(songID)
             nowFavorite = true

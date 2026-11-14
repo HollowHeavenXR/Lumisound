@@ -475,3 +475,79 @@ impl Limiter {
         (out[0] * g, out[1] * g)
     }
 }
+
+/// Delay-line vibrato (a pitch wobble): the read point swings around a
+/// short delay, which raises and lowers the pitch.
+///
+/// Peak pitch ratio 2^(st/12) ≈ 1 + A·2πf, so the delay swing A (seconds)
+/// is (2^(st/12) - 1) / (2πf). The swing glides to its target (~30 ms) so
+/// depth changes never jump, and the effect cross-fades in and out (10 ms).
+/// The line always records, so switching it on never reads stale audio.
+pub struct Vibrato {
+    rate: f32,
+    hz: f32,
+    semitones: f32,
+    amp: f32,
+    coef: f32,
+    target: f32,
+    wet: f32,
+    phase: f32,
+    buf: Vec<[f32; 2]>,
+    w: usize,
+}
+
+impl Vibrato {
+    pub fn new(rate: f32) -> Self {
+        // Longest delay is 41 ms (20 ms swing each way + 1 ms).
+        let len = ((rate * 0.045) as usize).max(4096).next_power_of_two();
+        Self { rate, hz: 0.0, semitones: 0.0, amp: 0.0, coef: 1.0 - (-1.0 / (0.03 * rate)).exp(), target: 0.0, wet: 0.0, phase: 0.0, buf: vec![[0.0; 2]; len], w: 0 }
+    }
+
+    /// Rate in Hz (0 = off) and depth in semitones.
+    pub fn set(&mut self, hz: f32, semitones: f32) {
+        self.hz = hz.clamp(0.0, 20.0);
+        self.semitones = semitones.abs().min(3.0);
+        self.target = if self.hz > 0.0 { ((2f32.powf(self.semitones / 12.0) - 1.0) / (std::f32::consts::TAU * self.hz)).min(0.02) } else { 0.0 };
+    }
+
+    pub fn settings(&self) -> (f32, f32) {
+        (self.hz, self.semitones)
+    }
+
+    #[inline]
+    pub fn process(&mut self, mut l: f32, mut r: f32) -> (f32, f32) {
+        let n = self.buf.len();
+        self.buf[self.w] = [l, r];
+        if self.target > 0.0 || self.wet > 0.0 {
+            let tau = std::f32::consts::TAU;
+            self.amp += (self.target - self.amp) * self.coef;
+            let wet_to = if self.target > 0.0 || self.amp > 1e-6 { 1.0 } else { 0.0 };
+            let step = 1.0 / (0.01 * self.rate);
+            // Ramp toward the target and stay there (no flip-flopping around it).
+            self.wet = if wet_to > self.wet { (self.wet + step).min(wet_to) } else { (self.wet - step).max(wet_to) };
+            self.phase = (self.phase + tau * self.hz / self.rate) % tau;
+            // Centre delay = swing + 1 ms so the read point never passes the write point.
+            let delay = (self.amp * (1.0 + self.phase.sin()) + 0.001) * self.rate;
+            let rp = self.w as f32 - delay;
+            let rp = if rp < 0.0 { rp + n as f32 } else { rp };
+            let i0 = rp as usize % n;
+            let f = rp.fract();
+            // 4-point cubic Hermite: linear interpolation dulls the highs
+            // by a varying amount as the delay moves (a faint flutter).
+            let at = |k: usize| self.buf[(i0 + n + k - 1) % n];
+            let (xm1, x0, x1, x2) = (at(0), at(1), at(2), at(3));
+            let mut y = [0.0f32; 2];
+            for c in 0..2 {
+                let c1 = 0.5 * (x1[c] - xm1[c]);
+                let c2 = xm1[c] - 2.5 * x0[c] + 2.0 * x1[c] - 0.5 * x2[c];
+                let c3 = 0.5 * (x2[c] - xm1[c]) + 1.5 * (x0[c] - x1[c]);
+                y[c] = ((c3 * f + c2) * f + c1) * f + x0[c];
+            }
+            let w = self.wet;
+            l = y[0] * w + l * (1.0 - w);
+            r = y[1] * w + r * (1.0 - w);
+        }
+        self.w = (self.w + 1) % n;
+        (l, r)
+    }
+}

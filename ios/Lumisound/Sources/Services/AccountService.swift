@@ -98,6 +98,8 @@ final class AccountService: ObservableObject {
     // MARK: Debounce state
 
     var syncDebounceTask: Task<Void, Never>?
+    /// The pending pull for a live "sync_changed" event.
+    var livePullTask: Task<Void, Never>?
 
     /// The default audio settings as of the last push they caused, in the
     /// form `AudioSettings.syncComparable` gives. See the `audioSettings`
@@ -129,7 +131,6 @@ final class AccountService: ObservableObject {
         // them back, so the server's copy was write-only.
         Task { @MainActor [weak self, weak library] in
             guard let self, let library, self.isLoggedIn else { return }
-            await self.mergeFavoritesFromServer(into: library)
             // One-time catch-up for lyrics Aria generated before they were
             // persisted server-side — see LyricsMigrationService.
             LyricsMigrationService.shared.migrateIfNeeded(library: library, account: self)
@@ -186,8 +187,12 @@ final class AccountService: ObservableObject {
         if let lastPushCompletedAt, Date().timeIntervalSince(lastPushCompletedAt) < 10 {
             return
         }
-        Task { @MainActor [weak self, weak library] in
-            guard let self, let library else { return }
+        // One pull for a burst of events (another device adding twenty songs
+        // to a playlist announces each one).
+        livePullTask?.cancel()
+        livePullTask = Task { @MainActor [weak self, weak library] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let self, let library, !Task.isCancelled else { return }
             await self.pullSync(library: library)
         }
     }

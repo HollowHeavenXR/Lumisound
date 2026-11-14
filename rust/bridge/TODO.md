@@ -49,3 +49,12 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
   `resolve_username(name)` = current name, else a former name nobody holds now; used by friend requests
   and playlist collaborator adds. Login deliberately still needs the current name or email.
 - Operator account renamed HeavenlyXenusVR -> Voxelise (Nyxframe user 8 HollowHeavenXR -> Voxelise too).
+
+## 2026-11-14: merge-mode sync push
+- `POST /user/sync` with `"merge": true` (routes/library.rs `merge_library`): favorites upserted,
+  `removed_favorites` deleted; pushed playlists upserted, `removed_playlists` deleted, others untouched; a
+  pushed playlist's rows become the pushed list followed by rows the device has not accounted for (`seen`,
+  identities from `row_identity`, same function in core `syncmerge.rs`). Without the flag the push replaces
+  the account as before (old app versions).
+- Favorite and playlist endpoints now announce `sync_changed` on `/ws/live` (Android edits reach the iPhone at once).
+- Playlist upserts never touch another account's playlist id (both push paths).

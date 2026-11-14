@@ -92,6 +92,7 @@ async fn create_playlist(State(st): State<AppState>, u: User, J(b): J<CreatePlay
     let mut v = playlist_json(&st, &id, false).await?.unwrap_or(Value::Null);
     v["tracks"] = json!([]);
     ev(&st, "playlist", "playlist_created", &u.id, json!({"playlist_id": id})).await;
+    st.push_live(&u.id, json!({"type": "sync_changed"}));
     Ok((StatusCode::CREATED, Json(v)).into_response())
 }
 
@@ -125,6 +126,7 @@ async fn update_playlist(State(st): State<AppState>, u: User, Path(id): Path<Str
     }
     let v = playlist_json(&st, &id, false).await?.unwrap_or(Value::Null);
     ev(&st, "playlist", "playlist_updated", &u.id, json!({"playlist_id": id})).await;
+    st.push_live(&u.id, json!({"type": "sync_changed"}));
     Ok(Json(v))
 }
 
@@ -134,6 +136,7 @@ async fn delete_playlist(State(st): State<AppState>, u: User, Path(id): Path<Str
         return Err(AppError::not_found("Playlist not found"));
     }
     ev(&st, "playlist", "playlist_deleted", &u.id, json!({"playlist_id": id})).await;
+    st.push_live(&u.id, json!({"type": "sync_changed"}));
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -206,6 +209,7 @@ async fn add_track(State(st): State<AppState>, u: User, Path(id): Path<String>, 
     .await?;
     sqlx::query("UPDATE ios_user_playlists SET updated_at = NOW() WHERE id = $1").bind(&id).execute(&st.db).await?;
     ev(&st, "playlist", "track_added", &u.id, json!({"playlist_id": id, "track_id": track_id})).await;
+    st.push_live(&u.id, json!({"type": "sync_changed"}));
     Ok((StatusCode::CREATED, Json(json!({"id": track_id, "position": pos}))).into_response())
 }
 
@@ -220,6 +224,7 @@ async fn remove_track(State(st): State<AppState>, u: User, Path((id, track_id)):
     }
     sqlx::query("UPDATE ios_user_playlists SET updated_at = NOW() WHERE id = $1").bind(&id).execute(&st.db).await?;
     ev(&st, "playlist", "track_removed", &u.id, json!({"playlist_id": id, "track_id": track_id})).await;
+    st.push_live(&u.id, json!({"type": "sync_changed"}));
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -334,12 +339,14 @@ async fn add_favorite(State(st): State<AppState>, u: User, J(b): J<FavBody>) -> 
     .execute(&st.db)
     .await?;
     ev(&st, "favorites", "favorite_added", &u.id, json!({"song_id": b.song_id})).await;
+    st.push_live(&u.id, json!({"type": "sync_changed"}));
     Ok((StatusCode::CREATED, Json(json!({"song_id": b.song_id, "status": "added"}))).into_response())
 }
 
 async fn remove_favorite(State(st): State<AppState>, u: User, Path(song_id): Path<String>) -> ApiResult<StatusCode> {
     sqlx::query("DELETE FROM ios_user_favorites WHERE user_id = $1 AND song_id = $2").bind(&u.id).bind(&song_id).execute(&st.db).await?;
     ev(&st, "favorites", "favorite_removed", &u.id, json!({"song_id": song_id})).await;
+    st.push_live(&u.id, json!({"type": "sync_changed"}));
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -646,7 +653,7 @@ async fn replace_library(tx: &mut Transaction<'_, Postgres>, user_id: &str, favo
         "INSERT INTO ios_user_playlists (id, user_id, name, description, folder, tags_json) \
          SELECT p->>'id', $1, p->>'name', p->>'description', p->>'folder', p->>'tags_json' FROM jsonb_array_elements($2) p \
          ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, \
-           folder = EXCLUDED.folder, tags_json = EXCLUDED.tags_json",
+           folder = EXCLUDED.folder, tags_json = EXCLUDED.tags_json WHERE ios_user_playlists.user_id = EXCLUDED.user_id",
     )
     .bind(user_id)
     .bind(sqlx::types::Json(&pls))
@@ -656,11 +663,112 @@ async fn replace_library(tx: &mut Transaction<'_, Postgres>, user_id: &str, favo
         sqlx::query(
             "INSERT INTO ios_playlist_tracks (id, playlist_id, track_url, local_song_id, title, artist, album, duration_seconds, position) \
              SELECT t->>'id', t->>'playlist_id', t->>'track_url', t->>'local_song_id', t->>'title', t->>'artist', t->>'album', \
-                    (t->>'duration_seconds')::int, (t->>'position')::int FROM jsonb_array_elements($1) t",
+                    (t->>'duration_seconds')::int, (t->>'position')::int FROM jsonb_array_elements($1) t \
+             WHERE EXISTS (SELECT 1 FROM ios_user_playlists p WHERE p.id = t->>'playlist_id' AND p.user_id = $2)",
         )
         .bind(sqlx::types::Json(&tracks))
+        .bind(user_id)
         .execute(&mut **tx)
         .await?;
+    }
+    Ok(())
+}
+
+/// How two rows of one playlist are told apart: the id the writing device
+/// gave the song, else its title and artist. Must match `row_identity` in
+/// the core (`syncmerge.rs`).
+fn row_identity(local_song_id: Option<&str>, title: &str, artist: Option<&str>) -> String {
+    match local_song_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => id.to_string(),
+        None => format!("t:{}|{}", title.trim().to_lowercase(), artist.unwrap_or("").trim().to_lowercase()),
+    }
+}
+
+/// A push from a device that merges (`"merge": true`): nothing is deleted
+/// unless the device says it removed it.
+///
+/// * favorites: pushed rows are upserted, `removed_favorites` deleted;
+/// * playlists: pushed ones are upserted, `removed_playlists` deleted, the
+///   rest left alone;
+/// * a pushed playlist's rows become the pushed list, followed by any rows
+///   the device has not accounted for (`seen`) — another device's additions
+///   since its last pull, or songs it doesn't have.
+async fn merge_library(tx: &mut Transaction<'_, Postgres>, user_id: &str, favorites: &[Value], playlists: &[Value], gone_favs: &[String], gone_pls: &[String]) -> ApiResult<()> {
+    if !gone_favs.is_empty() {
+        sqlx::query("DELETE FROM ios_user_favorites WHERE user_id = $1 AND song_id = ANY($2)").bind(user_id).bind(gone_favs).execute(&mut **tx).await?;
+    }
+    if !favorites.is_empty() {
+        sqlx::query(
+            "INSERT INTO ios_user_favorites (user_id, song_id, title, artist, album) \
+             SELECT DISTINCT ON (f->>'song_id') $1, f->>'song_id', f->>'title', f->>'artist', f->>'album' FROM jsonb_array_elements($2) f \
+             ON CONFLICT (user_id, song_id) DO UPDATE SET title = COALESCE(EXCLUDED.title, ios_user_favorites.title), \
+               artist = COALESCE(EXCLUDED.artist, ios_user_favorites.artist), album = COALESCE(EXCLUDED.album, ios_user_favorites.album)",
+        )
+        .bind(user_id)
+        .bind(sqlx::types::Json(favorites))
+        .execute(&mut **tx)
+        .await?;
+    }
+    if !gone_pls.is_empty() {
+        sqlx::query("DELETE FROM ios_user_playlists WHERE user_id = $1 AND id = ANY($2)").bind(user_id).bind(gone_pls).execute(&mut **tx).await?;
+    }
+    for p in playlists {
+        let id = p["id"].as_str().filter(|s| !s.is_empty()).map(str::to_string).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        if gone_pls.contains(&id) {
+            continue;
+        }
+        let owner: Option<String> = sqlx::query_scalar("SELECT user_id FROM ios_user_playlists WHERE id = $1 FOR UPDATE").bind(&id).fetch_optional(&mut **tx).await?;
+        if owner.as_deref().is_some_and(|o| o != user_id) {
+            continue; // someone else's playlist id
+        }
+        let tags = match p.get("tags") { Some(t @ Value::Array(_)) => serde_json::to_string(t).unwrap(), _ => "[]".to_string() };
+        sqlx::query(
+            "INSERT INTO ios_user_playlists (id, user_id, name, description, folder, tags_json) VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = COALESCE(EXCLUDED.description, ios_user_playlists.description), \
+               folder = EXCLUDED.folder, tags_json = EXCLUDED.tags_json, updated_at = NOW()",
+        )
+        .bind(&id)
+        .bind(user_id)
+        .bind(p["name"].as_str())
+        .bind(p["description"].as_str())
+        .bind(p["folder"].as_str())
+        .bind(&tags)
+        .execute(&mut **tx)
+        .await?;
+
+        let mut known: std::collections::HashSet<String> = p["seen"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        let mut rows: Vec<Value> = Vec::new();
+        for t in p["tracks"].as_array().into_iter().flatten() {
+            let Some(title) = t["title"].as_str() else { continue };
+            known.insert(row_identity(t["local_song_id"].as_str(), title, t["artist"].as_str()));
+            let dur = t["duration_seconds"].as_f64().map(|d| d as i64).unwrap_or(0);
+            rows.push(json!({"id": uuid::Uuid::new_v4().to_string(), "track_url": t["track_url"], "local_song_id": t["local_song_id"],
+                "title": title, "artist": t["artist"], "album": t["album"], "duration_seconds": dur}));
+        }
+        // Rows the device doesn't know about stay, after its own.
+        let existing: Vec<(String, Option<String>, Option<String>, String, Option<String>, Option<String>, Option<i32>)> = sqlx::query_as(
+            "SELECT id, track_url, local_song_id, title, artist, album, duration_seconds FROM ios_playlist_tracks WHERE playlist_id = $1 ORDER BY position ASC, added_at ASC",
+        )
+        .bind(&id)
+        .fetch_all(&mut **tx)
+        .await?;
+        for (rid, url, lsid, title, artist, album, dur) in existing {
+            if known.insert(row_identity(lsid.as_deref(), &title, artist.as_deref())) {
+                rows.push(json!({"id": rid, "track_url": url, "local_song_id": lsid, "title": title, "artist": artist, "album": album, "duration_seconds": dur.unwrap_or(0)}));
+            }
+        }
+        sqlx::query("DELETE FROM ios_playlist_tracks WHERE playlist_id = $1").bind(&id).execute(&mut **tx).await?;
+        if !rows.is_empty() {
+            sqlx::query(
+                "INSERT INTO ios_playlist_tracks (id, playlist_id, track_url, local_song_id, title, artist, album, duration_seconds, position) \
+                 SELECT t->>'id', $1, t->>'track_url', t->>'local_song_id', t->>'title', t->>'artist', t->>'album', \
+                        (t->>'duration_seconds')::int, (n - 1)::int FROM jsonb_array_elements($2) WITH ORDINALITY AS x(t, n)",
+            )
+            .bind(&id)
+            .bind(sqlx::types::Json(&rows))
+            .execute(&mut **tx)
+            .await?;
+        }
     }
     Ok(())
 }
@@ -688,10 +796,18 @@ async fn sync_push(State(st): State<AppState>, u: User, J(b): J<Map<String, Valu
             }
         }
     }
+    let merge = b.get("merge").and_then(Value::as_bool).unwrap_or(false);
     let mut tx = st.db.begin().await?;
     create_backup(&mut tx, &u.id, "pre_push").await?;
-    log_sync(&mut tx, &u.id, "push", &format!("{} favorites, {} playlists", favorites.len(), playlists.len())).await?;
-    replace_library(&mut tx, &u.id, &favorites, &playlists, true).await?;
+    if merge {
+        let strs = |k: &str| -> Vec<String> { b.get(k).and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect() };
+        let (gone_favs, gone_pls) = (strs("removed_favorites"), strs("removed_playlists"));
+        log_sync(&mut tx, &u.id, "push", &format!("merge: {} favorites (-{}), {} playlists (-{})", favorites.len(), gone_favs.len(), playlists.len(), gone_pls.len())).await?;
+        merge_library(&mut tx, &u.id, &favorites, &playlists, &gone_favs, &gone_pls).await?;
+    } else {
+        log_sync(&mut tx, &u.id, "push", &format!("{} favorites, {} playlists", favorites.len(), playlists.len())).await?;
+        replace_library(&mut tx, &u.id, &favorites, &playlists, true).await?;
+    }
     // Settings: the body's value wins, a missing/null one keeps the stored value.
     let mut settings = Map::new();
     for c in SETTING_COLS {

@@ -196,6 +196,11 @@ impl TrackResolver {
         self.index_of(&row).map(|i| self.tracks[i].id.clone())
     }
 
+    /// Whether `id` is one of this device's tracks.
+    pub fn contains(&self, id: String) -> bool {
+        self.by_id.contains_key(&id)
+    }
+
     /// `resolve` for many rows (same order).
     pub fn resolve_all(&self, rows: Vec<TrackRef>) -> Vec<Option<String>> {
         rows.iter().map(|r| self.index_of(r).map(|i| self.tracks[i].id.clone())).collect()

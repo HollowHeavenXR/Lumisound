@@ -13,6 +13,7 @@ pub mod health;
 pub mod deck;
 pub mod dsp;
 pub mod mixer;
+pub mod session;
 pub mod stretch;
 
 use mixer::{Cmd, Event, Mixer, Telemetry};
@@ -716,7 +717,10 @@ pub fn engine_set_pull_rate(rate: u32) {
     }
 }
 
-#[cfg(any(target_os = "tvos", target_os = "android"))]
+// Everywhere the engine doesn't open the audio device itself (tvOS, Android,
+// and desktop builds, where the Android app's unit tests drive it), the app
+// pulls the audio.
+#[cfg(not(any(target_os = "ios", target_os = "macos")))]
 mod output {
     use super::Mixer;
     use std::sync::{Arc, Mutex};
@@ -725,7 +729,7 @@ mod output {
         super::PULL_RATE.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// The app's AVAudioSourceNode pulls from the engine (see `pull`).
+    /// The app's audio callback pulls from the engine (see `pull`).
     pub struct Output;
 
     impl Output {
@@ -738,25 +742,6 @@ mod output {
     impl Drop for Output {
         fn drop(&mut self) {
             super::pull::unregister();
-        }
-    }
-}
-
-#[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "tvos", target_os = "android")))]
-mod output {
-    use super::Mixer;
-    use std::sync::{Arc, Mutex};
-
-    pub fn preferred_rate() -> u32 {
-        48_000
-    }
-
-    /// No audio device on this platform (tests, watchOS).
-    pub struct Output;
-
-    impl Output {
-        pub fn start(_mixer: Arc<Mutex<Mixer>>, _tele: Arc<super::mixer::Telemetry>) -> Result<Self, String> {
-            Err("no audio output on this platform".into())
         }
     }
 }

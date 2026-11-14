@@ -4,14 +4,14 @@
 //! output). The Android app streams and decodes with the platform player, so
 //! it runs every decoded buffer through this: the same processors in the same
 //! order as the mixer's master section — LumiEQ, LumiFX character, reverb,
-//! night-mode compressor, mono fold-down, LumiSpace, 8D rotation, tremolo,
+//! night-mode compressor, mono fold-down, LumiSpace, 8D rotation, vibrato, tremolo,
 //! volume, LumiBoost, look-ahead limiter. A setting sounds the same on both.
 //!
 //! `process_*` runs on the player's audio thread: one uncontended lock (the
 //! control side holds it only to change a setting), no allocation.
 
 use super::boost::{BoostRoute, LumiBoost};
-use super::dsp::{Compressor, Limiter, Ramp, Reverb};
+use super::dsp::{Compressor, Limiter, Ramp, Reverb, Vibrato};
 use super::eq::LumiEq;
 use super::fx::{Character, FxCharacter};
 use super::space::{LumiSpace, SpatialMode};
@@ -33,6 +33,7 @@ struct Stage {
     trem_hz: f32,
     trem_depth: f32,
     trem_phase: f32,
+    vibrato: Vibrato,
     volume: Ramp,
     boost: LumiBoost,
     limiter: Limiter,
@@ -56,6 +57,7 @@ impl Stage {
             trem_hz: 0.0,
             trem_depth: 0.0,
             trem_phase: 0.0,
+            vibrato: Vibrato::new(r),
             volume: Ramp::new(1.0),
             boost: LumiBoost::new(r),
             limiter: Limiter::new(r),
@@ -83,6 +85,8 @@ impl Stage {
         n.spatial.set_yaw(self.yaw);
         n.yaw = self.yaw;
         (n.pan_hz, n.trem_hz, n.trem_depth) = (self.pan_hz, self.trem_hz, self.trem_depth);
+        let (hz, st) = self.vibrato.settings();
+        n.vibrato.set(hz, st);
         n.volume = Ramp::new(self.volume.target());
         n.boost.set_route(self.boost.route());
         n.boost.set_amount(self.boost.amount_target());
@@ -107,6 +111,7 @@ impl Stage {
             l *= (1.0 - x).sqrt();
             r *= (1.0 + x).sqrt();
         }
+        (l, r) = self.vibrato.process(l, r);
         if self.trem_hz > 0.0 && self.trem_depth > 0.0 {
             self.trem_phase = (self.trem_phase + tau * self.trem_hz / self.rate as f32) % tau;
             let lfo = 1.0 - self.trem_depth / 2.0 + self.trem_depth / 2.0 * self.trem_phase.sin();
@@ -281,6 +286,11 @@ impl SoundChain {
         });
     }
 
+    /// Vibrato rate (Hz, 0 = off) and depth in semitones.
+    pub fn set_vibrato(&self, hz: f32, semitones: f32) {
+        self.with(|s| s.vibrato.set(hz, semitones));
+    }
+
     /// 8D rotation speed (Hz, 0 = off) and tremolo rate / depth.
     pub fn set_modulation(&self, pan_hz: f32, tremolo_hz: f32, tremolo_depth: f32) {
         self.with(|s| {
@@ -364,6 +374,26 @@ mod tests {
         let mut mono: Vec<f32> = src.iter().step_by(2).copied().collect();
         m.process_f32_slice(&mut mono, 1);
         assert!(mono.iter().all(|x| x.is_finite()));
+    }
+
+    #[test]
+    fn vibrato_wobbles_the_pitch_and_switches_off_cleanly() {
+        let chain = SoundChain::new(48_000);
+        let tone = |n: usize| -> Vec<f32> { (0..n).flat_map(|i| { let s = (i as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.3; [s, s] }).collect() };
+        let mut dry = tone(48_000);
+        chain.process_f32_slice(&mut dry, 2);
+        chain.set_vibrato(5.0, 0.5);
+        let mut wet = tone(48_000);
+        chain.process_f32_slice(&mut wet, 2);
+        assert!(wet.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+        let diff = dry.iter().zip(&wet).skip(24_000).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        assert!(diff > 0.02, "vibrato changed nothing ({diff})");
+        // Off again: settles back to the plain signal.
+        chain.set_vibrato(0.0, 0.0);
+        let mut a = tone(48_000);
+        chain.process_f32_slice(&mut a, 2);
+        let peak = a[90_000..].iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!((peak - 0.3).abs() < 0.02, "level after vibrato off: {peak}");
     }
 
     #[test]

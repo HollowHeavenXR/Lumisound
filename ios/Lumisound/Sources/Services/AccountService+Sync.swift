@@ -42,14 +42,21 @@ extension AccountService {
             SyncFavoriteRec(songId: $0.id, title: $0.title, artist: $0.artistName, album: $0.albumName)
         }
         let playlists = library.playlists.map { playlist -> SyncPlaylistRec in
-            let songs = playlist.songIDs.compactMap { library.songsByID[$0] }
-            return SyncPlaylistRec(
+            SyncPlaylistRec(
                 id: playlist.id.uuidString, name: playlist.name, folder: playlist.folder, tags: playlist.tags,
-                tracks: songs.enumerated().map { idx, song in
-                    SyncTrackRec(localSongId: song.id, trackUrl: song.url?.absoluteString, title: song.title,
-                                 artist: song.artist.isEmpty ? nil : song.artist,
-                                 album: song.album.isEmpty ? nil : song.album,
-                                 durationSeconds: Int64(song.duration), position: Int64(idx))
+                tracks: playlist.songIDs.enumerated().map { idx, id in
+                    guard let song = library.songsByID[id] else {
+                        // Not in the library right now (file missing, folder
+                        // not scanned yet): still an entry of this playlist.
+                        // Leaving it out told the server it had been removed.
+                        let name = (LibraryManager.favoriteKey(for: id) as NSString).deletingPathExtension
+                        return SyncTrackRec(localSongId: id, trackUrl: nil, title: name.isEmpty ? id : name,
+                                            artist: nil, album: nil, durationSeconds: nil, position: Int64(idx))
+                    }
+                    return SyncTrackRec(localSongId: song.id, trackUrl: song.url?.absoluteString, title: song.title,
+                                        artist: song.artist.isEmpty ? nil : song.artist,
+                                        album: song.album.isEmpty ? nil : song.album,
+                                        durationSeconds: Int64(song.duration), position: Int64(idx))
                 })
         }
         func json<T: Encodable>(_ v: T?) -> String? {
@@ -78,9 +85,13 @@ extension AccountService {
             guard let id = song.sourceTrackID, let bpm = song.bpm else { return nil }
             return BpmEntry(sourceTrackId: id, bpm: bpm)
         }
-        let payload = syncBuildPayload(local: SyncLocal(
+        // Merge mode: the server upserts what is sent and deletes only what
+        // this device removed since its last sync (the core works that out
+        // from the state it last agreed on with the server).
+        let payload = syncBuildMergePayload(local: SyncLocal(
             favorites: favorites, playlists: playlists, prefs: Self.readSyncedPrefs(),
-            themeHex: themeHex, earnedBadges: Array(Self.earnedBadges()), blobs: blobs, bpmBySource: bpm))
+            themeHex: themeHex, earnedBadges: Array(Self.earnedBadges()), blobs: blobs, bpmBySource: bpm),
+            account: currentUser?.id ?? "")
 
         do {
             // Retried, because the push is an idempotent upsert — the server
@@ -95,6 +106,7 @@ extension AccountService {
             // big to finish. Three attempts with backoff cover a blip in seconds
             // instead of twenty minutes.
             _ = try await _makeRequest("/user/sync", method: "POST", bodyData: payload, maxAttempts: 3)
+            syncPushCommitted()
             lastSyncDate = Date()
             // The server broadcasts a "sync_changed" live event to every one
             // of this account's active connections after a successful push —
@@ -184,8 +196,8 @@ extension AccountService {
         do {
             let data = try await makeRequest("/user/sync")
             let defaults = UserDefaults.standard
-            // Merge rules (Rust core sync.rs): favourites/playlists only ever
-            // added, settings only restored into unset keys, badges unioned.
+            // Settings rules (Rust core sync.rs): only restored into unset
+            // keys, badges unioned.
             let plan = try syncPullPlan(remote: data, local: SyncPullLocal(
                 favoriteIds: Array(library.favoriteSongIDs),
                 playlistNames: library.playlists.map(\.name),
@@ -195,13 +207,30 @@ extension AccountService {
                 hasAccentColor: defaults.data(forKey: "accent_color_data") != nil,
                 earnedBadges: Array(Self.earnedBadges())))
 
-            // One write / no per-item toast each (this runs on every
-            // launch/foreground; per-item writes froze the app).
-            if !plan.favoritesToAdd.isEmpty { library.addFavorites(ids: Set(plan.favoritesToAdd)) }
-            for sp in plan.playlistsToCreate {
-                let newPL = library.createPlaylist(name: sp.name, songIDs: sp.tracks.compactMap(\.localSongId))
-                if sp.folder != nil { library.setFolder(sp.folder, forPlaylistID: newPL.id) }
-                if !sp.tags.isEmpty { library.setTags(sp.tags, forPlaylistID: newPL.id) }
+            // Favourites and playlists: a three-way merge against the state
+            // this device last agreed on with the server (core syncmerge.rs),
+            // so a removal made on another device is a removal here too, and
+            // playlist rows written by another device (under its own ids for
+            // the songs) land on this library's songs. Matching runs off the
+            // main thread: it indexes the whole library.
+            let catalog = library.allSongs.map { song in
+                CatalogTrack(id: song.id, title: song.title, artist: song.artist,
+                             filename: song.url?.lastPathComponent ?? LibraryManager.favoriteKey(for: song.id),
+                             trackUrl: song.sourceTrackID, durationSeconds: song.duration > 0 ? song.duration : nil)
+            }
+            let mergeLocal = MergeLocal(
+                account: currentUser?.id ?? "",
+                favoriteIds: Array(library.favoriteSongIDs),
+                playlists: library.playlists.map { MergeLocalPlaylist(id: $0.id.uuidString, name: $0.name, songIds: $0.songIDs) },
+                libraryLoaded: !catalog.isEmpty)
+            let merge = try await Task.detached(priority: .utility) {
+                try syncMergePlan(remote: data, local: mergeLocal, resolver: TrackResolver(catalog: catalog))
+            }.value
+            library.applySyncedFavorites(add: Set(merge.favoritesToAdd), remove: Set(merge.favoritesToRemove))
+            library.applySyncedPlaylists(create: merge.playlistsToCreate, update: merge.playlistsToUpdate,
+                                         removeLocalIDs: merge.playlistsToRemove)
+            if merge.removalRefused {
+                appWarn("Pull sync: the account lost most of its favourites; kept this device's and will push them back", category: "account")
             }
             if let json = plan.audioSettingsJson, let d = json.data(using: .utf8),
                let restored = try? JSONDecoder().decode(AudioSettings.self, from: d) {

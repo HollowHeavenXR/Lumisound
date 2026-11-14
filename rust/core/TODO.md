@@ -65,8 +65,28 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
 - Android: builds for `*-linux-android` (rustls instead of native-tls there; pull output like tvOS with
   `engine_set_pull_rate`; decode threads at audio priority). Kotlin bindings: `[bindings.kotlin]` in `uniffi.toml`.
 
+## Done (2026-11-14, second pass)
+- `syncmerge.rs`: three-way merge for favorites and playlists. Each device keeps the state it last agreed on
+  with the server (`sync_base`); `sync_merge_plan` says what to add *and remove* locally after a pull (playlist
+  rows resolved to this device's songs through `TrackResolver`), `sync_build_merge_payload` builds a push that
+  lists what this device removed, `sync_push_committed` / `sync_base_reset`. A pull that would remove most of
+  the favorites is refused (wiped account). 7 tests.
+- `engine/dsp.rs` `Vibrato`: the mixer's delay-line vibrato as its own type, now also in `SoundChain`
+  (`set_vibrato`).
+- `engine/session.rs` `PlaySession`: queue playback on the engine (order, shuffle, repeat, gapless successor,
+  crossfade timer, skipping unplayable files, queue edits). Files are asked for by key (`need_source` /
+  `provide_source`). 5 tests that decode and render real audio. The Android player is a shell over it.
+- Pull output (`engine_render_into`) is the output on every target that isn't iOS / macOS, so desktop builds
+  (the Android app's unit tests) can drive a whole engine.
+- Re-ran `engine_quality` (release): unchanged, only the two known `hits speed` pre-echo limits fail.
+  `engine_cloud` over 8 library tracks: 92 checks pass, 3 fail, all `spatial (yaw …)` ITD / ILD measurements on
+  wide or very quiet material (LumiSpace itself was not touched in this pass).
+
 ## Open (2026-11-14)
-- Favorites / playlists removed on one device come back from another (pull only adds, push replaces): needs
-  removal tombstones on the bridge and in `sync_pull_plan`.
-- iOS could use `TrackResolver` for favorites and playlist rows written by Android (cloud ids).
-- `SoundChain` has no vibrato stage (the mixer's delay-line vibrato).
+- `engine_cloud`: the `spatial (yaw 0 / 60)` limits fail on 3 of 8 tracks (ITD estimate 0.27 ms off at yaw 0
+  on low-correlation masters; too little high-band ILD on a −30 dB intro). Decide whether the estimator or
+  LumiSpace is off.
+- iOS could run its queue on `PlaySession` (it still does this bookkeeping in Swift).
+- `PlaySession`: Smart Crossfade (`queue_blend` with a `blend_plan`) and Skip Silent Intros offsets are not
+  wired in; it does fixed-length crossfades and plain gapless.
+- Playlist order is not merged (a reorder on one device stays local; additions append).

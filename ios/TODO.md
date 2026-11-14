@@ -207,3 +207,22 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 ## Open (2026-11-14)
 - Read `mainStack` from the next `main_thread_hang` reports (table `ios_app_event_log`) and fix what it names.
 - Tune LumiBoost v2 by ear on AirPods and the phone speaker.
+
+## Done (2026-11-14, sync: removals reach every device)
+- Favorites and playlists are a three-way merge now (core `syncmerge.rs`, bridge merge-mode push). A favorite
+  or playlist removed on one device is removed on the others; a playlist made on Android opens with this
+  library's songs (rows resolved through `TrackResolver`); playlist entries follow adds and removes both ways.
+  A playlist deleted on another device lands in Recently Deleted here.
+- `pullSync` computes the merge off the main thread and applies it in one write (`LibraryManager+SyncMerge`).
+  `pushSync` sends `"merge": true` with what this device removed; songs not in the library right now stay in
+  the pushed playlist instead of being dropped (which told the server they were removed).
+- `mergeFavoritesFromServer` (union-only pull that also re-uploaded every local favorite the server lacked,
+  which put back anything removed elsewhere) is gone; `pullSync` covers it.
+- `toggleFavorite` removes every id that makes the song a favorite (its own and other devices'): a favorite
+  made on the Apple TV / Android could not be removed here before.
+- A burst of live `sync_changed` events is one pull (1.5 s debounce).
+
+## Open (2026-11-14)
+- Playlist order is not merged across devices.
+- The first sync after this update is a union (no base yet): something removed elsewhere before the update
+  can come back once.

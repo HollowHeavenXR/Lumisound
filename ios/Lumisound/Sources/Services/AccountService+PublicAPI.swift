@@ -154,6 +154,8 @@ extension AccountService {
             _ = try? await makeRequest("/auth/logout", method: "POST", body: EmptyBody())
         }
         clearSession()
+        // The next account on this device starts its own merge history.
+        syncBaseReset()
     }
 
     /// The signed-in account as the server has it now. The copy saved at sign
