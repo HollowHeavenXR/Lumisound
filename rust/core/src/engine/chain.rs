@@ -206,24 +206,24 @@ impl SoundChain {
     }
 
     /// Process `frames` interleaved float frames of `channels` channels in
-    /// place at address `ptr` (a direct buffer). Scalar arguments only, so
+    /// place at `address` (a direct buffer). Scalar arguments only, so
     /// the call allocates nothing on the audio thread.
     ///
-    /// The caller guarantees `ptr` addresses `frames * channels` writable floats.
-    pub fn process_f32(&self, ptr: u64, frames: u32, channels: u32) {
-        if ptr == 0 || frames == 0 || channels == 0 {
+    /// The caller guarantees `address` points to `frames * channels` writable floats.
+    pub fn process_f32(&self, address: u64, frames: u32, channels: u32) {
+        if address == 0 || frames == 0 || channels == 0 {
             return;
         }
-        let buf = unsafe { std::slice::from_raw_parts_mut(ptr as usize as *mut f32, frames as usize * channels as usize) };
+        let buf = unsafe { std::slice::from_raw_parts_mut(address as usize as *mut f32, frames as usize * channels as usize) };
         self.process_f32_slice(buf, channels as usize);
     }
 
     /// `process_f32` for 16-bit PCM (native byte order).
-    pub fn process_i16(&self, ptr: u64, frames: u32, channels: u32) {
-        if ptr == 0 || frames == 0 || channels == 0 {
+    pub fn process_i16(&self, address: u64, frames: u32, channels: u32) {
+        if address == 0 || frames == 0 || channels == 0 {
             return;
         }
-        let buf = unsafe { std::slice::from_raw_parts_mut(ptr as usize as *mut i16, frames as usize * channels as usize) };
+        let buf = unsafe { std::slice::from_raw_parts_mut(address as usize as *mut i16, frames as usize * channels as usize) };
         self.process_i16_slice(buf, channels as usize);
     }
 
