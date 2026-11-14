@@ -40,7 +40,7 @@ pub fn probe_duration(path: String, cache_dir: String) -> f64 {
 /// Previously estimated tempo for this exact file, if any.
 #[uniffi::export]
 pub fn bpm_cached(path: String) -> Option<f64> {
-    let m: HashMap<String, f64> = store::load(BPM_CACHE);
+    let m = store::load_shared::<HashMap<String, f64>>(BPM_CACHE);
     m.get(&cache_key(&path)).copied()
 }
 
@@ -175,7 +175,7 @@ pub fn normalization_import_legacy(json: Vec<u8>) {
 pub fn normalization_gain(path: String, cache_dir: String) -> f32 {
     let key = norm_key(&path);
     {
-        let m: HashMap<String, f32> = store::load(NORM_CACHE);
+        let m = store::load_shared::<HashMap<String, f32>>(NORM_CACHE);
         if let Some(v) = m.get(&key) {
             return *v;
         }
@@ -208,7 +208,7 @@ pub fn is_valid_audio(path: String, cache_dir: String, min_secs: f64) -> bool {
 // ---- cached per-file results (path|mtime|size keys, like the Swift caches) ------------------
 
 pub(crate) fn cached_f64(ns: &str, path: &str) -> Option<f64> {
-    let m: HashMap<String, f64> = store::load(ns);
+    let m = store::load_shared::<HashMap<String, f64>>(ns);
     m.get(&cache_key(path)).copied()
 }
 
@@ -345,7 +345,7 @@ fn quantize_to_pulse(onsets: Vec<f64>) -> Vec<f64> {
 #[uniffi::export]
 pub fn beat_grid(path: String, cache_dir: String, pcm: Option<Vec<i16>>) -> Vec<f64> {
     {
-        let m: HashMap<String, Vec<f64>> = store::load(BEAT_CACHE);
+        let m = store::load_shared::<HashMap<String, Vec<f64>>>(BEAT_CACHE);
         if let Some(v) = m.get(&cache_key(&path)) {
             return v.clone();
         }
@@ -363,7 +363,7 @@ pub fn beat_grid(path: String, cache_dir: String, pcm: Option<Vec<i16>>) -> Vec<
 
 #[uniffi::export]
 pub fn beat_grid_cached(path: String) -> Option<Vec<f64>> {
-    let m: HashMap<String, Vec<f64>> = store::load(BEAT_CACHE);
+    let m = store::load_shared::<HashMap<String, Vec<f64>>>(BEAT_CACHE);
     m.get(&cache_key(&path)).cloned()
 }
 
@@ -452,7 +452,7 @@ pub fn contour_from(s: &[i16], sr: f64) -> Option<Vec<f32>> {
 #[uniffi::export]
 pub fn pitch_contour(path: String, cache_dir: String, pcm: Option<Vec<i16>>, max_secs: f64, cache: bool) -> Option<Vec<f32>> {
     if cache {
-        let m: HashMap<String, Vec<f32>> = store::load(PITCH_CACHE);
+        let m = store::load_shared::<HashMap<String, Vec<f32>>>(PITCH_CACHE);
         if let Some(v) = m.get(&cache_key(&path)) {
             return Some(v.clone());
         }
@@ -473,7 +473,7 @@ pub fn pitch_contour(path: String, cache_dir: String, pcm: Option<Vec<i16>>, max
 
 #[uniffi::export]
 pub fn pitch_contour_cached(path: String) -> Option<Vec<f32>> {
-    let m: HashMap<String, Vec<f32>> = store::load(PITCH_CACHE);
+    let m = store::load_shared::<HashMap<String, Vec<f32>>>(PITCH_CACHE);
     m.get(&cache_key(&path)).cloned()
 }
 
@@ -582,7 +582,7 @@ pub fn fingerprint_from(s: &[i16]) -> Option<Vec<Vec<f32>>> {
 #[uniffi::export]
 pub fn audio_fingerprint(path: String, cache_dir: String, pcm: Option<Vec<i16>>) -> Option<Vec<Vec<f32>>> {
     {
-        let m: HashMap<String, Vec<Vec<f32>>> = store::load(FP_CACHE);
+        let m = store::load_shared::<HashMap<String, Vec<Vec<f32>>>>(FP_CACHE);
         if let Some(v) = m.get(&cache_key(&path)) {
             return Some(v.clone());
         }

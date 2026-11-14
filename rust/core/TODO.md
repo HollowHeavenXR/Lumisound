@@ -43,3 +43,30 @@ Full history and decisions: [`RUST-PORT.md`](../../RUST-PORT.md).
 ## Open (2026-11-12)
 - engine_quality: "hits speed 1.25x / 0.8x pre-echo" limits fail (also before this pass; stretch.rs).
 - LumiPrint: probes only within ±4 s duration clusters; a version with a long extra intro isn't matched.
+
+## Done (2026-11-14)
+- `engine/boost.rs`: LumiBoost v2. The per-band *peak* ceilings gave an already-loud master ~1 dB whatever the
+  slider said (peaks sit at 0 dBFS, so nothing "fit"). Now each band is held under a *loudness* (RMS) ceiling
+  and its own soft shoulder rounds the peaks; never quieter than the input. Real tracks at +1/+2/+3.5/+6/+9/+12:
+  loud masters (−9…−11.6 dBFS RMS) gain 0.5–0.8 / 1.0–1.6 / 1.6–2.8 / 2.1–4.2 / 2.2–4.6 / 2.2–4.6 dB,
+  mid-level tracks up to 6.8 dB, quiet tracks the full amount.
+  Measure: `LUMI_BOOST_DIR=<dir> cargo test --release -p lumisound-core --lib boost::tests::real_tracks -- --ignored --nocapture`.
+- `engine/mixer.rs` + `deck.rs`: start latency counts from when the mixer first wants a deck's audio
+  (`wanted_at`), not from when it was opened. Queued gapless / blend decks and tracks loaded while paused were
+  being reported as 100–700 s "slow starts" (every `slow_start` in telemetry with phase `crossfade`).
+- `engine/mod.rs`: `start_output` waits at most 3 s for CoreAudio (it is called on the main thread).
+- `store.rs`: `load_shared` — parsed documents are shared until the next save; `load` parses from the cached
+  value without copying it. Per-song lookups (tempo, intro offset, normalization, beat grid, download ledger,
+  failures, skips, resume points) were a full copy + parse of a one-entry-per-song map on every call.
+- `engine/chain.rs` `SoundChain`: the mixer's master section (LumiEQ → FX → reverb → night mode → mono →
+  LumiSpace → 8D → tremolo → volume → LumiBoost → limiter) for audio the engine doesn't decode (Android).
+- `crossdevice.rs` `TrackResolver`: which of this device's tracks a favorite / playlist row written by another
+  device means (id → source → file name → title + artist → unique title).
+- Android: builds for `*-linux-android` (rustls instead of native-tls there; pull output like tvOS with
+  `engine_set_pull_rate`; decode threads at audio priority). Kotlin bindings: `[bindings.kotlin]` in `uniffi.toml`.
+
+## Open (2026-11-14)
+- Favorites / playlists removed on one device come back from another (pull only adds, push replaces): needs
+  removal tombstones on the bridge and in `sync_pull_plan`.
+- iOS could use `TrackResolver` for favorites and playlist rows written by Android (cloud ids).
+- `SoundChain` has no vibrato stage (the mixer's delay-line vibrato).

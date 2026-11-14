@@ -5,6 +5,7 @@
 //! `AudioEngine` and gets track events through `EngineListener`.
 
 pub mod boost;
+pub mod chain;
 pub mod eq;
 pub mod fx;
 pub mod space;
@@ -613,7 +614,15 @@ mod output {
                     }
                 })
                 .map_err(|e| e.to_string())?;
-            ready_rx.recv().map_err(|e| e.to_string())??;
+            // Bounded: CoreAudio can sit in a start for many seconds while a
+            // Bluetooth route is still negotiating, and this is called from
+            // the app's main thread. On a timeout the dropped stop channel
+            // makes the thread close the stream as soon as it gets one; the
+            // app's output guard retries.
+            match ready_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+                Ok(r) => r?,
+                Err(_) => return Err("audio output did not start within 3 s".into()),
+            }
             Ok(Self { stop: stop_tx })
         }
     }
@@ -694,13 +703,26 @@ pub fn engine_render_into(ptr: u64, frames: u32) -> u32 {
     unsafe { lumisound_engine_render(ptr as usize as *mut f32, frames) }
 }
 
-#[cfg(target_os = "tvos")]
+/// Output rate of the app's own audio device in pull mode (Android's
+/// AudioTrack; tvOS stays at 48 kHz). Set before `start_output`.
+static PULL_RATE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(48_000);
+
+/// Tell the engine the sample rate the app's audio device pulls at
+/// (8–384 kHz). Takes effect at the next `start_output` / `restart_output`.
+#[uniffi::export]
+pub fn engine_set_pull_rate(rate: u32) {
+    if (8_000..=384_000).contains(&rate) {
+        PULL_RATE.store(rate, Ordering::Relaxed);
+    }
+}
+
+#[cfg(any(target_os = "tvos", target_os = "android"))]
 mod output {
     use super::Mixer;
     use std::sync::{Arc, Mutex};
 
     pub fn preferred_rate() -> u32 {
-        48_000
+        super::PULL_RATE.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The app's AVAudioSourceNode pulls from the engine (see `pull`).
@@ -720,7 +742,7 @@ mod output {
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "tvos")))]
+#[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "tvos", target_os = "android")))]
 mod output {
     use super::Mixer;
     use std::sync::{Arc, Mutex};

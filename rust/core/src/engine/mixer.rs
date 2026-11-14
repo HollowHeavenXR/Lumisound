@@ -619,9 +619,21 @@ impl Mixer {
                 // decoder finished): starting on the first decoded packet ran
                 // the ring dry a few ms later when the next one was late.
                 let ready = d.frames_played > 0 || d.ring.slots() >= prefill || d.shared.eof.load(Ordering::Acquire);
+                if d.frames_played == 0 && d.wanted_at.is_none() {
+                    // Start latency runs from the first time the mixer wants
+                    // this deck's audio, not from when it was opened: a deck
+                    // queued minutes ahead (gapless, a planned blend) or
+                    // loaded while paused used to be reported as a slow start.
+                    d.wanted_at = Some(std::time::Instant::now());
+                }
                 if ready && d.ring.slots() >= 2 {
                     if d.frames_played == 0 {
-                        first_audio = Some((d.id, d.position(), d.opened_at.elapsed().as_secs_f64() * 1000.0));
+                        // A deck opened just now (play, skip, seek) counts
+                        // from its open: that wait is what the listener hears.
+                        let since = d.wanted_at.map_or(0.0, |w| w.elapsed().as_secs_f64());
+                        let fresh = d.wanted_at.is_some_and(|w| w.duration_since(d.opened_at).as_secs_f64() < 0.25);
+                        let ms = if fresh { d.opened_at.elapsed().as_secs_f64() } else { since } * 1000.0;
+                        first_audio = Some((d.id, d.position(), ms));
                     }
                     let a = d.ring.pop().unwrap_or(0.0);
                     let b = d.ring.pop().unwrap_or(0.0);

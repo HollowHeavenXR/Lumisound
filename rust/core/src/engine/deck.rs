@@ -45,6 +45,9 @@ pub struct Deck {
     track_secs: f64,
     /// When the deck was opened (first-audio latency).
     pub opened_at: std::time::Instant,
+    /// When the mixer first asked this deck for audio while playing (start
+    /// latency is counted from here: a queued or paused deck isn't late).
+    pub wanted_at: Option<std::time::Instant>,
     /// Became current by gapless hand-over (phase for incidents).
     pub handed_over: bool,
 }
@@ -171,7 +174,7 @@ pub fn open(id: u64, path: &str, start: f64, out_rate: u32, gain: f32, speed: f6
             sh.eof.store(true, Ordering::Release);
         })
         .map_err(|e| e.to_string())?;
-    Ok(Deck { id, path: path.to_string(), start_offset: actual_start.max(0.0), frames_played: 0, out_rate, ring: cons, shared, gain, speed, segs, seg_left: 0, seg_step: speed / out_rate as f64, track_secs: 0.0, opened_at, handed_over: false })
+    Ok(Deck { id, path: path.to_string(), start_offset: actual_start.max(0.0), frames_played: 0, out_rate, ring: cons, shared, gain, speed, segs, seg_left: 0, seg_step: speed / out_rate as f64, track_secs: 0.0, opened_at, wanted_at: None, handed_over: false })
 }
 
 /// The decode thread feeds the realtime mixer: run it ahead of ordinary
@@ -181,6 +184,11 @@ fn raise_decode_priority() {
     #[cfg(any(target_os = "ios", target_os = "macos", target_os = "tvos", target_os = "watchos"))]
     unsafe {
         libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
+    }
+    // Android: the audio band of thread priorities (THREAD_PRIORITY_AUDIO).
+    #[cfg(target_os = "android")]
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t, -16);
     }
 }
 

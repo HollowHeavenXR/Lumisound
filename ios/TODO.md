@@ -193,3 +193,17 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
 - [x] 14. Responsiveness: telemetry-led (MetricKit showed daily GPU time up ~20× between 2.0.0.6 and 2.0.0.35 on the same account; no hang reports). Gallery background stills now come pre-blurred from the core (gallery_blurred_still: 720 px + fast_blur, blur kept as a share of the screen) so the Ken Burns pan moves a plain image instead of re-blurring a full-screen photo every frame behind every screen. Smart Crossfade no longer holds the analyzer (2048-pt FFT + SwiftUI publish at 23 Hz) for the whole of every track: armed 20 s before the fade only. Re-upload storm seen in telemetry was a one-time first backup (recent builds upload ~1–2 files/day).
 - [x] 15. Owner/admin email voxellickinetix@icloud.com: SwarmPanel .env SWARM_PANEL_SITE_OWNER_EMAIL (new first, old kept) + container recreated; Nyxframe SITE_OWNER_EMAILS list (pushed, redeployed); Lumisound admin is the operator account (id ca8a4c53…), its email set to voxellickinetix@icloud.com.
 - [x] 16. Git: global identity VoxeliseStudios <voxellickinetix@icloud.com>; remotes moved to github.com/VoxeliseStudios.
+
+## Done (2026-11-14, engine pass: boost + stalls)
+- Volume boost: LumiBoost v2 in the core (see `rust/core/TODO.md`) — every step above 100 % is audible on
+  loud masters now. No Swift change; the hold-back meter keeps its meaning.
+- Stalls: device telemetry (2.0.0.40) shows a healthy audio thread (0 underruns, load ≤ 11 %) but main-thread
+  hangs of 6–50 s, with no way to see where. `Services/MainThreadBacktrace.swift` samples the main thread's
+  stack while it is stuck (1.5 s and 6 s into a hang); `main_thread_hang` events carry it as `mainStack`
+  ("Image 0xoffset symbol", innermost first).
+- Core-side causes removed in the same pass: per-song cache lookups no longer copy + parse whole documents,
+  output start is bounded to 3 s, `slow_start` telemetry no longer counts queued decks.
+
+## Open (2026-11-14)
+- Read `mainStack` from the next `main_thread_hang` reports (table `ios_app_event_log`) and fix what it names.
+- Tune LumiBoost v2 by ear on AirPods and the phone speaker.

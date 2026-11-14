@@ -13,6 +13,7 @@ pub mod appearance;
 pub mod applock;
 pub mod cache;
 pub mod client;
+pub mod crossdevice;
 pub mod downloads;
 pub mod dropdown;
 pub mod gallery;

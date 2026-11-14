@@ -169,6 +169,10 @@ final class MainThreadHangMonitor {
     private let lock = NSLock()
     private var lastReportAt: Date?
     private var isProbeOutstanding = false
+    /// When the outstanding ping was sent, and main-thread stacks sampled
+    /// while it has been waiting (see `MainThreadBacktrace`).
+    private var probeSentAt = Date()
+    private var stackSamples: [String] = []
     /// Last known application state, refreshed by each ping that lands.
     ///
     /// `UIApplication.shared.applicationState` is main-thread-only, and this
@@ -182,6 +186,7 @@ final class MainThreadHangMonitor {
     private init() {}
 
     func start() {
+        DispatchQueue.main.async { MainThreadBacktrace.registerMainThread() }
         queue.async { [weak self] in
             guard let self, self.timer == nil else { return }
             let t = DispatchSource.makeTimerSource(queue: self.queue)
@@ -207,11 +212,27 @@ final class MainThreadHangMonitor {
         // will report when it lands. Sending more would only queue work behind
         // the block that is already waiting.
         if isProbeOutstanding {
+            // Still waiting on the last ping: the main thread is stuck right
+            // now. Sample where (once at 1.5 s, again at 6 s — a long hang is
+            // often not in the same place the whole time).
+            let waited = Date().timeIntervalSince(probeSentAt)
+            let due = (stackSamples.isEmpty && waited >= 1.5) || (stackSamples.count == 1 && waited >= 6)
+            let foreground = lastKnownState == .active
             lock.unlock()
+            if due, foreground {
+                let stack = MainThreadBacktrace.capture()
+                if !stack.isEmpty {
+                    lock.lock()
+                    stackSamples.append(String(format: "@%.1fs: ", waited) + stack.prefix(40).joined(separator: " | "))
+                    lock.unlock()
+                }
+            }
             return
         }
         isProbeOutstanding = true
+        stackSamples = []
         let sentAt = Date()
+        probeSentAt = sentAt
         let stateAtSend = lastKnownState
         lock.unlock()
 
@@ -237,6 +258,8 @@ final class MainThreadHangMonitor {
                 && stateNow == .active
                 && !recentlyReported
             if shouldReport { self.lastReportAt = Date() }
+            let stacks = self.stackSamples
+            self.stackSamples = []
             self.lock.unlock()
 
             guard shouldReport else { return }
@@ -244,19 +267,15 @@ final class MainThreadHangMonitor {
             // been stuck for seconds and is about to have a backlog of real work
             // to get through, so this adds none of its own to it.
             let arrivedAt = Date()
-            self.queue.async { self.report(elapsed: elapsed, sentAt: sentAt, arrivedAt: arrivedAt) }
+            self.queue.async { self.report(elapsed: elapsed, sentAt: sentAt, arrivedAt: arrivedAt, stacks: stacks) }
         }
     }
 
-    private func report(elapsed: TimeInterval, sentAt: Date, arrivedAt: Date) {
-        // No stack trace is captured. `Thread.callStackSymbols` called from here
-        // would give THIS queue's stack, not the blocked main thread's, and a
-        // stack of the monitor itself is worse than none — it reads like evidence
-        // while pointing at the wrong thread. Getting the main thread's stack
-        // needs a suspend-and-walk that is not worth doing in a shipping build.
-        // Recorded instead: the fact, the true duration, and the one piece of
-        // context that actually narrows it down — whether a library scan was in
-        // flight, which is the operation this app's freezes keep tracing back to.
+    private func report(elapsed: TimeInterval, sentAt: Date, arrivedAt: Date, stacks: [String]) {
+        // `stacks` are samples of the main thread taken while it was stuck
+        // (`MainThreadBacktrace`, from `probe`). `Thread.callStackSymbols`
+        // here would describe this queue, not the blocked thread. Alongside:
+        // the true duration and whether a library scan was in flight.
         let scanning = ScanActivityIndicator.shared.isActive
         // Half a second of lead-in: SwiftUI re-renders on the run-loop turn
         // AFTER the state change that caused it, so the change that set off a
@@ -279,6 +298,9 @@ final class MainThreadHangMonitor {
                 "libraryScanInFlight": scanning,
                 "thermalState": ProcessInfo.processInfo.thermalState.lumisoundDescription,
                 "mainThreadActivity": activity,
+                // Where the main thread actually was, sampled during the stall
+                // ("Image 0xoffset symbol", innermost first).
+                "mainStack": stacks,
                 // BUGFIX (found via telemetry audit — every real hang report on
                 // record had `mainThreadActivity: []`, and `selectedTab` kept
                 // showing index 6, which isn't even one of Classic's 5 tabs):

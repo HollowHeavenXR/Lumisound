@@ -2,7 +2,7 @@
 name = "lumisound-core"
 version.workspace = true
 edition.workspace = true
-description = "Lumisound app core for the Swift apps: API client, sync, lock system, downloads, audio engine, library + analysis, appearance"
+description = "Lumisound app core for the Swift and Android apps: API client, sync, lock system, downloads, audio engine, library + analysis, appearance"
 
 [lib]
 name = "lumisound_core"
@@ -23,9 +23,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "fs", "io-util"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "stream", "http2"] }
 futures-util = "0.3"
-tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 tokio-util = { version = "0.7", features = ["io"] }
 urlencoding = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -42,6 +40,16 @@ regex-lite = "0.1"
 rustfft = "6"
 rubato = "0.15"
 symphonia = { version = "0.5", default-features = false, features = ["mp1", "mp2", "mp3", "aac", "isomp4", "flac", "wav", "pcm", "ogg", "vorbis", "alac", "adpcm", "aiff", "caf", "mkv"] }
+
+# TLS: the system stack on Apple platforms and desktops; rustls on Android
+# (no system OpenSSL to link there, and none to cross-compile).
+[target.'cfg(not(target_os = "android"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "stream", "http2"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots", "stream", "http2"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 
 # lua-src has no tvOS/watchOS build; those targets get a stub (they don't run scripts).
 [target.'cfg(not(any(target_os = "tvos", target_os = "watchos")))'.dependencies]

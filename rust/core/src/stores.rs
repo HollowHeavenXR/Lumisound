@@ -185,7 +185,7 @@ pub fn skip_record(song_id: String, position: f64, duration: f64) -> bool {
 
 #[uniffi::export]
 pub fn skip_count(song_id: String) -> i64 {
-    let m: HashMap<String, Hist> = store::load(SKIPS);
+    let m = store::load_shared::<HashMap<String, Hist>>(SKIPS);
     m.get(&song_id).map_or(0, |h| h.count.max(0))
 }
 
@@ -478,7 +478,7 @@ pub fn long_resume_position(song_id: String, duration: f64) -> Option<f64> {
     if duration < MIN_DURATION {
         return None;
     }
-    let m: HashMap<String, Resume> = store::load(RESUME);
+    let m = store::load_shared::<HashMap<String, Resume>>(RESUME);
     m.get(&song_id).map(|r| r.position).filter(|p| *p > 5.0 && *p < duration - NEAR_END)
 }
 
@@ -945,7 +945,7 @@ pub fn suggestions_import_legacy(json: Vec<u8>) {
 
 #[uniffi::export]
 pub fn suggestion_lookup(filename: String) -> Option<CachedSuggestion> {
-    let m: HashMap<String, CachedSuggestion> = store::load(SUGGEST);
+    let m = store::load_shared::<HashMap<String, CachedSuggestion>>(SUGGEST);
     m.get(&filename).cloned()
 }
 

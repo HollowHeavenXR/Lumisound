@@ -60,13 +60,13 @@ pub fn ledger_record(source_track_id: String, filename: String) {
 
 #[uniffi::export]
 pub fn ledger_filename(source_track_id: String) -> Option<String> {
-    let m: HashMap<String, String> = store::load(LEDGER);
+    let m = store::load_shared::<HashMap<String, String>>(LEDGER);
     m.get(&source_track_id).cloned()
 }
 
 #[uniffi::export]
 pub fn ledger_is_present(source_track_id: String, present_filenames: Vec<String>) -> bool {
-    let m: HashMap<String, String> = store::load(LEDGER);
+    let m = store::load_shared::<HashMap<String, String>>(LEDGER);
     m.get(&source_track_id).is_some_and(|f| present_filenames.contains(f))
 }
 
@@ -74,8 +74,8 @@ pub fn ledger_is_present(source_track_id: String, present_filenames: Vec<String>
 #[uniffi::export]
 pub fn ledger_present_ids(present_filenames: Vec<String>) -> Vec<String> {
     let present: HashSet<String> = present_filenames.into_iter().collect();
-    let m: HashMap<String, String> = store::load(LEDGER);
-    m.into_iter().filter(|(_, f)| present.contains(f)).map(|(k, _)| k).collect()
+    let m = store::load_shared::<HashMap<String, String>>(LEDGER);
+    m.iter().filter(|(_, f)| present.contains(*f)).map(|(k, _)| k.clone()).collect()
 }
 
 /// Claim a download; false if another claim is younger than 5 minutes.
@@ -135,7 +135,7 @@ fn clear_failure(id: &str) {
 /// Inside its cool-off (1 day, 3 days, 1 week, then a month per strike).
 #[uniffi::export]
 pub fn failure_should_skip(source_track_id: String) -> bool {
-    let m: HashMap<String, Failure> = store::load(FAILURES);
+    let m = store::load_shared::<HashMap<String, Failure>>(FAILURES);
     m.get(&source_track_id).is_some_and(|f| skip(f, store::now()))
 }
 
@@ -169,14 +169,14 @@ pub fn failure_clear_all() {
 
 #[uniffi::export]
 pub fn failure_suppressed_count(source_track_ids: Vec<String>) -> u32 {
-    let m: HashMap<String, Failure> = store::load(FAILURES);
+    let m = store::load_shared::<HashMap<String, Failure>>(FAILURES);
     let now = store::now();
     source_track_ids.iter().filter(|id| m.get(*id).is_some_and(|f| skip(f, now))).count() as u32
 }
 
 #[uniffi::export]
 pub fn failure_suppressed_total() -> u32 {
-    let m: HashMap<String, Failure> = store::load(FAILURES);
+    let m = store::load_shared::<HashMap<String, Failure>>(FAILURES);
     let now = store::now();
     m.values().filter(|f| skip(f, now)).count() as u32
 }

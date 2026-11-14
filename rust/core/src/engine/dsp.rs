@@ -134,6 +134,11 @@ impl Ramp {
         self.value
     }
 
+    /// Where the ramp is heading.
+    pub fn target(&self) -> f32 {
+        self.target
+    }
+
     pub fn done(&self) -> bool {
         self.left == 0
     }
