@@ -173,6 +173,19 @@ final class MainThreadHangMonitor {
     /// while it has been waiting (see `MainThreadBacktrace`).
     private var probeSentAt = Date()
     private var stackSamples: [String] = []
+    /// How many of this monitor's own timer ticks fired while the ping was
+    /// waiting, and the main thread's CPU time when it was sent.
+    ///
+    /// The ticks tell a real hang from a suspended process. The timer runs
+    /// every `probeInterval` on a background queue: during a real hang it
+    /// keeps firing (the rest of the process is alive), so a 30 s stall sees
+    /// about 120 ticks. If iOS froze the whole process — the app left the
+    /// foreground in the instant between two probes — the timer was frozen
+    /// too and a "30 s stall" sees one or two. Requiring `.active` at both
+    /// ends does not catch that case: the state on record is up to one probe
+    /// old, and the app is `.active` again by the time the ping lands.
+    private var ticksWhileWaiting = 0
+    private var cpuAtSend: Double = 0
     /// Last known application state, refreshed by each ping that lands.
     ///
     /// `UIApplication.shared.applicationState` is main-thread-only, and this
@@ -212,6 +225,7 @@ final class MainThreadHangMonitor {
         // will report when it lands. Sending more would only queue work behind
         // the block that is already waiting.
         if isProbeOutstanding {
+            ticksWhileWaiting += 1
             // Still waiting on the last ping: the main thread is stuck right
             // now. Sample where (once at 1.5 s, again at 6 s — a long hang is
             // often not in the same place the whole time).
@@ -231,6 +245,9 @@ final class MainThreadHangMonitor {
         }
         isProbeOutstanding = true
         stackSamples = []
+        ticksWhileWaiting = 0
+        let cpuBefore = MainThreadBacktrace.mainThreadCPUSeconds()
+        cpuAtSend = cpuBefore
         let sentAt = Date()
         probeSentAt = sentAt
         let stateAtSend = lastKnownState
@@ -260,18 +277,37 @@ final class MainThreadHangMonitor {
             if shouldReport { self.lastReportAt = Date() }
             let stacks = self.stackSamples
             self.stackSamples = []
+            let ticks = self.ticksWhileWaiting
             self.lock.unlock()
 
             guard shouldReport else { return }
+            let cpu = max(0, MainThreadBacktrace.mainThreadCPUSeconds() - cpuBefore)
             // Reported back on the monitor's own queue: the main thread has just
             // been stuck for seconds and is about to have a backlog of real work
             // to get through, so this adds none of its own to it.
             let arrivedAt = Date()
-            self.queue.async { self.report(elapsed: elapsed, sentAt: sentAt, arrivedAt: arrivedAt, stacks: stacks) }
+            self.queue.async { self.report(elapsed: elapsed, sentAt: sentAt, arrivedAt: arrivedAt, stacks: stacks, ticks: ticks, mainCPU: cpu) }
         }
     }
 
-    private func report(elapsed: TimeInterval, sentAt: Date, arrivedAt: Date, stacks: [String]) {
+    private func report(elapsed: TimeInterval, sentAt: Date, arrivedAt: Date, stacks: [String], ticks: Int, mainCPU: Double) {
+        // Fewer than a quarter of the timer ticks a stall this long should
+        // have seen: the process was not running for most of it (suspended
+        // by iOS on its way to the background), so this was not a hang. Kept
+        // as a quiet record, because knowing how often it happens is what
+        // tells the real hangs apart in the data.
+        let expectedTicks = elapsed / Self.probeInterval
+        let suspended = elapsed >= 2 && Double(ticks) < expectedTicks * 0.25
+        if suspended {
+            RemoteLogger.log(
+                category: "performance",
+                event: "process_suspended_gap",
+                level: "info",
+                message: String(format: "process was not running for most of %.2fs (not a hang)", elapsed),
+                detail: ["gapSeconds": round(elapsed * 100) / 100, "probeTicks": ticks]
+            )
+            return
+        }
         // `stacks` are samples of the main thread taken while it was stuck
         // (`MainThreadBacktrace`, from `probe`). `Thread.callStackSymbols`
         // here would describe this queue, not the blocked thread. Alongside:
@@ -301,6 +337,12 @@ final class MainThreadHangMonitor {
                 // Where the main thread actually was, sampled during the stall
                 // ("Image 0xoffset symbol", innermost first).
                 "mainStack": stacks,
+                // What kind of stall: CPU the main thread used during it
+                // (about the stall's length = computing, near zero = waiting
+                // on a lock / a synchronous call / disk), and how many of the
+                // monitor's own 250 ms ticks fired meanwhile.
+                "mainThreadCPUSeconds": round(mainCPU * 100) / 100,
+                "probeTicks": ticks,
                 // BUGFIX (found via telemetry audit — every real hang report on
                 // record had `mainThreadActivity: []`, and `selectedTab` kept
                 // showing index 6, which isn't even one of Classic's 5 tabs):

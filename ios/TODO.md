@@ -222,6 +222,13 @@ Full history and decisions: [`../RUST-PORT.md`](../RUST-PORT.md). Swift is views
   made on the Apple TV / Android could not be removed here before.
 - A burst of live `sync_changed` events is one pull (1.5 s debounce).
 
+## Done (2026-11-14, hang reports that can be read)
+- `main_thread_hang` now carries `probeTicks` (how many of the monitor's own 250 ms timer ticks fired during
+  the stall) and `mainThreadCPUSeconds`. A "stall" during which the monitor's timer barely fired was the whole
+  process being suspended, not a hang: it is logged as `process_suspended_gap` (info) instead. A real stall
+  with near-zero main-thread CPU was waiting (lock, synchronous call, disk); CPU close to the stall length
+  was computing. Together with `mainStack` the next reports say what and where.
+
 ## Open (2026-11-14)
 - Playlist order is not merged across devices.
 - The first sync after this update is a union (no base yet): something removed elsewhere before the update

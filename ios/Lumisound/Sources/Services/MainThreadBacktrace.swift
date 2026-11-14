@@ -27,6 +27,27 @@ enum MainThreadBacktrace {
 
     /// Frames as "Image 0xoffset symbol", innermost first. Empty when the
     /// stack can't be read (not registered, or not an arm64 device).
+    /// CPU time the main thread has used so far, in seconds (0 if unknown).
+    ///
+    /// Read before and after a stall, it says what kind of stall it was: a
+    /// main thread that burned about as much CPU as the stall lasted was
+    /// computing; one that used almost none was waiting on something (a
+    /// lock, a synchronous call, disk).
+    static func mainThreadCPUSeconds() -> Double {
+        let thread = mainThread
+        guard thread != 0 else { return 0 }
+        var info = thread_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                thread_info(thread, thread_flavor_t(THREAD_BASIC_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return 0 }
+        return Double(info.user_time.seconds) + Double(info.user_time.microseconds) / 1_000_000
+            + Double(info.system_time.seconds) + Double(info.system_time.microseconds) / 1_000_000
+    }
+
     static func capture() -> [String] {
         #if arch(arm64)
         let thread = mainThread
